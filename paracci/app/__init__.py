@@ -14,20 +14,44 @@ from core.burn import BurnDB
 # _MEIPASS check for PyInstaller compatibility
 if hasattr(sys, '_MEIPASS'):
     ROOT_DIR = Path(sys._MEIPASS)
+    # When packaged, check directory next to the executable
+    EXE_DIR = Path(sys.executable).parent
 else:
     ROOT_DIR = Path(__file__).parent.parent
+    EXE_DIR = ROOT_DIR
 
 # Application directory (templates and static are located here)
 APP_DIR = Path(__file__).parent
 if hasattr(sys, '_MEIPASS'):
     # When packaged, APP_DIR is the paracci/app folder within _MEIPASS
     APP_DIR = ROOT_DIR / "paracci" / "app"
-# Use DATA_DIR environment variable if it exists, otherwise default to "data"
+
+# Smart Persistent DATA_DIR Selection:
+# 1. Environment Variable check (Override)
+# 2. Portable Mod check: if a folder named "data" already exists next to the EXE, go portable!
+# 3. Standard Mod check (Default): Use the safe, hidden, non-deletable OS AppData directory to prevent accidental deletions
 env_data_dir = os.environ.get("DATA_DIR")
+local_data_dir = EXE_DIR / "data"
+
 if env_data_dir:
     DATA_DIR = Path(env_data_dir).absolute()
+elif local_data_dir.exists() and local_data_dir.is_dir():
+    DATA_DIR = local_data_dir
 else:
-    DATA_DIR = ROOT_DIR / "data"
+    # OS AppData
+    if sys.platform == "win32":
+        appdata_root = os.environ.get("LOCALAPPDATA")
+        if appdata_root:
+            DATA_DIR = Path(appdata_root) / "Paracci"
+        else:
+            DATA_DIR = Path.home() / "AppData" / "Local" / "Paracci"
+    elif sys.platform == "darwin":
+        DATA_DIR = Path.home() / "Library" / "Application Support" / "Paracci"
+    else:
+        DATA_DIR = Path.home() / ".config" / "paracci"
+
+# Set in os.environ so all other core modules automatically use the same persistent path
+os.environ["DATA_DIR"] = str(DATA_DIR)
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 

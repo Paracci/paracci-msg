@@ -22,15 +22,22 @@ class ParacciConfig:
 
     def __init__(self):
         """Initializes the config manager and loads settings."""
+        from pathlib import Path
         self.data_dir = os.environ.get('DATA_DIR', 'data')
         self.config_path = os.path.join(self.data_dir, 'config.json')
         self.settings = self.DEFAULT_CONFIG.copy()
         self.load()
         
-        # Create downloads folder
-        self.full_downloads_path = os.path.join(self.data_dir, self.get("downloads_dir"))
-        if not os.path.exists(self.full_downloads_path):
-            os.makedirs(self.full_downloads_path, exist_ok=True)
+        # Determine downloads path dynamically:
+        # Standard Mod: If storing database in hidden OS AppData, place downloaded files in user's standard Downloads/Paracci
+        # Portable Mod: If running self-contained, store downloads inside the local data/downloads directory next to the executable
+        data_dir_lower = self.data_dir.lower()
+        if "appdata" in data_dir_lower or "application support" in data_dir_lower or ".config" in data_dir_lower:
+            self.full_downloads_path = str(Path.home() / "Downloads" / "Paracci")
+        else:
+            self.full_downloads_path = os.path.join(self.data_dir, self.get("downloads_dir"))
+            
+        os.makedirs(self.full_downloads_path, exist_ok=True)
 
     def load(self):
         """Loads settings from the config.json file."""
