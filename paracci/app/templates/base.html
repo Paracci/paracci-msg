@@ -1,0 +1,308 @@
+<!-- app/templates/base.html -->
+{% set endpoint = request.endpoint or '' %}
+{% set auth_shell = endpoint in ['main.unlock', 'main.unlock_2fa_setup', 'main.unlock_2fa_verify'] %}
+{% set current_sid = sid|default('') %}
+{% set shell_meta = meta if meta is defined else none %}
+{% set shell_role = shell_meta.role if shell_meta else '' %}
+{% set shell_state = shell_meta.state if shell_meta else '' %}
+{% set shell_is_bonded = shell_meta.is_bonded if shell_meta else false %}
+{% set shell_can_import = endpoint == 'main.session_import' %}
+{% set shell_can_finalize = endpoint == 'main.session_detail' and shell_role == 'X' and shell_state == 'pending' %}
+{% set shell_can_open = endpoint == 'main.session_detail' and shell_state == 'active' %}
+{% set shell_can_attach = endpoint == 'main.session_detail' and shell_state == 'active' and shell_is_bonded %}
+<!DOCTYPE html>
+<html lang="{{ g.locale }}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>{% block title %}{{ _('base.title_bar') }}{% endblock %}</title>
+
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/variables.css', v=range(1, 99999) | random) }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css', v=range(1, 99999) | random) }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/components.css', v=range(1, 99999) | random) }}">
+
+
+  {% block extra_head %}{% endblock %}
+
+  <style>
+    body.iar-tampered-alert::before {
+      content: "COUNTERFEIT VERSION - PROJECT PARACCI ORIGIN";
+      position: fixed;
+      bottom: 10px;
+      left: 10px;
+      font-size: 8px;
+      color: rgba(255, 69, 58, 0.18);
+      z-index: 9999;
+      pointer-events: none;
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+  </style>
+  <script src="{{ url_for('static', filename='js/app.js', v=range(1, 99999) | random) }}" defer></script>
+</head>
+<body class="paracci-liquid {{ 'is-auth-shell' if auth_shell else 'is-app-shell' }} {{ 'iar-signed-original' if not iar_tampered else 'iar-tampered-alert' }}"
+      data-endpoint="{{ endpoint }}"
+      data-current-session-id="{{ current_sid }}"
+      data-session-role="{{ shell_role }}"
+      data-session-state="{{ shell_state }}"
+      data-drop-import="{{ 'true' if shell_can_import else 'false' }}"
+      data-drop-finalize="{{ 'true' if shell_can_finalize else 'false' }}"
+      data-drop-open="{{ 'true' if shell_can_open else 'false' }}"
+      data-drop-attach="{{ 'true' if shell_can_attach else 'false' }}"
+      data-drop-label-import="{{ _('base.drop_import_session') }}"
+      data-drop-label-finalize="{{ _('base.drop_finalize_bond') }}"
+      data-drop-label-open="{{ _('base.drop_open_message') }}"
+      data-drop-label-attach="{{ _('base.drop_attach_files') }}"
+      data-drop-label-unsupported="{{ _('base.drop_unsupported') }}"
+      data-drop-desc-unsupported="{{ _('base.drop_unsupported_desc') }}"
+      data-sidebar-collapse="{{ _('base.sidebar_collapse') }}"
+      data-sidebar-expand="{{ _('base.sidebar_expand') }}">
+
+  <script>
+    window.PARACCI_I18N = {
+        "status_weak": "{{ _('unlock.status_weak') }}",
+        "status_short": "{{ _('unlock.status_short') }}",
+        "status_medium": "{{ _('unlock.status_medium') }}",
+        "status_strong": "{{ _('unlock.status_strong') }}",
+        "copy_protection_btn": "{{ _('session.copy_protection_btn') }}",
+        "clearing_clipboard": "{{ _('session.clearing_clipboard') }}",
+        "clipboard_cleared": "{{ _('session.clipboard_cleared') }}",
+        "text_copied_notify": "{{ _('session.text_copied_notify') }}",
+        "processing": "{{ _('session.processing', default='Processing...') }}",
+        "server_error": "{{ _('session.server_error', default='Server error') }}",
+        "processing_failed": "{{ _('session.processing_failed', default='Processing failed.') }}",
+        "msg_not_processed": "{{ _('session.msg_not_processed', default='Message could not be processed') }}",
+        "clipboard_failed": "{{ _('session.clipboard_failed', default='Clipboard access failed.') }}",
+        "download_failed": "{{ _('session.download_failed', default='Download failed') }}",
+        "file_selected": "{{ _('setup.file_selected') }}",
+        "hw_report_title": "{{ _('setup.hw_report_title') }}",
+        "hw_report_error": "{{ _('setup.hw_report_error') }}",
+        "close": "{{ _('common.close') }}",
+        "preview_label": "{{ _('preview.page_title', filename='') | replace(': ', '') }}",
+        "error": "{{ _('common.error') }}",
+        "download": "{{ _('session.download') }}",
+        "security_warning": "{{ _('session.security_warning') }}",
+        "clipboard_failed_locked": "{{ _('session.clipboard_failed_locked') }}",
+        "attachments_added": "{{ _('session.attachments_added', count='{count}') }}",
+        "attachment_attached": "{{ _('session.attachment_attached', filename='{filename}') }}",
+        "drop_failed": "{{ _('session.drop_failed') }}",
+        "quantum_armor_active": "{{ _('setup.quantum_armor_active') }}",
+        "render_error": "{{ _('common.render_error') }}",
+        "marked_missing": "{{ _('common.marked_missing') }}"
+    };
+
+    (function() {
+      const collapsed = localStorage.getItem('paracci_sidebar_collapsed') === 'true';
+      if (collapsed) document.body.classList.add('sidebar-collapsed');
+    })();
+  </script>
+  <!--
+    PROJECT IDENTITY SEAL: {{ iar_report.identity_hash }}
+    AUTHENTICITY: {{ iar_report.version_signature }}
+    DNA_STATUS: {{ iar_report.dna_status }}
+    (c) 2026 PARACCI TEAM. ALL RIGHTS RESERVED.
+    UNAUTHORIZED REBRANDING DETECTED IF THIS HASH CHANGES.
+  -->
+
+  <div id="global-drop-overlay" class="global-drop-overlay">
+    <div class="drop-content">
+      <div class="drop-icon flex-center" aria-hidden="true">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="48" height="48">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 9.75h16.5m-16.5 0A2.25 2.25 0 001.5 12v6.75A2.25 2.25 0 003.75 21h16.5a2.25 2.25 0 002.25-2.25V12a2.25 2.25 0 00-2.25-2.25m-16.5 0V6A2.25 2.25 0 016 3.75h3.879a1.5 1.5 0 011.06.44l2.122 2.12a1.5 1.5 0 001.06.44H18A2.25 2.25 0 0120.25 9v.75" />
+        </svg>
+      </div>
+      <h2 id="drop-hint-title">{{ _('base.drop_title') }}</h2>
+      <p id="drop-hint-desc">{{ _('base.drop_desc') }}</p>
+    </div>
+  </div>
+
+  <div id="quantumArmor" class="quantum-overlay" aria-live="polite" aria-hidden="true">
+    <div class="quantum-panel">
+      <div class="spinner spinner-lg" aria-hidden="true"></div>
+      <div class="quantum-text">{{ _('base.quantum_armor') }}</div>
+    </div>
+  </div>
+
+
+
+  <div id="download-toast" class="download-toast" onclick="handleToastClick()" role="status" aria-live="polite">
+    <div class="toast-icon" aria-hidden="true">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="22" height="22">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+      </svg>
+    </div>
+    <div class="toast-content">
+      <div class="toast-title">{{ _('base.toast_title') }}</div>
+      <div id="toast-filename" class="toast-filename">{{ _('base.toast_placeholder') }}</div>
+      <div class="toast-action">{{ _('base.toast_action') }}</div>
+    </div>
+  </div>
+
+  {% macro nav_icon(name) -%}
+    {% if name == 'sessions' %}
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 5.25h16.5m-16.5 4.5h16.5m-16.5 4.5h16.5m-16.5 4.5h16.5" /></svg>
+    {% elif name == 'new' %}
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v6m3-3H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+    {% elif name == 'import' %}
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" /></svg>
+    {% elif name == 'settings' %}
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0m-9.75 0h9.75" /></svg>
+    {% elif name == 'profile' %}
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975m11.963 0a9 9 0 10-11.963 0m11.963 0A8.966 8.966 0 0112 21a8.966 8.966 0 01-5.982-2.275M15 9.75a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+    {% else %}
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+    {% endif %}
+  {%- endmacro %}
+
+  {% if not auth_shell %}
+  <div class="desktop-shell">
+    <aside class="app-sidebar" aria-label="{{ _('base.nav_aria') }}">
+      <div class="sidebar-brand">
+        <a href="{{ url_for('main.index') }}" class="brand-lockup" aria-label="{{ _('base.home_aria') }}">
+          <span class="brand-mark" aria-hidden="true">P</span>
+          <span class="brand-text">
+            <strong>{{ _('base.brand') }}</strong>
+            <small>{{ _('base.offline_status') }}</small>
+          </span>
+        </a>
+        <button type="button" class="sidebar-toggle" onclick="toggleSidebarCollapsed()" aria-label="{{ _('base.sidebar_collapse') }}" title="{{ _('base.sidebar_collapse') }}">
+          <svg class="toggle-icon-expanded" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.6" stroke="currentColor" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+          </svg>
+          <svg class="toggle-icon-collapsed" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.6" stroke="currentColor" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+          </svg>
+        </button>
+      </div>
+
+      <nav class="sidebar-nav">
+        <a href="{{ url_for('main.index') }}" class="sidebar-link {{ 'active' if endpoint == 'main.index' else '' }}" aria-label="{{ _('nav.sessions') }}" title="{{ _('nav.sessions') }}">
+          {{ nav_icon('sessions') }} <span>{{ _('nav.sessions') }}</span>
+        </a>
+        <a href="{{ url_for('main.session_new') }}" class="sidebar-link {{ 'active' if endpoint == 'main.session_new' else '' }}" aria-label="{{ _('nav.new') }}" title="{{ _('nav.new') }}">
+          {{ nav_icon('new') }} <span>{{ _('nav.new') }}</span>
+        </a>
+        <a href="{{ url_for('main.session_import') }}" class="sidebar-link {{ 'active' if endpoint == 'main.session_import' else '' }}" aria-label="{{ _('nav.import') }}" title="{{ _('nav.import') }}">
+          {{ nav_icon('import') }} <span>{{ _('nav.import') }}</span>
+        </a>
+        <a href="{{ url_for('main.settings') }}" class="sidebar-link {{ 'active' if endpoint in ['main.settings', 'main.settings_2fa'] else '' }}" aria-label="{{ _('nav.settings') }}" title="{{ _('nav.settings') }}">
+          {{ nav_icon('settings') }} <span>{{ _('nav.settings') }}</span>
+        </a>
+        <a href="{{ url_for('main.profile') }}" class="sidebar-link {{ 'active' if endpoint == 'main.profile' else '' }}" aria-label="{{ _('profile.page_title') }}" title="{{ _('profile.page_title') }}">
+          {{ nav_icon('profile') }} <span>{{ _('profile.page_title') }}</span>
+        </a>
+      </nav>
+
+      {% if sidebar_sessions %}
+      <section class="sidebar-sessions" aria-label="{{ _('base.sidebar_active_sessions') }}">
+        <div class="sidebar-section-title">{{ _('base.sidebar_active_sessions') }}</div>
+        <div class="sidebar-session-list">
+          {% for item in sidebar_sessions %}
+          <a href="{{ url_for('main.session_detail', sid=item.session_id_hex) }}"
+             class="sidebar-session-link {{ 'active' if current_sid == item.session_id_hex else '' }}"
+             title="{{ item.label }}">
+            <span class="sidebar-session-dot state-{{ item.state }}" 
+                  style="{% if item.state == 'active' %}background-color: {{ item.color }}; box-shadow: 0 0 8px {{ item.color }};{% endif %}"
+                  aria-hidden="true"></span>
+            <span class="sidebar-session-text">
+              <strong>{{ item.label }}</strong>
+              <small>{{ item.role }} - {{ item.state }}</small>
+            </span>
+          </a>
+          {% endfor %}
+        </div>
+      </section>
+      {% endif %}
+
+      <div class="sidebar-footer">
+        <a href="{{ url_for('main.profile') }}" class="sidebar-profile">
+          <span class="profile-avatar" style="--avatar-bg: {{ user_profile.avatar_color }};">
+            {{ user_profile.username[0] | upper }}
+          </span>
+          <span class="sidebar-profile-text">
+            <strong>{{ user_profile.username }}</strong>
+            <small>{{ _('profile.local_id') }}</small>
+          </span>
+        </a>
+
+
+        <div class="sidebar-utility-row">
+          <a href="{{ url_for('main.armor_report') }}" class="footer-link">{{ _('nav.armor_report') }}</a>
+          <div class="lang-switcher">
+            <button type="button" class="lang-btn">{{ g.locale | upper }}</button>
+            <div class="lang-dropdown">
+              <a href="{{ url_for('main.set_locale', lang='tr') }}" class="lang-link {% if g.locale == 'tr' %}active{% endif %}">Turkce</a>
+              <a href="{{ url_for('main.set_locale', lang='en') }}" class="lang-link {% if g.locale == 'en' %}active{% endif %}">English</a>
+              <a href="{{ url_for('main.set_locale', lang='de') }}" class="lang-link {% if g.locale == 'de' %}active{% endif %}">Deutsch</a>
+              <a href="{{ url_for('main.set_locale', lang='fr') }}" class="lang-link {% if g.locale == 'fr' %}active{% endif %}">Francais</a>
+              <a href="{{ url_for('main.set_locale', lang='ru') }}" class="lang-link {% if g.locale == 'ru' %}active{% endif %}">Russkiy</a>
+              <a href="{{ url_for('main.set_locale', lang='es') }}" class="lang-link {% if g.locale == 'es' %}active{% endif %}">Espanol</a>
+            </div>
+          </div>
+        </div>
+        <span class="iar-marker">{{ _('base.iar_marker') }}{{ iar_report.identity_hash }}</span>
+      </div>
+    </aside>
+
+    <section class="workspace">
+      <header class="workspace-toolbar">
+        <div class="toolbar-title">
+          <span class="toolbar-kicker">{{ _('base.brand') }}</span>
+          <strong>{{ _('base.title_bar') }}</strong>
+        </div>
+        <div class="toolbar-status">
+          <span class="status-dot connected" aria-hidden="true"></span>
+          <span>{{ _('base.offline_status') }}</span>
+        </div>
+      </header>
+
+      <main class="workspace-content">
+        <div class="flash-stack">
+          {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for category, message in messages %}
+              <div class="alert alert-{{ category }}">{{ message }}</div>
+            {% endfor %}
+          {% endwith %}
+        </div>
+
+        {% if error_404 %}
+          <div class="empty-state">
+            <div class="empty-icon">404</div>
+            <p>{{ _('error.404_title') }}</p>
+            <div class="empty-actions">
+              <a href="{{ url_for('main.index') }}" class="btn btn-ghost">{{ _('error.404_btn') }}</a>
+            </div>
+          </div>
+        {% else %}
+          {% block content %}{% endblock %}
+        {% endif %}
+      </main>
+    </section>
+  </div>
+  {% else %}
+  <main class="auth-workspace">
+    <div class="auth-brand-strip">
+      <span class="brand-mark" aria-hidden="true">P</span>
+      <span>
+        <strong>{{ _('base.brand') }}</strong>
+        <small>{{ _('base.offline_status') }}</small>
+      </span>
+    </div>
+
+    <div class="flash-stack auth-flashes">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+          <div class="alert alert-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      {% endwith %}
+    </div>
+
+    {{ self.content() }}
+    <span class="iar-marker">{{ _('base.iar_marker') }}{{ iar_report.identity_hash }}</span>
+  </main>
+  {% endif %}
+
+
+</body>
+</html>

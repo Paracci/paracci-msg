@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Paracci - {{ _('settings.2fa_title') }}{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pages/unlock.css', v=range(1, 99999) | random) }}">
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="page-header-main">
+    <a href="{{ url_for('main.settings') }}" class="btn btn-icon btn-ghost">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="20" height="20">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+      </svg>
+    </a>
+    <h1>{{ _('settings.2fa_title') }}</h1>
+  </div>
+  <p class="subtitle">{{ _('settings.2fa_desc') }}</p>
+</div>
+
+<div class="settings-container mt-8">
+  <div class="settings-section">
+    <div class="settings-section-title">{{ _('settings.security_title') }}</div>
+    <div class="settings-group">
+      {% if is_enabled %}
+        <div class="settings-item">
+          <div class="settings-item-content">
+            <span class="settings-item-title">{{ _('settings.2fa_title') }}</span>
+            <span class="badge badge-info">{{ _('auth.armor_active') }}</span>
+          </div>
+          <form method="POST">
+            <button type="submit" name="action" value="disable" class="btn btn-danger btn-sm">{{ _('common.disable') }}</button>
+          </form>
+        </div>
+      {% else %}
+        {% if not secret %}
+          <div class="settings-item">
+            <div class="settings-item-content">
+              <span class="settings-item-title">{{ _('settings.2fa_title') }}</span>
+              <span class="settings-item-desc">{{ _('auth.setup_2fa_desc') }}</span>
+            </div>
+            <form method="POST">
+              <button type="submit" name="action" value="start_setup" class="btn btn-primary btn-sm">{{ _('common.setup') }}</button>
+            </form>
+          </div>
+        {% else %}
+          <div class="settings-group-title p-4 text-tertiary font-xs uppercase letter-spacing-sm">
+            {{ _('auth.setup_2fa_title') }}
+          </div>
+          <div class="p-6 flex-center flex-column gap-6">
+            <div class="qr-wrapper glass-panel p-4">
+              <img src="data:image/png;base64,{{ qr_code }}" alt="QR Code" class="qr-image">
+            </div>
+            <div class="text-center">
+              <p class="font-mono font-sm text-secondary mb-2">{{ secret }}</p>
+              <p class="text-tertiary font-xs px-8">{{ _('auth.setup_2fa_desc') }}</p>
+            </div>
+            
+            <form method="POST" class="w-full" style="max-width: 320px;">
+              <input type="hidden" name="action" value="confirm_setup">
+              <div class="input-group mb-8">
+                <input type="text" name="code" class="apple-input auth-code-input text-center font-lg font-mono"
+                       placeholder="000000" maxlength="6" required autofocus
+                       autocomplete="one-time-code">
+              </div>
+              <div class="flex justify-between gap-3">
+                <a href="{{ url_for('main.settings_2fa') }}" class="btn btn-ghost px-6">{{ _('common.cancel') }}</a>
+                <button type="submit" class="btn btn-primary px-8">{{ _('common.verify') }}</button>
+              </div>
+            </form>
+          </div>
+        {% endif %}
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

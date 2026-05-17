@@ -1,0 +1,143 @@
+<!-- app/templates/settings.html -->
+{% extends "base.html" %}
+{% block title %}Paracci - {{ _('settings.page_title') }}{% endblock %}
+
+{% block content %}
+
+<div class="page-header">
+  <h1>{{ _('settings.title') }}</h1>
+  <p class="subtitle">{{ _('settings.subtitle') }}</p>
+</div>
+
+<form method="POST" action="{{ url_for('main.settings') }}">
+  <div class="settings-container">
+
+    <!-- Profile Section -->
+    <div class="settings-section">
+      <div class="settings-section-title">{{ _('settings.profile_title') }}</div>
+      <div class="settings-group">
+        <a href="{{ url_for('main.profile') }}" class="settings-item" style="text-decoration: none; padding-top: var(--space-5); padding-bottom: var(--space-5);">
+          <div class="profile-banner">
+            <span class="profile-avatar flex-center" style="--avatar-bg: {{ user_profile.avatar_color }}; color: var(--bg-base); font-weight: 700; border-radius: 50%; background: var(--avatar-bg);">
+              {{ user_profile.username[0] | upper }}
+            </span>
+            <div class="profile-banner-info">
+              <span class="profile-banner-name">{{ user_profile.username }}</span>
+              <span class="profile-banner-desc">{{ _('settings.profile_desc') }}</span>
+            </div>
+          </div>
+          <div class="profile-banner-action" style="color: var(--text-tertiary);">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="20" height="20">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+            </svg>
+          </div>
+        </a>
+      </div>
+    </div>
+
+    <!-- Session Defaults -->
+    <div class="settings-section">
+      <div class="settings-section-title">{{ _('settings.session_defaults_title') }}</div>
+      <div class="settings-group">
+        <div class="settings-item">
+          <div class="settings-item-content">
+            <span class="settings-item-title">{{ _('settings.default_ttl') }}</span>
+            <span class="settings-item-desc">{{ _('settings.default_ttl_desc') }}</span>
+          </div>
+          <select class="apple-select" name="default_ttl">
+            <option value="0"      {% if settings.default_ttl == 0      %}selected{% endif %}>{{ _('time.infinite') }}</option>
+            <option value="3600"   {% if settings.default_ttl == 3600   %}selected{% endif %}>{{ _('time.1h') }}</option>
+            <option value="86400"  {% if settings.default_ttl == 86400  %}selected{% endif %}>{{ _('time.1d') }}</option>
+            <option value="604800" {% if settings.default_ttl == 604800 %}selected{% endif %}>{{ _('time.1w') }}</option>
+          </select>
+        </div>
+        <div class="settings-item">
+          <div class="settings-item-content">
+            <span class="settings-item-title">{{ _('settings.auto_cleanup') }}</span>
+            <span class="settings-item-desc">{{ _('settings.auto_cleanup_desc') }}</span>
+          </div>
+          <select class="apple-select" name="auto_cleanup_hours">
+            <option value="1"   {% if settings.auto_cleanup_hours == 1   %}selected{% endif %}>{{ _('time.1h') }}</option>
+            <option value="6"   {% if settings.auto_cleanup_hours == 6   %}selected{% endif %}>{{ _('time.6h') }}</option>
+            <option value="12"  {% if settings.auto_cleanup_hours == 12  %}selected{% endif %}>{{ _('time.12h') }}</option>
+            <option value="24"  {% if settings.auto_cleanup_hours == 24  %}selected{% endif %}>{{ _('time.24h_default') }}</option>
+            <option value="48"  {% if settings.auto_cleanup_hours == 48  %}selected{% endif %}>{{ _('time.2d') }}</option>
+            <option value="168" {% if settings.auto_cleanup_hours == 168 %}selected{% endif %}>{{ _('time.1w') }}</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Security -->
+    <div class="settings-section">
+      <div class="settings-section-title">{{ _('settings.security_title') }}</div>
+      <div class="settings-group">
+        <label class="settings-item" style="cursor: pointer;">
+          <div class="settings-item-content">
+            <span class="settings-item-title">{{ _('settings.anti_screenshot') }}</span>
+            <span class="settings-item-desc">{{ _('settings.anti_screenshot_desc') }}</span>
+          </div>
+          <div class="apple-switch">
+            <input type="checkbox" name="anti_screenshot" {% if settings.anti_screenshot %}checked{% endif %}>
+            <span class="apple-switch-slider"></span>
+          </div>
+        </label>
+        <label class="settings-item" style="cursor: pointer;">
+          <div class="settings-item-content">
+            <span class="settings-item-title">{{ _('settings.quiet_mode') }}</span>
+            <span class="settings-item-desc">{{ _('settings.quiet_mode_desc') }}</span>
+          </div>
+          <div class="apple-switch">
+            <input type="checkbox" name="quiet_mode" {% if settings.quiet_mode %}checked{% endif %}>
+            <span class="apple-switch-slider"></span>
+          </div>
+        </label>
+        <a href="{{ url_for('main.settings_2fa') }}" class="settings-item" style="text-decoration: none;">
+          <div class="settings-item-content">
+            <span class="settings-item-title">{{ _('settings.2fa_title') }}</span>
+            <span class="settings-item-desc">{{ _('settings.2fa_desc') }}</span>
+          </div>
+          <div style="color: var(--text-tertiary);">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="20" height="20">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+            </svg>
+          </div>
+        </a>
+      </div>
+    </div>
+
+    <!-- System Info -->
+    <div class="settings-section">
+      <div class="settings-section-title">{{ _('settings.sys_info_title') }}</div>
+      <div class="settings-group">
+        <div class="settings-item sys-info-mono">
+          <span class="accent-text">{{ _('settings.sys_label_data') }}</span>
+          <span>{{ sys_info.data_dir }}</span>
+        </div>
+        <div class="settings-item sys-info-mono">
+          <span class="accent-text">{{ _('settings.sys_label_config') }}</span>
+          <span>{{ sys_info.config_path }}</span>
+        </div>
+        <div class="settings-item sys-info-mono">
+          <span class="accent-text">{{ _('settings.sys_label_downloads') }}</span>
+          <span>{{ sys_info.downloads_path }}</span>
+        </div>
+        <div class="settings-item sys-info-mono">
+          <span class="accent-text">{{ _('settings.sys_label_database') }}</span>
+          <span>{{ sys_info.db_path }}</span>
+        </div>
+      </div>
+      <div style="padding: 10px 20px; font-size: var(--text-body-sm); color: var(--text-tertiary);">
+        {{ _('settings.sys_info_desc') }}
+      </div>
+    </div>
+
+    <div class="form-actions mt-10">
+      <a href="{{ url_for('main.index') }}" class="btn btn-ghost px-8">{{ _('common.cancel') }}</a>
+      <button type="submit" class="btn btn-primary px-12">{{ _('common.save_changes') }}</button>
+    </div>
+
+  </div>
+</form>
+
+{% endblock %}

@@ -1,0 +1,55 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.linux_venv/
+ENV/
+env/
+dist/
+build_cache/
+
+# --- Compiled binaries (local builds) ---
+# GitHub Actions produces these; local builds should not be committed
+builds/
+
+# --- Paracci Data (CRITICAL) ---
+# Kullanıcı verileri, anahtarlar ve oturumlar asla yüklenmemeli
+data/
+data_x/
+data_y/
+keys/
+logs/
+.audit_trace
+.flask_secret
+.paracci_identity
+audit_results.txt
+
+# --- OS Caches ---
+.DS_Store
+Thumbs.db
+
+# --- Development / Scratch ---
+paracci/scratch/
+*.log
+paracci_icon.ico
+
+# --- Local IDE ---
+.vscode/
+.idea/
+
+# --- Testing ---
+.pytest_cache/
+.coverage
+htmlcov/
+*.paracci
+logs_*/
+
+# --- macOS / Swift ---
+.build/
+.swiftpm/
+DerivedData/
+platform/macos/ParacciMac/.build/
+platform/macos/ParacciMac/.swiftpm/
+platform/macos/ParacciMac/DerivedData/

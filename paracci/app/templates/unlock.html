@@ -1,0 +1,134 @@
+<!-- app/templates/unlock.html -->
+{% extends "base.html" %}
+{% block title %}{{ _('unlock.unlock_page') if is_initialized else _('unlock.setup_page') }}{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pages/unlock.css', v=range(1, 99999) | random) }}">
+{% endblock %}
+{% block content %}
+<div class="auth-container">
+  <div class="auth-card">
+    <div class="card-header auth-header text-center">
+      <div class="auth-icon-wrapper">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="auth-icon-svg">
+          <path fill-rule="evenodd" d="M12 1.5a5.25 5.25 0 00-5.25 5.25v3a3 3 0 00-3 3v6.75a3 3 0 003 3h10.5a3 3 0 003-3v-6.75a3 3 0 00-3-3v-3c0-2.9-2.35-5.25-5.25-5.25zm3.75 8.25v-3a3.75 3.75 0 10-7.5 0v3h7.5z" clip-rule="evenodd" />
+        </svg>
+      </div>
+      <h1 class="mt-4">{{ _('unlock.welcome') if not is_initialized else _('unlock.locked') }}</h1>
+      <p class="text-secondary mt-2 px-6">
+        {{ _('unlock.init_desc') if not is_initialized else _('unlock.unlock_desc') }}
+      </p>
+    </div>
+
+    <form method="POST" class="auth-form" id="authForm" data-armor-text="{{ _('base.quantum_armor') }}">
+      <div class="form-group">
+        <!-- New Visual PIN Display -->
+        <div class="pin-display-wrapper">
+          <div class="pin-display" id="pinDisplay">
+            <div class="pin-dot"><span></span></div>
+            <div class="pin-dot"><span></span></div>
+            <div class="pin-dot"><span></span></div>
+            <div class="pin-dot"><span></span></div>
+            <div class="pin-dot"><span></span></div>
+            <div class="pin-dot"><span></span></div>
+            <div class="pin-dot"><span></span></div>
+            <div class="pin-dot"><span></span></div>
+          </div>
+          <button type="button" class="pin-toggle" id="pinToggle" title="{{ _('unlock.show_pin') }}">
+            <svg class="eye-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <!-- Open Eye Shape -->
+              <path class="eye-open-path" d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+              <circle class="eye-pupil" cx="12" cy="12" r="3" />
+              
+              <!-- Detailed Closed Eye Group -->
+              <g class="eye-closed-group">
+                <!-- Main lid curve -->
+                <path class="eye-lid-main" d="M2 12c3 6 17 6 20 0" />
+                <!-- Eyelid crease (subtle top line) -->
+                <path class="eye-crease" d="M5 10c2-1 12-1 14 0" opacity="0.3" />
+                <!-- More detailed lashes -->
+                <path class="lash" d="M12 18v3" />
+                <path class="lash" d="M8 17.5l-1.5 2.5" />
+                <path class="lash" d="M16 17.5l1.5 2.5" />
+                <path class="lash" d="M5 15l-1.5 1.5" />
+                <path class="lash" d="M19 15l1.5 1.5" />
+              </g>
+            </svg>
+          </button>
+        </div>
+
+        <input type="password" 
+               name="pin" 
+               id="pinInput"
+               maxlength="8"
+               minlength="8"
+               pattern=".{8,8}"
+               title="PIN must be exactly 8 characters"
+               class="hidden-input"
+               required 
+               autofocus>
+        
+        {% if error %}
+          <div class="alert alert-error mt-4 animate-shake">
+            <span class="icon">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="20" height="20">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9.75 9.75l4.5 4.5m0-4.5l-4.5 4.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </span>
+            <span>{{ _('unlock.invalid_pin') }}</span>
+          </div>
+        {% endif %}
+      </div>
+
+      <div class="form-actions-center mt-6 mb-4">
+        <button type="submit" class="btn btn-primary btn-lg px-12 w-full" id="submitBtn">
+          <span class="btn-text">{{ _('unlock.unlock_btn') if is_initialized else _('unlock.init_btn') }}</span>
+        </button>
+      </div>
+
+      {% if not is_initialized %}
+        <div class="pin-strength-container mt-6">
+          <div class="pin-strength-header mb-2">
+            <span class="text-tertiary font-xs uppercase tracking-widest">{{ _('unlock.pin_strength') }}</span>
+            <span class="strength-status font-xs" id="strengthStatus">—</span>
+          </div>
+          <div class="progress-track mb-4"><div class="progress-fill" id="strengthFill"></div></div>
+          
+          <ul class="strength-checklist" id="strengthChecklist">
+            <li data-req="length" class="text-tertiary font-xs">
+              <span class="check-icon"></span> {{ _('unlock.req_length') }}
+            </li>
+            <li data-req="sequence" class="text-tertiary font-xs">
+              <span class="check-icon"></span> {{ _('unlock.req_sequence') }}
+            </li>
+            <li data-req="unique" class="text-tertiary font-xs">
+              <span class="check-icon"></span> {{ _('unlock.req_unique') }}
+            </li>
+          </ul>
+        </div>
+      {% endif %}
+      <div class="auth-card-footer">
+        <div class="security-badges">
+          <div class="badge-item">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="12" height="12">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span>{{ _('auth.armor_active') }}</span>
+          </div>
+          <div class="badge-divider"></div>
+          <div class="badge-item">
+            <span class="font-mono">{{ _('unlock.algo_argon2') }}</span>
+          </div>
+          <div class="badge-divider"></div>
+          <div class="badge-item">
+            <span>{{ _('unlock.aes_256') }}</span>
+          </div>
+        </div>
+      </div>
+    </form>
+
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/auth.js') }}"></script>
+{% endblock %}

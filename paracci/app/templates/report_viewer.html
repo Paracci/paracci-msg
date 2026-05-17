@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Paracci - {{ title }}{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/report.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="page-header-main">
+    <h1>{{ title }}</h1>
+    <a href="javascript:history.back()" class="btn btn-ghost btn-sm">{{ _('common.back') }}</a>
+  </div>
+  <p class="subtitle">{{ _('armor.report_info') }}</p>
+</div>
+
+<div class="card report-card">
+  <div class="card-body">
+    <div id="markdown-container" class="apple-report-content">
+      <div class="flex-center py-12">
+        <span class="spinner spinner-lg" aria-label="Loading"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<template id="raw-content">{{ content }}</template>
+
+<script src="{{ url_for('static', filename='js/lib/marked.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/report.js') }}"></script>
+{% endblock %}

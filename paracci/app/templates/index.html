@@ -1,0 +1,72 @@
+<!-- app/templates/index.html -->
+{% extends "base.html" %}
+{% block title %}Paracci - Oturumlar{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pages/index.css') }}">
+{% endblock %}
+
+{% block content %}
+
+<div class="page-header">
+  <div class="page-header-main">
+    <h1>{{ _('index.title') }}</h1>
+  </div>
+  <p class="subtitle">{{ _('index.subtitle') }}</p>
+</div>
+
+{% if sessions %}
+  <div class="index-actions">
+    <a href="{{ url_for('main.session_new') }}" class="btn btn-primary">{{ _('index.new_btn') }}</a>
+    <a href="{{ url_for('main.session_import') }}" class="btn btn-ghost">{{ _('index.import_btn') }}</a>
+  </div>
+
+  <div class="session-list">
+    {% for s in sessions %}
+    <div class="session-card">
+      <!-- Main Link Overlay -->
+      <a href="{{ url_for('main.session_detail', sid=s.session_id_hex) }}" class="session-card-overlay"></a>
+      
+      <div class="session-card-left">
+        <span class="session-label">{{ s.label }}</span>
+        <span class="session-id">{{ s.session_id_hex[:20] }}…</span>
+      </div>
+      
+      <div class="session-card-right">
+        <span class="badge badge-{{ s.state }} {{ 'badge-active-pulse' if s.state == 'active' else '' }}"
+              style="{% if s.state == 'active' %}--badge-color: {{ s.color }};{% endif %}">
+          {% if s.state != 'active' %}<span class="badge-dot"></span>{% endif %}
+          {{ _('session.bonded_active') if s.state == 'active' else _('session.bonded_pending') }}
+        </span>
+        
+        <div class="session-card-meta-bottom">
+          <span class="session-time">{{ s.updated_at | ts_fmt }}</span>
+          
+          <!-- Integrated Settings Icon -->
+          <a href="{{ url_for('main.session_settings', sid=s.session_id_hex) }}" class="session-card-settings-inline" title="{{ _('session.settings_btn', default='Session Settings') }}">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 011.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.273.807-.108 1.205.166.397.505.71.93.78l.894.15c.542.09.94.56.94 1.11v1.094c0 .55-.398 1.02-.94 1.11l-.894.149c-.424.07-.764.383-.93.78-.165.398-.143.854.107 1.204l.527.738a1.125 1.125 0 01-.12 1.45l-.774.773a1.125 1.125 0 01-1.45.12l-.737-.527c-.35-.25-.807-.273-1.205-.108-.397.166-.71.505-.78.93l-.15.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.02-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527a1.125 1.125 0 01-1.45-.12l-.773-.774a1.125 1.125 0 01-.12-1.45l.527-.737c.25-.35.273-.808.108-1.205-.166-.397-.505-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.11v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.764-.383.93-.78.165-.398.143-.854-.107-1.204l-.527-.738a1.125 1.125 0 01.12-1.45l.774-.773a1.125 1.125 0 011.45-.12l.737.527c.35.25.807.273 1.205.108.397-.166.71-.505.78-.93l.15-.894z" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </a>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+{% else %}
+  <div class="empty-state">
+    <div class="empty-icon">◈</div>
+    <p>{{ _('index.empty_title') }}</p>
+    <p class="empty-subtitle">
+      {{ _('index.empty_desc') }}
+    </p>
+    <div class="empty-actions">
+      <a href="{{ url_for('main.session_new') }}" class="btn btn-primary">{{ _('index.empty_new_btn') }}</a>
+      <a href="{{ url_for('main.session_import') }}" class="btn btn-ghost">{{ _('index.empty_import_btn') }}</a>
+    </div>
+  </div>
+{% endif %}
+
+{% endblock %}
