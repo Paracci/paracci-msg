@@ -110,28 +110,6 @@ jobs:
           mv Paracci Paracci-Linux
           sha256sum Paracci-Linux > SHA256SUMS.txt
 
-      # ── 7. GitHub Build Provenance Attestation (Sigstore / SLSA L2) ────────
-      #    Generates a cryptographically signed attestation that this binary
-      #    was built from THIS specific commit in THIS repository.
-      #    Verifiable at: https://github.com/<owner>/<repo>/attestations
-      - name: Attest Windows build provenance
-        if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/v')
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: builds/windows/Paracci.exe
-
-      - name: Attest macOS build provenance
-        if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/v')
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: builds/macos/Paracci-macOS*
-
-      - name: Attest Linux build provenance
-        if: runner.os == 'Linux' && startsWith(github.ref, 'refs/tags/v')
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: builds/linux/Paracci-Linux
-
       # ── 8. Upload artifacts ────────────────────────────────────────────────
       - name: Upload artifact (Windows)
         if: runner.os == 'Windows'
