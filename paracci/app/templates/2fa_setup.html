@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Paracci - {{ _('auth.setup_2fa_title') }}{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pages/unlock.css', v=range(1, 99999) | random) }}">
+{% endblock %}
+
+{% block content %}
+<div class="auth-container">
+  <div class="auth-card">
+    <div class="auth-card-header">
+      <div class="auth-icon-wrapper">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.744c0 3.89 2.421 7.22 5.834 8.497l1.166.435a1.125 1.125 0 00.8 0l1.166-.435c3.413-1.277 5.834-4.607 5.834-8.497 0-1.317-.21-2.586-.598-3.776A11.959 11.959 0 0112 2.714z" />
+        </svg>
+      </div>
+      <h1>{{ _('auth.setup_2fa_title') }}</h1>
+      <p>{{ _('auth.setup_2fa_desc') }}</p>
+    </div>
+
+    <div class="qr-container mb-8 flex-center flex-column gap-4">
+      <div class="qr-wrapper p-4">
+        <img src="data:image/png;base64,{{ qr_code }}" alt="QR Code" class="qr-image">
+      </div>
+      <div class="secret-display font-mono font-xs text-secondary p-2">
+        {{ secret }}
+      </div>
+    </div>
+
+    <form method="POST" class="auth-form" id="authForm" data-armor-text="{{ _('base.quantum_armor') }}">
+      <div class="input-group">
+        <label class="input-label">{{ _('auth.verify_2fa_code') }}</label>
+        <input type="text" name="code" class="apple-input auth-code-input text-center font-lg font-mono" placeholder="000000" maxlength="6" autocomplete="one-time-code" required autofocus>
+      </div>
+
+      <div class="form-actions mt-8 flex-column gap-3">
+        <button type="submit" name="action" value="enable" class="btn btn-primary w-full" id="submitBtn">{{ _('auth.setup_2fa_enable') }}</button>
+        <button type="submit" name="action" value="skip" class="btn btn-ghost w-full" formnovalidate>{{ _('auth.setup_2fa_skip') }}</button>
+      </div>
+    </form>
+
+    <div class="auth-card-footer">
+      <div class="security-badges">
+        <div class="badge-item"><span>TOTP</span></div>
+        <div class="badge-divider"></div>
+        <div class="badge-item"><span>RFC 6238</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/auth.js') }}"></script>
+{% endblock %}

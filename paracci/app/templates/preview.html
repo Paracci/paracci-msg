@@ -1,0 +1,87 @@
+<!-- app/templates/preview.html -->
+{% extends "base.html" %}
+{% block title %}{{ _('preview.page_title', filename=filename) }}{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pages/preview.css', v=range(1, 99999) | random) }}">
+{% endblock %}
+
+{% block content %}
+<div class="preview-container">
+  <div class="preview-header">
+    <div class="preview-meta">
+      <h1>{{ filename }}</h1>
+      <div class="badge-group">
+        <span class="badge badge-info">{{ mode | upper }}</span>
+        {% if is_dangerous %}
+          <span class="badge badge-error">{{ _('preview.badge_dangerous') }}</span>
+        {% elif mode == 'image' %}
+          <span class="badge badge-accent">{{ _('preview.badge_image') }}</span>
+        {% elif mode == 'video' %}
+          <span class="badge badge-ghost">{{ _('preview.badge_video') }}</span>
+        {% elif mode == 'code' %}
+          <span class="badge badge-info">{{ _('preview.badge_code') }}</span>
+        {% endif %}
+        {% if not allow_download %}
+          <span class="badge badge-ghost">{{ _('session.no_download_alert_bold') }}</span>
+        {% endif %}
+      </div>
+    </div>
+    <div class="preview-actions">
+      {% if allow_download %}
+        <a href="{{ url_for('main.preview_download', pid=pid) }}" class="btn btn-primary">{{ _('preview.download_btn') }}</a>
+      {% endif %}
+      <button type="button" class="btn btn-ghost" onclick="window.pywebview?.api?.close ? window.pywebview.api.close() : window.close()">{{ _('common.close') }}</button>
+    </div>
+  </div>
+
+  {% if is_dangerous %}
+    <div class="alert alert-error">
+      <div>
+        <strong>{{ _('preview.security_warning_title') }}</strong>
+        <p>{{ _('preview.security_warning_desc_p1', ext=filename.split('.')[-1]) }} <strong>{{ _('preview.security_warning_bold') }}</strong> {{ _('preview.security_warning_desc_p2') }}</p>
+      </div>
+    </div>
+  {% elif mode == 'code' %}
+    <div class="alert alert-info">
+      <div>
+        <strong>{{ _('preview.review_mode_title') }}</strong>
+        <p>{{ _('preview.review_mode_desc_p1') }} {{ _('preview.review_mode_desc_p2') }}</p>
+      </div>
+    </div>
+  {% endif %}
+
+  <div id="preview-body-container" class="preview-content card" data-allow-download="{{ 'true' if allow_download else 'false' }}">
+    <div class="preview-viewport">
+      {% if mode == 'image' %}
+        <img src="{{ url_for('main.preview', pid=pid, raw=1) }}" alt="{{ filename }}" class="preview-img">
+      {% elif mode == 'video' %}
+        <video controls controlslist="nodownload" class="preview-video">
+          <source src="{{ url_for('main.preview', pid=pid, raw=1) }}" type="{{ mime }}">
+          {{ _('preview.video_not_supported') }}
+        </video>
+      {% elif mode == 'code' %}
+        <pre class="preview-text mono">{{ code_content }}</pre>
+      {% elif mode == 'text' %}
+        <pre class="preview-text mono">{{ code_content if code_content is defined else '' }}</pre>
+      {% else %}
+        <div class="preview-fallback">
+          <div class="fallback-icon flex-center">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="54" height="54">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5A3.375 3.375 0 0010.125 2.25H8.25m2.25 0H5.625A2.625 2.625 0 003 4.875v14.25a2.625 2.625 0 002.625 2.625h12.75A2.625 2.625 0 0021 19.125v-4.875" />
+            </svg>
+          </div>
+          <p>{{ _('preview.cannot_preview') }}</p>
+          {% if allow_download %}
+            <div class="mt-6">
+              <a href="{{ url_for('main.preview_download', pid=pid) }}" class="btn btn-ghost">{{ _('preview.download_file_btn') }}</a>
+            </div>
+          {% endif %}
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/preview.js', v=range(1, 99999) | random) }}"></script>
+{% endblock %}

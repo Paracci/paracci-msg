@@ -1,0 +1,293 @@
+.setup-flow-wrapper {
+  margin-bottom: var(--space-8);
+  padding: var(--space-5);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--material-card);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+}
+
+.setup-flow-title {
+  margin: 0 0 var(--space-5);
+  color: var(--text-primary);
+  font-size: var(--text-body);
+  font-weight: 700;
+}
+
+.flow-steps-container {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-3);
+}
+
+.flow-step {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+.flow-step.active {
+  color: var(--text-primary);
+}
+
+.flow-icon,
+.flow-num {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.flow-step.active .flow-icon,
+.flow-step.active .flow-num {
+  border-color: rgba(var(--accent-rgb), 0.38);
+  background: var(--accent-soft);
+  color: var(--accent-secondary);
+}
+
+.flow-content {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.flow-content strong {
+  color: var(--text-primary);
+  font-size: var(--text-body-sm);
+}
+
+.flow-content span {
+  color: var(--text-secondary);
+  font-size: var(--text-body-sm);
+  line-height: 1.45;
+}
+
+.flow-content code {
+  color: var(--accent-secondary);
+  font-family: var(--font-mono);
+}
+
+.flow-connector {
+  padding-top: 12px;
+  color: var(--text-tertiary);
+}
+
+.profile-radio-input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.profile-label {
+  position: relative;
+  margin: 0;
+  cursor: pointer;
+}
+
+.profile-label .profile-checkmark {
+  color: var(--accent-secondary);
+  opacity: 0;
+  transition: opacity var(--duration-sm) var(--ease);
+}
+
+.profile-radio-input:checked ~ .profile-checkmark {
+  opacity: 1 !important;
+}
+
+.profile-radio-input:checked ~ .settings-info .settings-title {
+  color: var(--accent-secondary);
+}
+
+.security-profiles-group .settings-item {
+  min-height: 70px;
+}
+
+#custom-security-section {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--space-6);
+}
+
+.apple-input-number {
+  width: 120px !important;
+  min-height: 32px !important;
+  padding: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  color: var(--text-primary) !important;
+  font-family: var(--font-mono) !important;
+  text-align: right !important;
+}
+
+.apple-input-number:focus {
+  outline: none !important;
+  color: var(--accent-secondary) !important;
+}
+
+.apple-input-number::-webkit-outer-spin-button,
+.apple-input-number::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.apple-input-number {
+  -moz-appearance: textfield;
+}
+
+#native-file-selector {
+  padding: var(--space-10);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--material-card);
+  text-align: center;
+  cursor: pointer;
+}
+
+#native-file-selector:hover {
+  border-color: rgba(var(--accent-rgb), 0.45);
+  background: var(--accent-soft);
+}
+
+.file-icon-lg {
+  margin-bottom: var(--space-3);
+}
+
+/* Color Picker */
+.color-picker-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.color-option {
+  position: relative;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.color-option input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.color-swatch {
+  display: block;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background-color: var(--option-color);
+  border: 2px solid transparent;
+  transition: all var(--duration-sm) var(--ease);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+.color-option:hover .color-swatch {
+  transform: scale(1.1);
+}
+
+.color-option input:checked + .color-swatch {
+  transform: scale(1.15);
+  border-color: var(--accent-white);
+  box-shadow: 0 0 0 2px var(--bg-base), 0 0 12px var(--option-color);
+}
+
+.custom-color-wrapper {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 38px;
+  padding-left: var(--space-3);
+  padding-right: var(--space-1);
+  background: var(--bg-muted);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  transition: all var(--duration-sm) var(--ease);
+}
+
+.custom-color-wrapper:focus-within {
+  border-color: var(--accent-primary);
+  background: var(--bg-subtle);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.1);
+}
+
+.custom-color-input {
+  width: 70px;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-body-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  outline: none;
+}
+
+.custom-color-input::placeholder {
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
+.palette-btn-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.native-color-picker {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.palette-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: all var(--duration-sm) var(--ease);
+}
+
+.palette-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+  transform: rotate(15deg);
+}
+
+@media (max-width: 760px) {
+  .flow-steps-container {
+    grid-template-columns: 1fr;
+  }
+
+  .flow-connector {
+    display: none;
+  }
+
+  .flow-step {
+    flex-direction: row;
+    text-align: left;
+    align-items: flex-start;
+  }
+}

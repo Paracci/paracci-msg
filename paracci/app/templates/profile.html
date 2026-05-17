@@ -1,0 +1,70 @@
+<!-- app/templates/profile.html -->
+{% extends "base.html" %}
+
+{% block title %}Paracci - {{ _('profile.page_title') }}{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pages/profile.css') }}">
+{% endblock %}
+
+{% block content %}
+
+<div class="page-header">
+  <div class="page-header-main">
+    <h1>{{ _('profile.title') }}</h1>
+  </div>
+  <p class="subtitle">{{ _('profile.subtitle') }}</p>
+</div>
+
+<div class="settings-container">
+  
+  <!-- Profile Preview Card (Apple Style Banner) -->
+  <div class="settings-section">
+    <div class="settings-group" style="text-align: center; padding: var(--space-8) 0; border: none; background: transparent;">
+      <div class="avatar-huge" style="--avatar-bg: {{ profile.avatar_color }}; color: var(--bg-base); background: var(--avatar-bg); border-color: var(--avatar-bg);">
+        {{ profile.username[0] | upper }}
+      </div>
+      <h2 class="preview-name">{{ profile.username }}</h2>
+      <span class="badge badge-pending">{{ _('profile.local_id') }}</span>
+    </div>
+  </div>
+
+  <!-- Profile Settings Form -->
+  <form method="POST">
+    <div class="settings-section">
+      <div class="settings-section-title">{{ _('profile.edit_title') }}</div>
+      <div class="settings-group">
+        
+        <div class="settings-item" style="flex-direction: column; align-items: stretch; gap: var(--space-3);">
+          <div class="form-group mb-0">
+            <label for="username" class="settings-item-title">{{ _('profile.nickname_label') }}</label>
+            <input type="text" id="username" name="username" value="{{ profile.username }}" placeholder="{{ _('profile.nickname_placeholder') }}" required style="margin-top: 0.5rem;">
+            <small class="settings-item-desc mt-2">{{ _('profile.nickname_hint') }}</small>
+          </div>
+        </div>
+
+        <div class="settings-item" style="flex-direction: column; align-items: stretch; gap: var(--space-3);">
+          <div class="settings-item-title">{{ _('profile.avatar_label') }}</div>
+          <div class="color-picker-grid" style="background: transparent; border: none; padding: 0; margin-top: 0;">
+            {% set colors = ['#0a84ff', '#5e9cff', '#f5f5f7', '#8e8e93', '#636366', '#3a3a3c', '#1c1c1e', '#000000'] %}
+            {% for color in colors %}
+              <label class="color-option">
+                <input type="radio" name="avatar_color" value="{{ color }}" {% if profile.avatar_color == color %}checked{% endif %}>
+                <span class="color-circle" style="--avatar-bg: {{ color }};"></span>
+              </label>
+            {% endfor %}
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="form-actions mt-8 flex-center">
+      <button type="submit" class="btn btn-primary px-12">{{ _('common.save_changes') }}</button>
+    </div>
+  </form>
+
+</div>
+
+<script src="{{ url_for('static', filename='js/profile.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,344 @@
+name: Build & Release
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Triggers:
+#   • Push a tag like v1.2.3  → full build + GitHub Release + VT scan
+#   • workflow_dispatch        → manual trigger (build artifacts only)
+# ─────────────────────────────────────────────────────────────────────────────
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write      # create GitHub Releases, update release body
+  id-token: write      # GitHub OIDC → Sigstore build attestation (SLSA)
+  attestations: write  # store build provenance attestation
+
+jobs:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 1 — Build on all three platforms in parallel
+  # ═══════════════════════════════════════════════════════════════════════════
+  build:
+    name: Build (${{ matrix.platform_id }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            platform_id: windows
+            artifact_name: Paracci-Windows
+
+          - os: macos-latest
+            platform_id: macos
+            artifact_name: Paracci-macOS
+
+          - os: ubuntu-latest
+            platform_id: linux
+            artifact_name: Paracci-Linux
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Set up Python ───────────────────────────────────────────────────
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      # ── 3. Linux: GTK3 + WebKit2GTK system packages ────────────────────────
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            python3-gi python3-gi-cairo \
+            gir1.2-gtk-3.0 gir1.2-webkit2-4.0 \
+            libgirepository1.0-dev gcc libcairo2-dev \
+            pkg-config python3-dev libglib2.0-dev \
+            libegl1 libxcb-cursor0 libxcb-xinerama0
+
+      # ── 4. Install runtime + build dependencies ────────────────────────────
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install "pyinstaller>=6.0" pyinstaller-hooks-contrib
+
+      # ── 5. Build executable ────────────────────────────────────────────────
+      - name: Build executable
+        run: python build.py --clean
+        env:
+          QT_QPA_PLATFORM: offscreen   # suppress headless Qt warnings on Linux CI
+
+      # ── 6. Normalize output path and compute SHA-256 ───────────────────────
+      - name: Prepare asset (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $file = "builds\windows\Paracci.exe"
+          $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+          "$hash  Paracci-Windows.exe" | Out-File -Encoding utf8 "builds\windows\SHA256SUMS.txt"
+          Write-Host "SHA256: $hash"
+
+      - name: Prepare asset (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          if [ -d "builds/macos/Paracci.app" ]; then
+            cd builds/macos
+            zip -r Paracci-macOS.zip Paracci.app
+            sha256sum Paracci-macOS.zip > SHA256SUMS.txt
+            rm -rf Paracci.app
+          else
+            chmod +x builds/macos/Paracci
+            cd builds/macos
+            mv Paracci Paracci-macOS
+            sha256sum Paracci-macOS > SHA256SUMS.txt
+          fi
+
+      - name: Prepare asset (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          chmod +x builds/linux/Paracci
+          cd builds/linux
+          mv Paracci Paracci-Linux
+          sha256sum Paracci-Linux > SHA256SUMS.txt
+
+      # ── 7. GitHub Build Provenance Attestation (Sigstore / SLSA L2) ────────
+      #    Generates a cryptographically signed attestation that this binary
+      #    was built from THIS specific commit in THIS repository.
+      #    Verifiable at: https://github.com/<owner>/<repo>/attestations
+      - name: Attest Windows build provenance
+        if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: builds/windows/Paracci.exe
+
+      - name: Attest macOS build provenance
+        if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: builds/macos/Paracci-macOS*
+
+      - name: Attest Linux build provenance
+        if: runner.os == 'Linux' && startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: builds/linux/Paracci-Linux
+
+      # ── 8. Upload artifacts ────────────────────────────────────────────────
+      - name: Upload artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Paracci-Windows
+          path: builds/windows/
+          retention-days: 7
+
+      - name: Upload artifact (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Paracci-macOS
+          path: builds/macos/
+          retention-days: 7
+
+      - name: Upload artifact (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Paracci-Linux
+          path: builds/linux/
+          retention-days: 7
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 2 — Create GitHub Release
+  # Runs only on version tags, after all builds succeed.
+  # ═══════════════════════════════════════════════════════════════════════════
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    # Output the release upload_url so the VT job can add scan results later
+    outputs:
+      release_id: ${{ steps.gh_release.outputs.id }}
+
+    steps:
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Paracci-Windows
+          path: release-assets/windows
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Paracci-macOS
+          path: release-assets/macos
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Paracci-Linux
+          path: release-assets/linux
+
+      # ── Merge per-platform SHA256 into one canonical file ──────────────────
+      - name: Generate combined SHA256SUMS.txt
+        run: |
+          cat release-assets/windows/SHA256SUMS.txt \
+              release-assets/macos/SHA256SUMS.txt \
+              release-assets/linux/SHA256SUMS.txt \
+            > SHA256SUMS.txt
+          echo "=== SHA256SUMS.txt ==="
+          cat SHA256SUMS.txt
+
+      # ── Resolve final file names ────────────────────────────────────────────
+      - name: Resolve release files
+        id: resolve
+        run: |
+          WIN_FILE="release-assets/windows/Paracci.exe"
+          LINUX_FILE="release-assets/linux/Paracci-Linux"
+          chmod +x "$LINUX_FILE"
+
+          # macOS: .zip bundle or bare binary
+          if [ -f "release-assets/macos/Paracci-macOS.zip" ]; then
+            MACOS_FILE="release-assets/macos/Paracci-macOS.zip"
+          else
+            MACOS_FILE="release-assets/macos/Paracci-macOS"
+            chmod +x "$MACOS_FILE"
+          fi
+
+          echo "win_file=$WIN_FILE"     >> $GITHUB_OUTPUT
+          echo "macos_file=$MACOS_FILE" >> $GITHUB_OUTPUT
+          echo "linux_file=$LINUX_FILE" >> $GITHUB_OUTPUT
+
+      # ── Create the Release ──────────────────────────────────────────────────
+      - name: Create GitHub Release
+        id: gh_release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "Paracci ${{ github.ref_name }}"
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          body: |
+            ## Paracci ${{ github.ref_name }}
+
+            ### 📦 Download
+
+            | Platform | File | Notes |
+            |----------|------|-------|
+            | 🪟 Windows | `Paracci.exe` | Double-click to run — no Python needed |
+            | 🍎 macOS | `Paracci-macOS.zip` | Unzip → drag to Applications |
+            | 🐧 Linux | `Paracci-Linux` | `chmod +x Paracci-Linux && ./Paracci-Linux` |
+
+            ---
+
+            ### 🔐 Security & Integrity
+
+            #### SHA-256 Checksums
+            Verify your download matches `SHA256SUMS.txt` (attached below):
+            ```
+            # Windows (PowerShell):  Get-FileHash Paracci.exe -Algorithm SHA256
+            # macOS / Linux:         sha256sum Paracci-Linux
+            ```
+
+            #### Build Provenance (Sigstore / SLSA Level 2)
+            Every binary in this release was cryptographically signed by GitHub Actions.
+            You can verify the attestation without trusting us:
+            ```bash
+            gh attestation verify Paracci.exe \
+              --repo ${{ github.repository }}
+            ```
+            Or browse the attestations tab:
+            https://github.com/${{ github.repository }}/attestations
+
+            #### VirusTotal Scan
+            _VirusTotal scan links are added automatically below after this release is published._
+            > **Why might antivirus flag it?** PyInstaller bundles the Python interpreter
+            > inside the executable. This "packing" technique is sometimes flagged as
+            > heuristic-suspicious by AV engines even when the code is clean.
+            > The source code is fully open and auditable above.
+
+            ---
+
+            > 🔍 Source code: All application logic is in this repository and open for audit.
+          files: |
+            ${{ steps.resolve.outputs.win_file }}
+            ${{ steps.resolve.outputs.macos_file }}
+            ${{ steps.resolve.outputs.linux_file }}
+            SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 3 — VirusTotal Scan
+  # Runs after the Release is published. Submits all 3 binaries to VT and
+  # appends the scan report URLs to the release body automatically.
+  #
+  # SETUP REQUIRED:
+  #   Add your free VirusTotal API key as a repository secret named VT_API_KEY:
+  #   Repository → Settings → Secrets and variables → Actions → New secret
+  #   Get a free key at: https://www.virustotal.com/gui/join-us
+  # ═══════════════════════════════════════════════════════════════════════════
+  virustotal:
+    name: VirusTotal Scan
+    needs: release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Paracci-Windows
+          path: vt-scan/windows
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Paracci-macOS
+          path: vt-scan/macos
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Paracci-Linux
+          path: vt-scan/linux
+
+      # Rename files to clean names for VT display
+      - name: Normalize filenames for VT
+        run: |
+          mv vt-scan/windows/Paracci.exe        vt-scan/Paracci-Windows.exe || true
+          mv vt-scan/linux/Paracci-Linux         vt-scan/Paracci-Linux       || true
+
+          # macOS: prefer .zip, fall back to bare binary
+          if [ -f "vt-scan/macos/Paracci-macOS.zip" ]; then
+            mv vt-scan/macos/Paracci-macOS.zip   vt-scan/Paracci-macOS.zip
+          else
+            mv vt-scan/macos/Paracci-macOS        vt-scan/Paracci-macOS || true
+          fi
+
+          ls -lah vt-scan/
+
+      # ── Submit to VirusTotal and append scan URLs to the release body ───────
+      - name: VirusTotal Scan
+        uses: crazy-max/ghaction-virustotal@v4
+        with:
+          vt_api_key: ${{ secrets.VT_API_KEY }}
+          request_rate: 4          # free API: max 4 requests/min
+          update_release_body: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          files: |
+            vt-scan/Paracci-Windows.exe
+            vt-scan/Paracci-macOS.zip
+            vt-scan/Paracci-macOS
+            vt-scan/Paracci-Linux
