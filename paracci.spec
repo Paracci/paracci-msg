@@ -143,6 +143,7 @@ exe = EXE(
     target_arch=None,       # None = current machine arch
     codesign_identity=None,
     entitlements_file=None,
+    version=str(ROOT / "file_version_info.txt"),
     icon=app_icon,
 )
 

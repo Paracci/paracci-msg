@@ -69,7 +69,17 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
+      - name: Install PyInstaller (Standard for macOS)
+        if: runner.os == 'macOS'
+        run: |
           pip install "pyinstaller>=6.0" pyinstaller-hooks-contrib
+
+      - name: Install PyInstaller (Compile from Source for Windows and Linux to eliminate False Positives)
+        if: runner.os != 'macOS'
+        run: |
+          pip install --no-binary :all: pyinstaller
+          pip install pyinstaller-hooks-contrib
 
       # ── 5. Build executable ────────────────────────────────────────────────
       - name: Build executable
