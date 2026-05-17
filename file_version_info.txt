@@ -4,7 +4,7 @@
 # and populates properties -> Details in Windows Explorer.
 
 VSVersionInfo(
-  ffi=VS_FIXEDFILEINFO(
+  ffi=FixedFileInfo(
     filevers=(1, 0, 0, 0),
     prodvers=(1, 0, 0, 0),
     mask=0x3f,
