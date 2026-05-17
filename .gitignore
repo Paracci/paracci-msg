@@ -33,7 +33,6 @@ Thumbs.db
 # --- Development / Scratch ---
 paracci/scratch/
 *.log
-paracci_icon.ico
 
 # --- Local IDE ---
 .vscode/
