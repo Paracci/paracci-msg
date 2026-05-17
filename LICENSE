@@ -1,0 +1,164 @@
+PARACCI SOURCE-AVAILABLE LICENSE
+Version 1.0, 2026
+
+Copyright (c) 2026 Paracci. All rights reserved.
+
+This license governs access to and use of the Paracci software and its source
+code ("Software"). By accessing, cloning, downloading, viewing, or running the
+Software or any part of its source code, you ("Licensee") agree to be bound by
+the terms and conditions set forth below.
+
+────────────────────────────────────────────────────────────────────────────────
+SECTION 1 — GRANT OF PERMITTED RIGHTS
+────────────────────────────────────────────────────────────────────────────────
+
+Subject to full compliance with this License, Paracci grants you a limited,
+non-exclusive, non-transferable, non-sublicensable right to:
+
+  1.1  View and read the source code solely for the purpose of educational
+       study, independent security research, and verification of the
+       application's privacy guarantees, cryptographic integrity, and correct
+       behavior.
+
+  1.2  Compile and execute the Software locally on your own device strictly
+       for personal, non-commercial evaluation or security auditing.
+
+  1.3  Open GitHub Issues on the official repository to report bugs,
+       vulnerabilities, or improvement suggestions in a responsible manner.
+
+No other rights are granted. Rights not expressly granted in this Section are
+reserved exclusively by Paracci.
+
+────────────────────────────────────────────────────────────────────────────────
+SECTION 2 — SECURITY COMPONENT INTEGRITY (STRICT PROHIBITION)
+────────────────────────────────────────────────────────────────────────────────
+
+The Software contains built-in security mechanisms including, but not limited
+to, self-integrity verification, anti-screenshot shields, burn-tracking logic,
+session encryption protocols, and OS-level security layers ("Security
+Components").
+
+  2.1  You are strictly and unconditionally prohibited from modifying,
+       disabling, bypassing, circumventing, removing, weakening, or
+       tampering with any Security Component in any way, whether directly in
+       source code, in a compiled binary, at runtime, or through any
+       external tooling, patch, hook, or instrumentation.
+
+  2.2  Any attempt to reverse-engineer the Security Components for purposes
+       other than security auditing under Section 1.1 constitutes a direct
+       violation of this License.
+
+  2.3  Disclosure of any security vulnerability discovered during permitted
+       auditing must be reported privately to the maintainer before any
+       public disclosure. Coordinated Vulnerability Disclosure (CVD) is the
+       only permitted disclosure model.
+
+────────────────────────────────────────────────────────────────────────────────
+SECTION 3 — DERIVATIVE WORKS AND REDISTRIBUTION (PROHIBITED)
+────────────────────────────────────────────────────────────────────────────────
+
+  3.1  FORK & DERIVATIVE WORK BAN — You may not fork, branch, copy, adapt,
+       translate, port, incorporate into another project, or create any
+       derivative work based on the Software or any portion of its source
+       code, whether modified or unmodified, in whole or in part.
+
+  3.2  REDISTRIBUTION BAN — You may not copy, host, mirror, upload,
+       distribute, publish, broadcast, or otherwise make available the
+       Software or its source code (in original or modified form) through
+       any channel — including but not limited to GitHub, GitLab, package
+       registries, app stores, torrent networks, or personal websites —
+       without prior explicit written consent from Paracci.
+
+  3.3  SUBLICENSING BAN — You may not sublicense, resell, rent, lease, or
+       otherwise transfer any rights granted under this License to any third
+       party.
+
+  3.4  PULL REQUEST / CONTRIBUTION NOTE — Unsolicited pull requests or code
+       contributions submitted to the official repository do not confer any
+       intellectual property rights to the contributor. Paracci reserves the
+       right to reject, accept, or incorporate contributions entirely at its
+       own discretion, under its own copyright.
+
+────────────────────────────────────────────────────────────────────────────────
+SECTION 4 — COMMERCIAL USE (PROHIBITED)
+────────────────────────────────────────────────────────────────────────────────
+
+  4.1  You may not use the Software, its source code, its compiled binaries,
+       or any part thereof for any commercial purpose, including but not
+       limited to: integration into a paid product or service, SaaS
+       offerings, internal corporate tooling, or bundling with commercial
+       software.
+
+  4.2  Any commercial licensing inquiry must be submitted in writing to
+       the official contact address of Paracci and requires explicit written
+       approval prior to any commercial use.
+
+────────────────────────────────────────────────────────────────────────────────
+SECTION 5 — ENFORCEMENT AND LEGAL REMEDIES
+────────────────────────────────────────────────────────────────────────────────
+
+  5.1  AUTOMATIC TERMINATION — Any breach of any term of this License
+       immediately and automatically terminates all rights granted herein,
+       without notice, without cure period, and without further action from
+       Paracci.
+
+  5.2  COPYRIGHT INFRINGEMENT — Paracci expressly reserves all rights to
+       pursue legal action for copyright infringement under applicable
+       national and international copyright law, including but not limited
+       to the Berne Convention, the EU Copyright Directive, and United States
+       copyright statutes.
+
+  5.3  DMCA TAKEDOWNS — Paracci reserves the right to issue DMCA takedown
+       notices (17 U.S.C. § 512) and equivalent notices under applicable
+       law against any party hosting, distributing, or reproducing the
+       Software or its source code in violation of this License.
+
+  5.4  INJUNCTIVE RELIEF — Because unauthorized use of the Software may
+       cause irreparable harm, Paracci is entitled to seek injunctive or
+       other equitable relief in addition to any monetary damages.
+
+  5.5  GOVERNING LAW — This License shall be governed by and construed in
+       accordance with applicable law. Any dispute arising out of or related
+       to this License shall be subject to the exclusive jurisdiction of the
+       courts of the copyright holder's place of residence or principal place
+       of business.
+
+────────────────────────────────────────────────────────────────────────────────
+SECTION 6 — DISCLAIMER OF WARRANTIES AND LIMITATION OF LIABILITY
+────────────────────────────────────────────────────────────────────────────────
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT. IN NO EVENT
+SHALL PARACCI OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING BUT NOT
+LIMITED TO LOSS OF DATA, PRIVACY BREACHES, OR BUSINESS INTERRUPTION)
+ARISING OUT OF OR IN CONNECTION WITH THE USE OR INABILITY TO USE THE
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES. USE OF THE
+SOFTWARE IS ENTIRELY AT YOUR OWN RISK.
+
+────────────────────────────────────────────────────────────────────────────────
+SECTION 7 — TRADEMARK
+────────────────────────────────────────────────────────────────────────────────
+
+"Paracci" and associated logos are trademarks of Paracci. This License does not
+grant any right to use the name "Paracci", its logo, or any associated branding
+for any purpose without prior written permission.
+
+────────────────────────────────────────────────────────────────────────────────
+SECTION 8 — ENTIRE AGREEMENT AND SEVERABILITY
+────────────────────────────────────────────────────────────────────────────────
+
+This License constitutes the entire agreement between the parties with respect
+to the Software and supersedes all prior discussions or agreements. If any
+provision of this License is found to be unenforceable under applicable law,
+that provision shall be modified to the minimum extent necessary to make it
+enforceable, and the remaining provisions shall continue in full force and
+effect.
+
+────────────────────────────────────────────────────────────────────────────────
+
+For commercial licensing inquiries or vulnerability reports, contact:
+  https://github.com/Paracci/paracci-msg
+
+© 2026 Paracci. All rights reserved.
