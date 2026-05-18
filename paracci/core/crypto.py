@@ -28,6 +28,10 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import (
     X25519PrivateKey,
     X25519PublicKey,
 )
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from cryptography.hazmat.primitives.hashes import SHA512
@@ -139,6 +143,41 @@ def generate_keypair() -> Tuple[bytes, bytes]:
     return private_bytes, public_bytes
 
 
+def generate_identity_keypair() -> Tuple[bytes, bytes]:
+    """
+    Generates a long-term Ed25519 identity key pair.
+    Returns: (private_key_bytes, public_key_bytes)
+    """
+    private_key = Ed25519PrivateKey.generate()
+    private_bytes = private_key.private_bytes(
+        Encoding.Raw, PrivateFormat.Raw, NoEncryption()
+    )
+    public_bytes = private_key.public_key().public_bytes(
+        Encoding.Raw, PublicFormat.Raw
+    )
+    return private_bytes, public_bytes
+
+
+def sign_identity(private_key_bytes: bytes, message: bytes) -> bytes:
+    """Signs a protocol message with a raw Ed25519 private key."""
+    private_key = Ed25519PrivateKey.from_private_bytes(private_key_bytes)
+    return private_key.sign(message)
+
+
+def verify_identity_signature(
+    public_key_bytes: bytes,
+    message: bytes,
+    signature: bytes,
+) -> bool:
+    """Verifies an Ed25519 signature and returns False for malformed inputs."""
+    try:
+        public_key = Ed25519PublicKey.from_public_bytes(public_key_bytes)
+        public_key.verify(signature, message)
+        return True
+    except Exception:
+        return False
+
+
 def wipe(data: bytes | bytearray | list):
     """Wipes sensitive data from memory by overwriting with zeros."""
     if isinstance(data, bytearray):
@@ -200,6 +239,28 @@ def get_fingerprint(public_key1: bytes, public_key2: bytes) -> str:
     # Take the 32-bit portion and convert to a readable format
     val = struct.unpack(">I", h[:4])[0]
     return f"{val:08X}"
+
+
+def get_safety_code(
+    x_identity_pub: bytes,
+    y_identity_pub: bytes,
+    x_session_pub: bytes,
+    y_session_pub: bytes,
+    session_id: bytes,
+) -> str:
+    """
+    Produces a deterministic 24-hex safety code grouped for human comparison.
+    """
+    h = hashlib.sha3_256(
+        b"paracci.safety.v2"
+        + session_id
+        + x_identity_pub
+        + y_identity_pub
+        + x_session_pub
+        + y_session_pub
+    ).digest()
+    raw = h[:12].hex().upper()
+    return "-".join(raw[i:i + 4] for i in range(0, len(raw), 4))
 
 
 # ---------------------------------------------------------------------------

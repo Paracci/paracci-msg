@@ -23,12 +23,15 @@ if sys.platform == 'win32':
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 from core.burn import BurnDB, init_device
+from core.identity import get_or_create_device_identity
 from core.session import (
     create_initiator_session,
     accept_initiator_and_create_responder,
     finalize_initiator_session,
     apply_bond_nonce_to_y,
-    serialize_session_meta
+    serialize_session_meta,
+    confirm_safety_code,
+    get_session_safety_code
 )
 
 DEFAULT_PIN = "95175328"
@@ -100,12 +103,18 @@ def main():
     print(f"\n[*] Setup Starting: {TEST_PROFILE.upper()} profile active.")
     
     # 3. Handshake Simulation
+    # Load device identities
+    identity_x = get_or_create_device_identity(db_x, key_x)
+    identity_y = get_or_create_device_identity(db_y, key_y)
+
     # X: Create session
     meta_x_init, init_file = create_initiator_session(
         "Automated Test Channel", 
         profile=TEST_PROFILE,
         custom_params=CUSTOM_PARAMS,
-        my_username="User X"
+        my_username="User X",
+        identity_pub=identity_x.public_key,
+        identity_priv=identity_x.private_key
     )
     print("  [1/4] X: Initiator created.")
     
@@ -113,7 +122,9 @@ def main():
     meta_y, resp_file = accept_initiator_and_create_responder(
         init_file, 
         "Automated Test Channel",
-        my_username="User Y"
+        my_username="User Y",
+        identity_pub=identity_y.public_key,
+        identity_priv=identity_y.private_key
     )
     print("  [2/4] Y: Initiator accepted, Responder created.")
     
@@ -124,6 +135,14 @@ def main():
     # Y: Apply bond nonce from X to finalize bonding
     meta_y_final = apply_bond_nonce_to_y(meta_y, meta_x_final.bond_nonce)
     print("  [4/4] Y: Bond nonce applied, session fully bonded.")
+
+    # Automatically confirm safety codes to activate the sessions
+    code_x = get_session_safety_code(meta_x_final)
+    meta_x_final = confirm_safety_code(meta_x_final, code_x)
+    
+    code_y = get_session_safety_code(meta_y_final)
+    meta_y_final = confirm_safety_code(meta_y_final, code_y)
+    print("  [+] X & Y: Safety codes matched and sessions activated.")
 
     # 4. Save to Database
     enc_x = serialize_session_meta(meta_x_final, key_x)

@@ -25,6 +25,8 @@ def test_native_services_full_message_roundtrip(tmp_path):
     created = x.sessions.create_initiator("X to Y", profile="standard")
     imported = y.sessions.import_handshake(created.auto_export_bytes, "Y to X")
     finalized = x.sessions.import_handshake(imported.auto_export_bytes, "unused")
+    x.sessions.confirm_safety(finalized.session_id_hex, finalized.safety_code)
+    y.sessions.confirm_safety(imported.session_id_hex, imported.safety_code)
 
     msg_bytes, _ = x.messages.seal_message(finalized.session_id_hex, "Hello **Y**", [], False, 0)
     opened = y.messages.open_message(imported.session_id_hex, msg_bytes)

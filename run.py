@@ -10,7 +10,10 @@ Execution directory: paracci/
 import sys
 import os
 import argparse
+import secrets
+import json
 from pathlib import Path
+from urllib.parse import quote, urlparse
 
 # Add paracci/ directory to import path (for core.xxx imports)
 # This makes core/ and app/ folders appear as root.
@@ -96,28 +99,50 @@ if __name__ == "__main__":
         if not args.port:
             args.port = 5000 if args.user == 'x' else 5001
 
-    # App initialization (must be imported after DATA_DIR is set)
+    port = args.port if args.port else get_free_port()
+    loopback_host = "127.0.0.1"
+    webview_token = getattr(webview, "token", None) if not args.no_gui else None
+    using_webview_token = bool(webview_token)
+    loopback_token = (
+        os.environ.get("PARACCI_LOOPBACK_TOKEN")
+        if args.no_gui
+        else webview_token
+    ) or secrets.token_urlsafe(32)
+
+    os.environ["PARACCI_LOOPBACK_TOKEN"] = loopback_token
+    os.environ["PARACCI_LOOPBACK_HOST"] = loopback_host
+    os.environ["PARACCI_LOOPBACK_PORT"] = str(port)
+    os.environ["PARACCI_NO_GUI"] = "1" if args.no_gui else "0"
+
+    bootstrap_url = (
+        f"http://{loopback_host}:{port}/__paracci_bootstrap"
+        f"?token={quote(loopback_token, safe='')}&next=/"
+    )
+
+    # App initialization (must be imported after DATA_DIR and loopback security are set)
     from app import create_app
     app = create_app()
-    port = args.port if args.port else get_free_port()
     data_dir = os.environ.get('DATA_DIR', 'data (default)')
 
     print("\n  [o] Paracci Desktop")
     print("  -----------------------------")
-    print(f"  Internal: http://127.0.0.1:{port}")
+    print(f"  Internal: http://{loopback_host}:{port}")
     print(f"  DATA_DIR: {data_dir}")
     
     if args.no_gui:
         print("  Mode: Server Only")
+        print("  Authenticated entrypoint:")
+        print(f"  {bootstrap_url}")
+        print("  Bare loopback URLs reject protected requests without bootstrap auth.")
         print("  Stop with: Ctrl+C\n")
-        app.run(host="127.0.0.1", port=port, debug=False)
+        app.run(host=loopback_host, port=port, debug=False)
     else:
         print("  Mode: Desktop App")
         
         # Start Flask in the background (Thread)
         def start_flask():
             # reloader conflicts with GUI, disabling it.
-            app.run(host="127.0.0.1", port=port, debug=False, use_reloader=False)
+            app.run(host=loopback_host, port=port, debug=False, use_reloader=False)
 
         server_thread = threading.Thread(target=start_flask)
         server_thread.daemon = True
@@ -208,7 +233,7 @@ if __name__ == "__main__":
         # Main Window (WebView)
         window = webview.create_window(
             title="Paracci Secure Messaging",
-            url=f"http://127.0.0.1:{port}",
+            url=bootstrap_url,
             width=1100,
             height=850,
             min_size=(900, 700),
@@ -221,7 +246,19 @@ if __name__ == "__main__":
         # ── Security Shield (Chromium Hardening) ───────────────
         def on_navigating(url):
             """Blocks all links leading to the outside world."""
-            if not url.startswith(f"http://127.0.0.1:{port}"):
+            try:
+                parsed = urlparse(url)
+                allowed = (
+                    parsed.scheme == "http"
+                    and parsed.hostname == loopback_host
+                    and parsed.port == port
+                    and parsed.username is None
+                    and parsed.password is None
+                )
+            except Exception:
+                allowed = False
+
+            if not allowed:
                 print(f"  [!] Security: Access to external address blocked: {url}")
                 return False # Cancel navigation
             return True
@@ -230,6 +267,20 @@ if __name__ == "__main__":
             window.events.navigating += on_navigating
         except:
             pass # This event may not exist in some older versions
+
+        def inject_fallback_loopback_token(*_args):
+            if using_webview_token:
+                return
+            try:
+                window.evaluate_js(f"window.__PARACCI_NATIVE_TOKEN = {json.dumps(loopback_token)};")
+            except Exception as e:
+                print(f"  [!] Loopback token injection failed: {e}")
+
+        try:
+            if hasattr(window.events, 'loaded'):
+                window.events.loaded += inject_fallback_loopback_token
+        except Exception as e:
+            print(f"  [!] Token event binding error: {e}")
 
         
         # Drag-and-Drop Handler (Global)

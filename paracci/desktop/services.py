@@ -30,9 +30,10 @@ from core.burn import (
     unlock_device,
 )
 from core.config import ParacciConfig
-from core.crypto import EncryptedBlob, decrypt, encrypt, get_fingerprint, wipe
+from core.crypto import EncryptedBlob, decrypt, encrypt, wipe
 from core.envelope import EnvelopeError, EnvelopeTTLError, open_envelope, seal_envelope
 from core.evolution import EVO_UNLIMITED, seconds_until_expiry, session_expires_at
+from core.identity import get_or_create_device_identity
 from core.package import Attachment, create_package, extract_package
 from core.sanitizer import sanitize_image
 from core.security_utils import scan_text_for_security
@@ -44,8 +45,10 @@ from core.session import (
     accept_initiator_and_create_responder,
     apply_bond_nonce_to_y,
     create_initiator_session,
+    confirm_safety_code,
     deserialize_session_meta,
     finalize_initiator_session,
+    get_session_safety_code,
     serialize_initiator_file,
     serialize_responder_file,
     serialize_session_meta,
@@ -119,6 +122,9 @@ class ImportResult:
     message: str
     auto_export_bytes: Optional[bytes] = None
     auto_export_filename: Optional[str] = None
+    state: str | None = None
+    safety_code: str | None = None
+    requires_confirmation: bool = False
 
 
 @dataclass(frozen=True)
@@ -337,6 +343,10 @@ class DeviceService:
             raise DeviceError("Device is locked.")
         return self.device_key
 
+    def identity(self):
+        device_key = self.ensure_unlocked()
+        return get_or_create_device_identity(self.db, device_key)
+
     def is_2fa_enabled(self) -> bool:
         return self.db.is_2fa_enabled()
 
@@ -432,6 +442,18 @@ class SessionService:
             for row in rows
         ]
 
+    def _import_result(self, meta: SessionMeta, message: str, auto_export_bytes: bytes | None = None, auto_export_filename: str | None = None) -> ImportResult:
+        safety_code = self.safety_code(meta)
+        return ImportResult(
+            session_id_hex=meta.session_id.hex(),
+            message=message,
+            auto_export_bytes=auto_export_bytes,
+            auto_export_filename=auto_export_filename,
+            state=meta.state,
+            safety_code=safety_code,
+            requires_confirmation=bool(safety_code and not meta.safety_confirmed),
+        )
+
     def load(self, session_id_hex: str) -> SessionMeta:
         device_key = self.device.ensure_unlocked()
         session_id = bytes.fromhex(session_id_hex)
@@ -457,16 +479,19 @@ class SessionService:
         profile: str = "paranoid",
         custom_params: Optional[dict] = None,
     ) -> ImportResult:
+        identity = self.device.identity()
         meta, init_bytes = create_initiator_session(
             label=label.strip(),
             session_ttl_sec=session_ttl_sec,
             profile=profile,
             custom_params=custom_params,
+            identity_pub=identity.public_key,
+            identity_priv=identity.private_key,
         )
         self.save(meta)
-        return ImportResult(
-            session_id_hex=meta.session_id.hex(),
-            message="Initiator session created.",
+        return self._import_result(
+            meta,
+            "Initiator session created.",
             auto_export_bytes=init_bytes,
             auto_export_filename=f"session_init_{meta.session_id.hex()[:8]}.paracci",
         )
@@ -480,14 +505,17 @@ class SessionService:
         session_id_hex = header["session_id"].hex()
 
         if file_type == TYPE_INITIATOR:
+            identity = self.device.identity()
             meta, responder_bytes = accept_initiator_and_create_responder(
                 file_bytes,
                 local_label.strip(),
+                identity_pub=identity.public_key,
+                identity_priv=identity.private_key,
             )
             self.save(meta)
-            return ImportResult(
-                session_id_hex=meta.session_id.hex(),
-                message="Responder session created.",
+            return self._import_result(
+                meta,
+                "Responder session created.",
                 auto_export_bytes=responder_bytes,
                 auto_export_filename=f"session_resp_{meta.session_id.hex()[:8]}.paracci",
             )
@@ -498,17 +526,18 @@ class SessionService:
                 raise SessionServiceError("Responder files can only finalize X sessions.")
             updated = finalize_initiator_session(meta, file_bytes)
             self.save(updated)
-            return ImportResult(
-                session_id_hex=updated.session_id.hex(),
-                message="Initiator session finalized.",
-            )
+            return self._import_result(updated, "Initiator session finalized.")
 
         raise SessionServiceError("Message files must be opened inside an active session.")
 
     def export_handshake(self, session_id_hex: str) -> tuple[bytes, str]:
         meta = self.load(session_id_hex)
+        identity = self.device.identity()
         if meta.role == "X" and meta.state == "pending":
-            return serialize_initiator_file(meta), f"session_init_{session_id_hex[:8]}.paracci"
+            return (
+                serialize_initiator_file(meta, identity_priv=identity.private_key),
+                f"session_init_{session_id_hex[:8]}.paracci",
+            )
         if meta.role == "Y":
             return (
                 serialize_responder_file(
@@ -517,15 +546,28 @@ class SessionService:
                     evo_config=meta.evo_config,
                     label=meta.label,
                     y_qseed=meta.my_qseed,
+                    x_pub=meta.peer_pub,
+                    x_identity_pub=meta.peer_identity_pub,
+                    y_identity_pub=meta.my_identity_pub,
+                    identity_priv=identity.private_key,
                 ),
                 f"session_resp_{session_id_hex[:8]}.paracci",
             )
         raise SessionServiceError("No handshake export is available for this session.")
 
-    def fingerprint(self, meta: SessionMeta) -> str | None:
+    def safety_code(self, meta: SessionMeta) -> str | None:
         if not meta.peer_pub:
             return None
-        return get_fingerprint(meta.my_pub, meta.peer_pub)
+        try:
+            return get_session_safety_code(meta)
+        except Exception:
+            return None
+
+    def confirm_safety(self, session_id_hex: str, safety_code: str) -> SessionMeta:
+        meta = self.load(session_id_hex)
+        updated = confirm_safety_code(meta, safety_code)
+        self.save(updated)
+        return updated
 
     def evo_info(self, meta: SessionMeta) -> dict | None:
         if meta.keys is None:
@@ -555,8 +597,8 @@ class MessageService:
         ttl_seconds: int = 0,
     ) -> tuple[bytes, str]:
         meta = self.sessions.load(session_id_hex)
-        if meta.state != "active" or not meta.is_bonded:
-            raise MessageServiceError("Session is not active or bonded.")
+        if not meta.can_send:
+            raise MessageServiceError("Session safety code has not been confirmed.")
 
         normalized_text = unicodedata.normalize("NFC", text.strip())
         files = self._read_attachments(attachment_paths)
@@ -577,8 +619,8 @@ class MessageService:
         source_path: Path | None = None,
     ) -> OpenedMessage:
         meta = self.sessions.load(session_id_hex)
-        if meta.state != "active":
-            raise MessageServiceError("Session is not active.")
+        if not meta.can_open:
+            raise MessageServiceError("Session safety code has not been confirmed.")
 
         header = parse_file_header(file_bytes)
         if not header or header["file_type"] != TYPE_MESSAGE:

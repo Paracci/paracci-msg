@@ -31,7 +31,7 @@
       {% if allow_download %}
         <a href="{{ url_for('main.preview_download', pid=pid) }}" class="btn btn-primary">{{ _('preview.download_btn') }}</a>
       {% endif %}
-      <button type="button" class="btn btn-ghost" onclick="window.pywebview?.api?.close ? window.pywebview.api.close() : window.close()">{{ _('common.close') }}</button>
+      <button type="button" class="btn btn-ghost" id="preview-close-btn">{{ _('common.close') }}</button>
     </div>
   </div>
 

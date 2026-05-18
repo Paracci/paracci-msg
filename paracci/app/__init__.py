@@ -59,15 +59,40 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 db = None
 device_key = None
 PENDING_UNLOCKS = {} # Memory-only store for device_key during 2FA (prevents double Argon2)
+loopback_token = None
+loopback_host = "127.0.0.1"
+loopback_port = None
+loopback_origin = None
+no_gui_mode = False
+active_client_id = None
 
 
 def create_app() -> Flask:
     """Initializes and configures the Paracci Flask application factory."""
-    global db, device_key
+    global db, device_key, loopback_token, loopback_host, loopback_port, loopback_origin, no_gui_mode, active_client_id
 
     app = Flask(__name__, 
                 template_folder=str(APP_DIR / "templates"), 
                 static_folder=str(APP_DIR / "static"))
+
+    loopback_token = os.environ.get("PARACCI_LOOPBACK_TOKEN")
+    loopback_host = os.environ.get("PARACCI_LOOPBACK_HOST", "127.0.0.1")
+    loopback_port = os.environ.get("PARACCI_LOOPBACK_PORT")
+    no_gui_mode = os.environ.get("PARACCI_NO_GUI") == "1"
+    if not loopback_token or not loopback_port:
+        raise RuntimeError("Paracci loopback security token and port must be set before app initialization.")
+    loopback_origin = f"http://{loopback_host}:{loopback_port}"
+    device_key = None
+    active_client_id = None
+
+    app.config.update(
+        TRUSTED_HOSTS=[f"{loopback_host}:{loopback_port}"],
+        SESSION_COOKIE_NAME="paracci_session",
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Strict",
+        SESSION_COOKIE_SECURE=False,
+        SESSION_REFRESH_EACH_REQUEST=False,
+    )
 
     # Persistent secret key for Flask session
     secret_path = DATA_DIR / ".flask_secret"

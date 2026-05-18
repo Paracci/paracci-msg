@@ -33,6 +33,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 3. Global Message Form Handling
     setupForms();
+    setupTemplateEventBindings();
 
     // 4. Dismiss Warning if already acknowledged
     if (window.PARACCI_CONFIG?.sid) {
@@ -109,6 +110,37 @@ function setupSessionDropZone() {
             sessionDrop.classList.remove('highlight');
         });
     }
+}
+
+function setupTemplateEventBindings() {
+    document.getElementById('safety-mini-badge')?.addEventListener('click', () => window.toggleSafetyDetails?.());
+
+    const responderDrop = document.getElementById('responder-drop-area');
+    const responderInput = document.getElementById('responder-input');
+    responderDrop?.addEventListener('click', () => responderInput?.click());
+    responderInput?.addEventListener('change', () => {
+        const nativePath = document.getElementById('responder-native-path');
+        if (nativePath) nativePath.value = '';
+        responderInput.required = true;
+        requestFormSubmit(responderInput.form);
+    });
+
+    document.querySelectorAll('[data-manual-download-url]').forEach(link => {
+        link.addEventListener('click', (e) => {
+            e.preventDefault();
+            handleManualDownload(link.dataset.manualDownloadUrl, link.dataset.manualDownloadFilename || 'download.paracci');
+        });
+    });
+
+    document.getElementById('checklist-toggle')?.addEventListener('click', () => window.toggleChecklist?.());
+    document.getElementById('dismiss-y-warning')?.addEventListener('click', (e) => {
+        window.dismissYWarning?.(e.currentTarget.dataset.sessionId || window.PARACCI_CONFIG?.sid || '');
+    });
+    document.getElementById('session-drop-zone')?.addEventListener('click', () => {
+        document.getElementById('paracci_file')?.click();
+    });
+    document.getElementById('exit-modal-cancel')?.addEventListener('click', () => window.cancelClose?.());
+    document.getElementById('exit-modal-confirm')?.addEventListener('click', () => window.confirmClose?.());
 }
 
 function updateAttachmentBadge() {
@@ -194,7 +226,7 @@ function setupForms() {
         if (window.showQuantumArmor) window.showQuantumArmor();
 
         const errorContainer = document.getElementById('dynamic-error-container');
-        if (errorContainer) errorContainer.innerHTML = '';
+        clearElement(errorContainer);
 
         try {
             const url = window.PARACCI_CONFIG?.open_url;
@@ -206,7 +238,7 @@ function setupForms() {
 
             if (!data.success) {
                 const errLabel = window.PARACCI_I18N?.error || 'Error';
-                if (errorContainer) errorContainer.innerHTML = `<div class="alert alert-error"><strong>${errLabel}:</strong> ${data.error}</div>`;
+                appendAlert(errorContainer, 'error', `${errLabel}:`, data.error);
                 return;
             }
 
@@ -221,13 +253,39 @@ function setupForms() {
 
         } catch (err) {
             console.error('[Paracci] Open error:', err);
-            if (errorContainer) errorContainer.innerHTML = `<div class="alert alert-error">${window.PARACCI_I18N?.msg_not_processed || 'Message could not be processed.'}</div>`;
+            appendAlert(errorContainer, 'error', '', window.PARACCI_I18N?.msg_not_processed || 'Message could not be processed.');
         } finally {
             btn.disabled = false;
             btn.textContent = origText;
             if (window.hideQuantumArmor) window.hideQuantumArmor();
         }
     });
+}
+
+function clearElement(el) {
+    if (el) el.replaceChildren();
+}
+
+function appendAlert(container, level, label, message) {
+    if (!container) return;
+    const alert = document.createElement('div');
+    alert.className = `alert alert-${level}`;
+    if (label) {
+        const strong = document.createElement('strong');
+        strong.textContent = label;
+        alert.appendChild(strong);
+        alert.appendChild(document.createTextNode(' '));
+    }
+    alert.appendChild(document.createTextNode(String(message ?? '')));
+    container.appendChild(alert);
+}
+
+function attachmentUrl(att, key, fallbackPrefix) {
+    const direct = att?.[key];
+    if (typeof direct === 'string' && direct.startsWith('/') && !direct.startsWith('//')) return direct;
+    const pid = encodeURIComponent(String(att?.pid || ''));
+    if (!pid) return '';
+    return `${fallbackPrefix}/${pid}${key === 'download_url' ? '/download' : ''}`;
 }
 
 function renderDecryptedMessage(data) {
@@ -239,16 +297,13 @@ function renderDecryptedMessage(data) {
     // Security Report
     const securityDiv = document.getElementById('msg-security-report');
     if (securityDiv) {
-        securityDiv.innerHTML = '';
+        clearElement(securityDiv);
         securityDiv.style.display = 'none';
         if (data.security_report && !data.security_report.is_safe) {
             securityDiv.style.display = 'block';
             data.security_report.risks.forEach(risk => {
-                const alert = document.createElement('div');
-                alert.className = 'alert alert-error';
                 const warnLabel = window.PARACCI_I18N?.security_warning || 'SECURITY WARNING:';
-                alert.innerHTML = `<strong>${warnLabel}</strong> ${risk.target || risk}`;
-                securityDiv.appendChild(alert);
+                appendAlert(securityDiv, 'error', warnLabel, risk?.target || risk);
             });
         }
     }
@@ -283,21 +338,44 @@ function renderDecryptedMessage(data) {
     // Attachments
     const attList = document.getElementById('attachments-list-items');
     if (attList) {
-        attList.innerHTML = '';
+        clearElement(attList);
         if (data.attachments?.length) {
             document.getElementById('attachments-container').style.display = 'block';
             data.attachments.forEach(att => {
                 const item = document.createElement('div');
                 item.className = 'attachment-item';
-                item.innerHTML = `
-                    <div class="attachment-info">
-                        <div class="attachment-name">${att.filename}</div>
-                    </div>
-                    <div class="attachment-actions">
-                        <button onclick="handleAttachmentPreview('${att.pid}')" class="btn-attachment">${window.PARACCI_I18N?.preview_label || 'Preview'}</button>
-                        ${data.allow_download ? `<button onclick="handleAttachmentDownload('${att.pid}', '${att.filename}')" class="btn-attachment">${window.PARACCI_I18N?.download || 'Download'}</button>` : ''}
-                    </div>
-                `;
+                const info = document.createElement('div');
+                info.className = 'attachment-info';
+                const name = document.createElement('div');
+                name.className = 'attachment-name';
+                name.textContent = att.filename || 'attachment.bin';
+                info.appendChild(name);
+
+                const actions = document.createElement('div');
+                actions.className = 'attachment-actions';
+
+                const previewUrl = attachmentUrl(att, 'preview_url', '/preview');
+                const previewBtn = document.createElement('button');
+                previewBtn.type = 'button';
+                previewBtn.className = 'btn-attachment';
+                previewBtn.textContent = window.PARACCI_I18N?.preview_label || 'Preview';
+                previewBtn.disabled = !previewUrl;
+                previewBtn.addEventListener('click', () => handleAttachmentPreview(previewUrl));
+                actions.appendChild(previewBtn);
+
+                if (data.allow_download) {
+                    const downloadUrl = attachmentUrl(att, 'download_url', '/preview');
+                    const downloadBtn = document.createElement('button');
+                    downloadBtn.type = 'button';
+                    downloadBtn.className = 'btn-attachment';
+                    downloadBtn.textContent = window.PARACCI_I18N?.download || 'Download';
+                    downloadBtn.disabled = !downloadUrl;
+                    downloadBtn.addEventListener('click', () => handleAttachmentDownload(downloadUrl, att.filename || 'attachment.bin'));
+                    actions.appendChild(downloadBtn);
+                }
+
+                item.appendChild(info);
+                item.appendChild(actions);
                 attList.appendChild(item);
             });
         } else {
@@ -403,8 +481,16 @@ function triggerAutoDownload() {
     }
 }
 
-async function handleAttachmentDownload(pid, filename) {
-    const url = `/download/${pid}`;
+function normalizeAttachmentTarget(target, forDownload = false) {
+    const value = String(target || '');
+    if (value.startsWith('/') && !value.startsWith('//')) return value;
+    const pid = encodeURIComponent(value);
+    return pid ? `/preview/${pid}${forDownload ? '/download' : ''}` : '';
+}
+
+async function handleAttachmentDownload(target, filename) {
+    const url = normalizeAttachmentTarget(target, true);
+    if (!url) return;
     await handleManualDownload(url, filename);
 }
 
@@ -418,10 +504,15 @@ window.updateAttachmentBadge = updateAttachmentBadge;
 window.toggleQuietMode = (v) => { quietMode = v; localStorage.setItem('paracci_quiet_mode', v); };
 window.handleCloseClick = () => { if (quietMode) closeMessage(); else document.getElementById('exit-modal-overlay')?.classList.add('active'); };
 window.cancelClose = () => document.getElementById('exit-modal-overlay')?.classList.remove('active');
-window.confirmClose = () => { cancelClose(); closeMessage(); };
+window.confirmClose = () => { window.cancelClose?.(); closeMessage(); };
+window.dismissYWarning = (sid) => {
+    if (sid) localStorage.setItem("dismiss_y_" + sid, "true");
+    const el = document.getElementById("y-responder-warning");
+    if (el) el.style.display = "none";
+};
 
-window.toggleFingerprintDetails = () => {
-    const el = document.getElementById('fingerprint-details');
+window.toggleSafetyDetails = () => {
+    const el = document.getElementById('safety-details');
     if (el) el.classList.toggle('hidden');
 };
 
@@ -432,8 +523,9 @@ window.toggleChecklist = () => {
     }
 };
 
-window.handleAttachmentPreview = async (pid) => {
-    const url = `/preview/${pid}`;
+window.handleAttachmentPreview = async (target) => {
+    const url = normalizeAttachmentTarget(target, false);
+    if (!url) return;
     
     let api = window.pywebview?.api;
     let attempts = 0;

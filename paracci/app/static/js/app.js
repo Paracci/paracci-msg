@@ -1,6 +1,107 @@
 // Paracci Secure Messaging - Global Application Logic
 // Security Hardening & UI Notifications
 
+(function initParacciI18n() {
+    const source = document.getElementById('paracci-i18n-json');
+    if (!source) {
+        window.PARACCI_I18N = window.PARACCI_I18N || {};
+        return;
+    }
+    try {
+        window.PARACCI_I18N = JSON.parse(source.textContent || '{}');
+    } catch (err) {
+        console.error('[Paracci] Failed to parse i18n payload:', err);
+        window.PARACCI_I18N = window.PARACCI_I18N || {};
+    }
+})();
+
+(function applyInitialSidebarState() {
+    if (localStorage.getItem('paracci_sidebar_collapsed') === 'true') {
+        document.body?.classList.add('sidebar-collapsed');
+    }
+})();
+
+(function initLoopbackRequestSecurity() {
+    if (window.__paracciLoopbackSecurityInstalled) return;
+    window.__paracciLoopbackSecurityInstalled = true;
+
+    function readMeta(name) {
+        return document.querySelector(`meta[name="${name}"]`)?.getAttribute('content') || '';
+    }
+
+    function getLoopbackToken() {
+        return window.pywebview?.token || window.__PARACCI_NATIVE_TOKEN || readMeta('paracci-browser-token');
+    }
+
+    function getCsrfToken() {
+        return readMeta('paracci-csrf-token');
+    }
+
+    function isSameOriginRequest(input) {
+        try {
+            const rawUrl = input instanceof Request ? input.url : input;
+            return new URL(rawUrl || window.location.href, window.location.href).origin === window.location.origin;
+        } catch (err) {
+            return false;
+        }
+    }
+
+    function upsertHidden(form, name, value) {
+        let input = form.querySelector(`input[name="${name}"]`);
+        if (!input) {
+            input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = name;
+            form.appendChild(input);
+        }
+        input.value = value;
+    }
+
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = function paracciFetch(input, init = {}) {
+        if (!isSameOriginRequest(input)) {
+            return nativeFetch(input, init);
+        }
+
+        const token = getLoopbackToken();
+        const csrf = getCsrfToken();
+        const nextInit = { ...init };
+        const headers = new Headers(input instanceof Request ? input.headers : undefined);
+        if (init?.headers) {
+            new Headers(init.headers).forEach((value, key) => headers.set(key, value));
+        }
+        if (token) headers.set('X-Paracci-Token', token);
+        if (csrf) headers.set('X-CSRF-Token', csrf);
+        nextInit.headers = headers;
+        if (!Object.prototype.hasOwnProperty.call(nextInit, 'credentials')) {
+            nextInit.credentials = 'same-origin';
+        }
+        return nativeFetch(input, nextInit);
+    };
+
+    document.addEventListener('submit', e => {
+        const form = e.target;
+        if (!(form instanceof HTMLFormElement) || !isSameOriginRequest(form.action)) return;
+
+        const token = getLoopbackToken();
+        const csrf = getCsrfToken();
+        if (!token || !csrf) {
+            e.preventDefault();
+            showNotification(window.PARACCI_I18N?.server_error || 'Security token is not available.', 'error');
+            return;
+        }
+
+        upsertHidden(form, '_paracci_token', token);
+        upsertHidden(form, '_csrf_token', csrf);
+    }, true);
+
+    window.ParacciSecurity = {
+        getLoopbackToken,
+        getCsrfToken,
+        isSameOriginRequest
+    };
+})();
+
 document.addEventListener('DOMContentLoaded', () => {
     // 1. Context Menu & DevTools Prevention
     document.addEventListener('contextmenu', e => e.preventDefault());
@@ -22,6 +123,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 2. Desktop shell state and route-aware drag-drop
     initSidebarCollapse();
+    bindGlobalShellControls();
     setupGlobalDropExperience();
 
     document.addEventListener('dragstart', e => e.preventDefault());
@@ -58,6 +160,11 @@ function setSidebarCollapsed(collapsed) {
 
 function toggleSidebarCollapsed() {
     setSidebarCollapsed(!document.body.classList.contains('sidebar-collapsed'));
+}
+
+function bindGlobalShellControls() {
+    document.querySelector('.sidebar-toggle')?.addEventListener('click', toggleSidebarCollapsed);
+    document.getElementById('download-toast')?.addEventListener('click', handleToastClick);
 }
 
 function getDropContext() {
@@ -202,7 +309,10 @@ function requestFormSubmit(form) {
     if (typeof form.requestSubmit === 'function') {
         form.requestSubmit();
     } else {
-        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        const event = new Event('submit', { bubbles: true, cancelable: true });
+        if (form.dispatchEvent(event)) {
+            HTMLFormElement.prototype.submit.call(form);
+        }
     }
 }
 

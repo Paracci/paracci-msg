@@ -92,6 +92,27 @@ const initSetup = () => {
         }
     };
 
+    document.querySelectorAll('[data-security-t][data-security-m][data-security-p]').forEach(input => {
+        input.addEventListener('change', () => {
+            if (!input.checked) return;
+            window.updateSecurityParams(
+                parseInt(input.dataset.securityT || '1', 10),
+                parseInt(input.dataset.securityM || '64', 10),
+                parseInt(input.dataset.securityP || '1', 10)
+            );
+        });
+    });
+
+    document.querySelectorAll('[data-custom-security="true"]').forEach(input => {
+        input.addEventListener('change', () => {
+            if (input.checked) window.toggleCustomSecurity(true);
+        });
+    });
+
+    ['argon_t', 'argon_m', 'argon_p'].forEach(id => {
+        document.getElementById(id)?.addEventListener('input', () => window.runBenchmark?.());
+    });
+
     const fileInput = document.getElementById('fileInput');
     const dropArea = document.getElementById('file-drop-area');
     const dropLabel = document.getElementById('drop-label');
