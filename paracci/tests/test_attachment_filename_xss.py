@@ -122,7 +122,7 @@ def test_session_js_no_attachment_filename_html_or_inline_handlers():
     assert "${att.filename}" not in session_js
 
 
-def test_routes_script_csp_rejects_inline_and_eval():
+def test_routes_script_csp_rejects_inline_and_eval_policy():
     routes = (PROJECT_ROOT / "paracci" / "app" / "routes.py").read_text(encoding="utf-8")
     script_policy_lines = [
         line for line in routes.splitlines()
