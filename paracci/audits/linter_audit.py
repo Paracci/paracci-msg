@@ -85,15 +85,28 @@ class LinterChecker(ast.NodeVisitor):
             self._current_scope().add(name)
         self.generic_visit(node)
 
+    def _add_args_to_scope(self, args_node, scope):
+        """Helper to collect all kinds of function/lambda arguments into scope."""
+        if hasattr(args_node, 'posonlyargs'):
+            for arg in args_node.posonlyargs:
+                scope.add(arg.arg)
+        for arg in args_node.args:
+            scope.add(arg.arg)
+        if hasattr(args_node, 'kwonlyargs'):
+            for arg in args_node.kwonlyargs:
+                scope.add(arg.arg)
+        if args_node.vararg:
+            scope.add(args_node.vararg.arg)
+        if args_node.kwarg:
+            scope.add(args_node.kwarg.arg)
+
     def visit_FunctionDef(self, node):
         """Processes function definition and its arguments."""
         # Add function name to the current scope (for recursive calls or nested functions)
         self._current_scope().add(node.name)
         
         new_scope = set()
-        for arg in node.args.args: new_scope.add(arg.arg)
-        if node.args.vararg: new_scope.add(node.args.vararg.arg)
-        if node.args.kwarg: new_scope.add(node.args.kwarg.arg)
+        self._add_args_to_scope(node.args, new_scope)
         
         self.scopes.append(new_scope)
         self.generic_visit(node)
@@ -102,8 +115,7 @@ class LinterChecker(ast.NodeVisitor):
     def visit_Lambda(self, node):
         """Takes lambda arguments into a new scope."""
         new_scope = set()
-        for arg in node.args.args:
-            new_scope.add(arg.arg)
+        self._add_args_to_scope(node.args, new_scope)
         self.scopes.append(new_scope)
         self.generic_visit(node)
         self.scopes.pop()
