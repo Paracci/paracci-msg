@@ -722,12 +722,18 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  width: 100%;
   min-height: 30px;
   padding: 0 var(--space-3);
+  border: 0;
   border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--text-secondary);
+  font: inherit;
   font-size: var(--text-body-sm);
   text-decoration: none;
+  cursor: pointer;
+  text-align: left;
 }
 
 .lang-link:hover,

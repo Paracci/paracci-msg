@@ -145,7 +145,7 @@ class UIApi:
 
     def cmd_session_load(self, session_id_hex: str) -> dict[str, Any]:
         meta = self.services.sessions.load(session_id_hex)
-        fp = self.services.sessions.fingerprint(meta)
+        safety_code = self.services.sessions.safety_code(meta)
         evo = self.services.sessions.evo_info(meta)
         return {
             "session": {
@@ -154,13 +154,21 @@ class UIApi:
                 "role": meta.role,
                 "state": meta.state,
                 "bonded": meta.is_bonded,
-                "fingerprint": fp,
+                "safety_code": safety_code,
+                "fingerprint": safety_code,
+                "safety_confirmed": meta.safety_confirmed,
+                "handshake_version": meta.handshake_version,
+                "requires_confirmation": bool(safety_code and not meta.safety_confirmed),
                 "tx_count": meta.tx_count,
                 "rx_count": meta.rx_count,
                 "evolution": evo,
-                "active_and_bonded": meta.state == "active" and meta.is_bonded,
+                "active_and_bonded": meta.can_send,
             }
         }
+
+    def cmd_session_confirm_safety(self, session_id_hex: str, safety_code: str) -> dict[str, Any]:
+        self.services.sessions.confirm_safety(session_id_hex, safety_code)
+        return self.cmd_session_load(session_id_hex)
 
     def cmd_session_create(
         self,
@@ -198,6 +206,9 @@ class UIApi:
             "auto_exported": False,
             "auto_export_path": None,
             "filename": result.auto_export_filename,
+            "state": result.state,
+            "safety_code": result.safety_code,
+            "requires_confirmation": result.requires_confirmation,
         }
         if result.auto_export_bytes and auto_export_path:
             self._write_bytes(auto_export_path, result.auto_export_bytes)

@@ -5,10 +5,13 @@ import time
 import uuid
 import datetime
 import glob
+import secrets
+import hmac
 from typing import Optional
 from pathlib import Path
 import logging
 import unicodedata
+from urllib.parse import urljoin, urlparse
 
 from flask import (
     Blueprint, render_template, request, redirect,
@@ -19,13 +22,18 @@ import pyotp
 import qrcode
 import base64
 from io import BytesIO
-from werkzeug.utils import secure_filename
+from werkzeug.exceptions import SecurityError
 
 import app as ag_app
 from core.config import ParacciConfig
-from core.crypto import generate_keypair, get_fingerprint
+from core.identity import get_or_create_device_identity
 from core.envelope import seal_envelope, open_envelope, EnvelopeError, EnvelopeTTLError
-from core.package import create_package, extract_package, package_to_template_data
+from core.package import (
+    create_package,
+    extract_package,
+    package_to_template_data,
+    sanitize_attachment_filename,
+)
 from core.sanitizer import sanitize_image
 from core.security_utils import scan_text_for_security
 from core.burn import (
@@ -37,7 +45,8 @@ from core.session import (
     create_initiator_session, accept_initiator_and_create_responder,
     finalize_initiator_session, apply_bond_nonce_to_y,
     serialize_initiator_file, serialize_responder_file,
-    SESSION_COLORS
+    confirm_safety_code, get_session_safety_code,
+    SESSION_COLORS, SESSION_STATE_UNVERIFIED, SessionError
 )
 from core.evolution import seconds_until_expiry, session_expires_at
 from . import APP_DIR
@@ -71,26 +80,41 @@ CODE_EXTENSIONS = {
     '.json', '.yaml', '.md', '.sql', '.php', '.asp', '.aspx', '.jsp'
 }
 
-@bp.after_app_request
-def add_security_headers(response):
-    """Add global security headers."""
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["X-XSS-Protection"] = "1; mode=block"
-    
-    # Content Security Policy (Hardened)
-    csp = (
+
+def _content_security_policy() -> str:
+    """Return the app-wide CSP after inline script handlers have been removed."""
+    return (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+        "script-src 'self'; "
+        "script-src-attr 'none'; "
         "style-src 'self' 'unsafe-inline'; "
         "font-src 'self'; "
         "img-src 'self' data: blob:; "
+        "media-src 'self' data:; "
         "connect-src 'self'; "
         "frame-src 'none'; "
-        "object-src 'none';"
+        "object-src 'none'; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self';"
     )
-    response.headers["Content-Security-Policy"] = csp
+
+
+def _apply_security_headers(response):
+    """Apply consistent security headers to all route responses."""
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Content-Security-Policy"] = _content_security_policy()
+    if request.endpoint == "main.loopback_bootstrap":
+        response.headers["Cache-Control"] = "no-store"
     return response
+
+
+@bp.after_app_request
+def add_security_headers(response):
+    """Add global security headers."""
+    return _apply_security_headers(response)
 
 def _cleanup_preview_cache():
     """Cleans expired preview files from memory."""
@@ -104,7 +128,7 @@ def _add_to_preview_cache(filename, content, mime, allow_download, ttl=600):
     _cleanup_preview_cache()
     pid = str(uuid.uuid4())
     PREVIEW_CACHE[pid] = {
-        "filename": filename,
+        "filename": sanitize_attachment_filename(filename),
         "content": content,
         "mime": mime,
         "expires": time.time() + ttl,
@@ -126,11 +150,180 @@ def _add_to_staged_attachment_cache(filename, content, ttl=600):
     _cleanup_staged_attachment_cache()
     attachment_id = str(uuid.uuid4())
     STAGED_ATTACHMENT_CACHE[attachment_id] = {
-        "filename": filename,
+        "filename": sanitize_attachment_filename(filename),
         "content": content,
         "expires": time.time() + ttl,
     }
     return attachment_id
+
+
+UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+def _expected_host() -> str:
+    """Return the only Host header accepted by the loopback app."""
+    return f"{ag_app.loopback_host}:{ag_app.loopback_port}"
+
+
+def _expected_origin() -> str:
+    """Return the only browser origin accepted by the loopback app."""
+    return ag_app.loopback_origin
+
+
+def _is_static_request() -> bool:
+    """Static assets are intentionally public within the local origin."""
+    static_path = current_app.static_url_path or "/static"
+    return request.endpoint == "static" or request.path.startswith(f"{static_path}/")
+
+
+def _same_origin_url(value: str | None) -> bool:
+    """Validate that an absolute or relative URL resolves to the expected origin."""
+    if not value:
+        return False
+    try:
+        parsed = urlparse(urljoin(f"{_expected_origin()}/", value))
+        return (
+            parsed.scheme == "http"
+            and parsed.hostname in {ag_app.loopback_host.lower(), "localhost"}
+            and parsed.port == int(ag_app.loopback_port)
+        )
+    except Exception:
+        return False
+
+
+def _safe_local_next(value: str | None) -> str | None:
+    """Allow only local redirect paths such as /settings?tab=x."""
+    if not value or not value.startswith("/") or value.startswith("//"):
+        return None
+    parsed = urlparse(value)
+    if parsed.scheme or parsed.netloc:
+        return None
+    return value
+
+
+def _reject_security(reason: str):
+    """Fail closed for loopback auth violations."""
+    logger.warning("Loopback request rejected: %s", reason)
+    wants_json = request.path.startswith("/api/") or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+    if wants_json:
+        return jsonify({"success": False, "error": "Forbidden."}), 403
+    abort(403)
+
+
+def _extract_loopback_token() -> str:
+    """Read bearer token from JS headers first, then form fallback."""
+    token = request.headers.get("X-Paracci-Token", "")
+    if token:
+        return token
+    return request.form.get("_paracci_token", "")
+
+
+def _ensure_csrf_token() -> str:
+    """Create a per-client CSRF token after loopback bootstrap."""
+    token = session.get("csrf_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session["csrf_token"] = token
+    return token
+
+
+def _extract_csrf_token() -> str:
+    """Read CSRF token from JS headers first, then form fallback."""
+    token = request.headers.get("X-CSRF-Token", "")
+    if token:
+        return token
+    return request.form.get("_csrf_token", "")
+
+
+def _token_matches(candidate: str | None, expected: str | None) -> bool:
+    """Constant-time token comparison with missing-value protection."""
+    if not candidate or not expected:
+        return False
+    return hmac.compare_digest(str(candidate), str(expected))
+
+
+def _validate_request_source():
+    """Validate host and browser source headers before any privileged route runs."""
+    # 1. Validate Host
+    host_parts = request.host.lower().split(":")
+    host_name = host_parts[0]
+    host_port = host_parts[1] if len(host_parts) > 1 else ""
+    if host_name not in {ag_app.loopback_host.lower(), "localhost"} or host_port != str(ag_app.loopback_port):
+        return _reject_security("unexpected host")
+
+    # 2. Validate Origin
+    origin = request.headers.get("Origin")
+    if origin and origin != "null":
+        try:
+            parsed = urlparse(origin)
+            is_valid = (
+                parsed.scheme == "http"
+                and parsed.hostname in {ag_app.loopback_host.lower(), "localhost"}
+                and parsed.port == int(ag_app.loopback_port)
+            )
+            if not is_valid:
+                return _reject_security("unexpected origin")
+        except Exception:
+            return _reject_security("invalid origin format")
+
+    # 3. Validate Referer
+    referer = request.headers.get("Referer")
+    if referer and not _same_origin_url(referer):
+        return _reject_security("unexpected referer")
+
+    # 4. Validate Fetch Site
+    fetch_site = request.headers.get("Sec-Fetch-Site", "").lower()
+    if fetch_site in {"cross-site", "same-site"}:
+        return _reject_security("unexpected fetch site")
+
+    # 5. OPTIONS Preflight Protection
+    if request.method == "OPTIONS":
+        return _reject_security("options rejected")
+
+    return None
+
+
+@bp.route("/__paracci_bootstrap")
+def loopback_bootstrap():
+    """Authorize the pywebview/no-GUI browser session with the launch token."""
+    source_error = _validate_request_source()
+    if source_error:
+        return source_error
+
+    if not _token_matches(request.args.get("token", ""), ag_app.loopback_token):
+        return _reject_security("invalid bootstrap token")
+
+    session["paracci_client_ok"] = True
+    session["paracci_client_id"] = secrets.token_urlsafe(16)
+    session["csrf_token"] = secrets.token_urlsafe(32)
+    target = _safe_local_next(request.args.get("next")) or url_for("main.index")
+    return redirect(target)
+
+
+@bp.before_app_request
+def enforce_loopback_security():
+    """Require bootstrap, same-origin source headers, bearer token, and CSRF."""
+    if _is_static_request():
+        return
+
+    if request.endpoint == "main.loopback_bootstrap":
+        return _validate_request_source()
+
+    source_error = _validate_request_source()
+    if source_error:
+        return source_error
+
+    if session.get("paracci_client_ok") is not True:
+        return _reject_security("client not bootstrapped")
+
+    if request.path.startswith("/api/") and not _token_matches(_extract_loopback_token(), ag_app.loopback_token):
+        return _reject_security("missing api bearer token")
+
+    if request.method in UNSAFE_METHODS:
+        if not _token_matches(_extract_loopback_token(), ag_app.loopback_token):
+            return _reject_security("missing unsafe-method bearer token")
+        if not _token_matches(_extract_csrf_token(), session.get("csrf_token")):
+            return _reject_security("missing csrf token")
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +335,7 @@ def check_lock():
     """Checks if the application is locked; redirects to the unlock page if locked."""
 
     # Routes exempt from locking
-    if request.endpoint in ["main.unlock", "main.set_locale", "static", "main.unlock_2fa_setup", "main.unlock_2fa_verify"]:
+    if request.endpoint in ["main.loopback_bootstrap", "main.unlock", "main.set_locale", "static", "main.unlock_2fa_setup", "main.unlock_2fa_verify"]:
         return
 
     # 1. Device not initialized yet?
@@ -152,6 +345,10 @@ def check_lock():
     # 2. Device key not in memory? (Locked)
     if ag_app.device_key is None:
         return redirect(url_for("main.unlock"))
+
+    client_id = session.get("paracci_client_id")
+    if ag_app.active_client_id and ag_app.active_client_id != client_id:
+        return _reject_security("unlocked client mismatch")
 
 
 @bp.app_context_processor
@@ -181,10 +378,20 @@ def inject_user():
     except Exception:
         sidebar_sessions = []
 
-    return dict(user_profile={
-        "username": cfg.get("username"),
-        "avatar_color": cfg.get("avatar_color")
-    }, sidebar_sessions=sidebar_sessions, SESSION_COLORS=SESSION_COLORS)
+    browser_token = ""
+    if ag_app.no_gui_mode and session.get("paracci_client_ok") is True:
+        browser_token = ag_app.loopback_token or ""
+
+    return dict(
+        user_profile={
+            "username": cfg.get("username"),
+            "avatar_color": cfg.get("avatar_color")
+        },
+        sidebar_sessions=sidebar_sessions,
+        SESSION_COLORS=SESSION_COLORS,
+        csrf_token=_ensure_csrf_token(),
+        paracci_browser_token=browser_token,
+    )
 
 @bp.route("/unlock", methods=["GET", "POST"])
 def unlock():
@@ -203,6 +410,7 @@ def unlock():
                 # Redirect to 2FA setup after PIN is set during initial setup
                 device_key = init_device(ag_app.db, pin)
                 ag_app.device_key = device_key # Set globally since it's initial setup
+                ag_app.active_client_id = session.get("paracci_client_id")
                 session['setup_in_progress'] = True # Temporary flag
                 return redirect(url_for("main.unlock_2fa_setup"))
             else:
@@ -219,13 +427,15 @@ def unlock():
                     unlock_id = str(uuid.uuid4())
                     ag_app.PENDING_UNLOCKS[unlock_id] = {
                         "device_key": device_key,
-                        "timestamp": time.time()
+                        "timestamp": time.time(),
+                        "client_id": session.get("paracci_client_id")
                     }
                     session['unlock_id'] = unlock_id
                     return redirect(url_for("main.unlock_2fa_verify"))
                 
                 # If 2FA is not active, unlock directly
                 ag_app.device_key = device_key
+                ag_app.active_client_id = session.get("paracci_client_id")
                 flash(_('auth.unlock_success'), "success")
                 return redirect(url_for("main.index"))
                 
@@ -304,6 +514,8 @@ def unlock_2fa_verify():
             return redirect(url_for("main.unlock"))
 
         pending = ag_app.PENDING_UNLOCKS.pop(unlock_id)
+        if pending.get("client_id") != session.get("paracci_client_id"):
+            return _reject_security("pending unlock client mismatch")
         device_key = pending["device_key"]
         
         # Get and Decrypt 2FA secret
@@ -326,6 +538,7 @@ def unlock_2fa_verify():
         if totp.verify(code):
             # 2FA correct
             ag_app.device_key = device_key
+            ag_app.active_client_id = session.get("paracci_client_id")
             session.pop('unlock_id', None)
             flash(_('auth.unlock_success'), "success")
             return redirect(url_for("main.index"))
@@ -386,19 +599,20 @@ def settings_2fa():
     return render_template("settings_2fa.html", is_enabled=is_enabled, secret=secret, qr_code=qr_base64)
 
 
-@bp.route("/set_locale/<lang>")
+@bp.route("/set_locale/<lang>", methods=["POST"])
 def set_locale(lang):
     """Changes application language (tr/en)."""
     if lang in ['tr', 'en', 'de', 'fr', 'ru', 'es']:
         session['locale'] = lang
         session.modified = True
     
-    # Secure redirect
-    target = request.referrer
-    if not target or "set_locale" in target:
-        target = url_for('main.index')
-        
-    return redirect(target)
+    target = _safe_local_next(request.form.get("next"))
+    if not target and _same_origin_url(request.referrer):
+        parsed = urlparse(request.referrer)
+        target = parsed.path or url_for('main.index')
+        if parsed.query:
+            target = f"{target}?{parsed.query}"
+    return redirect(target or url_for('main.index'))
 
 
 # ---------------------------------------------------------------------------
@@ -410,6 +624,12 @@ def _get_db_and_key():
     if ag_app.device_key is None:
         raise RuntimeError(_('auth.device_locked'))
     return ag_app.db, ag_app.device_key
+
+
+def _get_device_identity():
+    """Returns the encrypted persistent identity keypair for this device."""
+    db, device_key = _get_db_and_key()
+    return get_or_create_device_identity(db, device_key)
 
 
 def _load_session(session_id_hex: str):
@@ -570,22 +790,7 @@ def hex_filter(b):
 @bp.after_request
 def add_security_headers(response):
     """Adds strict security headers to every response."""
-    csp = (
-        "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
-        "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data: blob:; "
-        "font-src 'self'; "
-        "connect-src 'self'; "
-        "object-src 'none'; "
-        "frame-ancestors 'none'; "
-        "base-uri 'self';"
-    )
-    response.headers['Content-Security-Policy'] = csp
-    response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['X-Frame-Options'] = 'DENY'
-    response.headers['X-XSS-Protection'] = '1; mode=block'
-    return response
+    return _apply_security_headers(response)
 
 
 @bp.route("/")
@@ -652,15 +857,18 @@ def session_new():
 
     cfg = ParacciConfig()
     try:
+        identity = _get_device_identity()
         meta, file_bytes = create_initiator_session(
             label=label,
             session_ttl_sec=session_ttl_sec,
             profile=security_profile,
             custom_params=custom_params,
             my_username=cfg.get("username"),
-            color=color
+            color=color,
+            identity_pub=identity.public_key,
+            identity_priv=identity.private_key,
         )
-    except ValueError as e:
+    except Exception as e:
         flash(_('session.create_error', error=str(e)), "error")
         return render_template("setup.html", mode="new", is_import=False)
 
@@ -687,6 +895,8 @@ def _import_from_native(path):
 @bp.route("/api/stage-attachment", methods=["POST"])
 def api_stage_attachment():
     """Stages a native attachment path in RAM for the next seal request."""
+    if not request.is_json:
+        return jsonify({"success": False, "error": "JSON body required."}), 415
     payload = request.get_json(silent=True) or {}
     native_path = (payload.get("path") or "").strip()
     if not native_path:
@@ -698,7 +908,7 @@ def api_stage_attachment():
     if len(content) > MAX_ATTACHMENT_SIZE:
         return jsonify({"success": False, "error": f"Attachment exceeds the {MAX_ATTACHMENT_SIZE // (1024 * 1024)}MB limit."}), 413
 
-    safe_fname = secure_filename(Path(native_path).name) or "attachment.bin"
+    safe_fname = sanitize_attachment_filename(Path(native_path).name)
     content = sanitize_image(content, safe_fname)
     attachment_id = _add_to_staged_attachment_cache(safe_fname, content)
     return jsonify({
@@ -718,14 +928,18 @@ def _process_initiator_import(file_bytes, local_label, native_path, color=None):
         logger.info("Processing Initiator (Argon2id Bond starting)...")
         start_t = time.time()
         cfg = ParacciConfig()
+        identity = _get_device_identity()
         meta, responder_bytes = accept_initiator_and_create_responder(
             file_bytes, local_label, 
             my_username=cfg.get("username"),
-            color=color
+            color=color,
+            identity_pub=identity.public_key,
+            identity_priv=identity.private_key,
         )
         logger.info(f"Bond calculated in {time.time() - start_t:.2f}s")
         _save_session(meta)
         flash(_('session.y_init_success'), "success")
+        flash(_('session.safety_unverified'), "warning")
         return redirect(url_for("main.session_detail", sid=meta.session_id.hex(), auto_download="1"))
     except Exception as e:
         logger.error(f"Initiator processing error: {e}")
@@ -747,6 +961,7 @@ def _process_responder_import(file_bytes, session_id):
         updated_meta = finalize_initiator_session(meta, file_bytes)
         _save_session(updated_meta)
         flash(_('session.x_finalize_success'), "success")
+        flash(_('session.safety_unverified'), "warning")
         return redirect(url_for("main.session_detail", sid=updated_meta.session_id.hex()))
     except Exception as e:
         flash(_('session.import_error', error=str(e)), "error")
@@ -823,10 +1038,12 @@ def session_detail(sid: str):
     if meta is None:
         abort(404)
 
-    # Fingerprint (Security Code)
-    fingerprint = None
+    safety_code = None
     if meta.peer_pub:
-        fingerprint = get_fingerprint(meta.my_pub, meta.peer_pub)
+        try:
+            safety_code = get_session_safety_code(meta)
+        except Exception:
+            safety_code = None
 
     # Evolution / bond status
     evo_info = None
@@ -843,15 +1060,34 @@ def session_detail(sid: str):
             "session.html",
             meta=meta, sid=sid, evo_info=evo_info,
             now=int(time.time()), auto_download=True,
-            fingerprint=fingerprint,
+            safety_code=safety_code,
         )
 
     return render_template(
         "session.html",
         meta=meta, sid=sid, evo_info=evo_info,
         now=int(time.time()),
-        fingerprint=fingerprint,
+        safety_code=safety_code,
     )
+
+
+@bp.route("/session/<sid>/confirm-safety", methods=["POST"])
+def session_confirm_safety(sid: str):
+    """Confirms the out-of-band safety code before activating a session."""
+    meta = _load_session(sid)
+    if meta is None:
+        abort(404)
+
+    try:
+        updated = confirm_safety_code(meta, request.form.get("safety_code", ""))
+        _save_session(updated)
+        flash(_('session.safety_code_confirmed'), "success")
+    except SessionError:
+        flash(_('session.safety_code_mismatch'), "error")
+    except Exception as e:
+        flash(_('session.import_error', error=str(e)), "error")
+    return redirect(url_for("main.session_detail", sid=sid))
+
 
 @bp.route("/session/<sid>/import_responder", methods=["POST"])
 def session_import_responder(sid: str):
@@ -919,7 +1155,7 @@ def _gather_attachments(upload_files, staged_ids=None):
         return None, f"Maximum {MAX_ATTACHMENT_COUNT} files can be attached."
         
     for f in upload_files:
-        safe_fname = secure_filename(f.filename) or "attachment.bin"
+        safe_fname = sanitize_attachment_filename(f.filename)
         content = f.read()
         total_size += len(content)
         if total_size > MAX_ATTACHMENT_SIZE:
@@ -944,8 +1180,14 @@ def session_seal(sid: str):
     meta = _load_session(sid)
     if meta is None: abort(404)
 
-    if meta.state != "active" or not meta.is_bonded:
-        flash(_('session.not_active' if meta.state != "active" else ('session.bond_not_established_x' if meta.role == "X" else 'session.bond_not_established_y')), "error")
+    if not meta.can_send:
+        if not meta.safety_confirmed:
+            msg = _('session.safety_unverified')
+        elif meta.state != "active":
+            msg = _('session.not_active')
+        else:
+            msg = _('session.bond_not_established_x' if meta.role == "X" else 'session.bond_not_established_y')
+        flash(msg, "error")
         return redirect(url_for("main.session_detail", sid=sid))
 
     text = unicodedata.normalize('NFC', request.form.get("message", "").strip())
@@ -982,7 +1224,12 @@ def _prepare_open_response(meta, opened, sid, is_ajax):
     updated_meta = meta._replace(rx_count=opened.next_step, recv_seed=opened.next_seed)
     _save_session(updated_meta)
 
-    fingerprint = get_fingerprint(updated_meta.my_pub, updated_meta.peer_pub) if updated_meta.peer_pub else None
+    safety_code = None
+    if updated_meta.peer_pub:
+        try:
+            safety_code = get_session_safety_code(updated_meta)
+        except Exception:
+            safety_code = None
     evo_info = {"tx_count": updated_meta.tx_count, "bonded": updated_meta.is_bonded, "secs_remaining": seconds_until_expiry(updated_meta.evo_config)} if updated_meta.keys else None
 
     package = extract_package(opened.payload)
@@ -991,13 +1238,22 @@ def _prepare_open_response(meta, opened, sid, is_ajax):
 
     attachments = []
     for att in package.attachments:
-        pid = _add_to_preview_cache(att.filename, att.content, att.mime_type, display_data["allow_download"])
-        attachments.append({"pid": pid, "filename": att.filename, "mime_type": att.mime_type, "size": len(att.content), "is_media": att.mime_type.startswith(("image/", "video/"))})
+        safe_name = sanitize_attachment_filename(att.filename)
+        pid = _add_to_preview_cache(safe_name, att.content, att.mime_type, display_data["allow_download"])
+        attachments.append({
+            "pid": pid,
+            "filename": safe_name,
+            "mime_type": att.mime_type,
+            "size": len(att.content),
+            "is_media": att.mime_type.startswith(("image/", "video/")),
+            "preview_url": url_for("main.preview", pid=pid),
+            "download_url": url_for("main.preview_download", pid=pid),
+        })
 
     if is_ajax:
-        return jsonify({"success": True, "text": display_data["text"], "attachments": attachments, "allow_download": display_data["allow_download"], "time_left": _fmt_time_left(opened.expire_at), "expire_at": opened.expire_at, "evo_step": opened.evo_step, "single_use": opened.single_use, "msg_id_hex": opened.msg_id.hex(), "fingerprint": fingerprint, "rx_count": updated_meta.rx_count, "security_report": security_report})
+        return jsonify({"success": True, "text": display_data["text"], "attachments": attachments, "allow_download": display_data["allow_download"], "time_left": _fmt_time_left(opened.expire_at), "expire_at": opened.expire_at, "evo_step": opened.evo_step, "single_use": opened.single_use, "msg_id_hex": opened.msg_id.hex(), "safety_code": safety_code, "rx_count": updated_meta.rx_count, "security_report": security_report})
 
-    return render_template("session.html", meta=updated_meta, sid=sid, evo_info=evo_info, now=int(time.time()), fingerprint=fingerprint, opened_msg={"text": display_data["text"], "attachments": attachments, "allow_download": display_data["allow_download"], "time_left": _fmt_time_left(opened.expire_at), "expire_at": opened.expire_at, "evo_step": opened.evo_step, "single_use": opened.single_use, "msg_id_hex": opened.msg_id.hex(), "security_report": security_report})
+    return render_template("session.html", meta=updated_meta, sid=sid, evo_info=evo_info, now=int(time.time()), safety_code=safety_code, opened_msg={"text": display_data["text"], "attachments": attachments, "allow_download": display_data["allow_download"], "time_left": _fmt_time_left(opened.expire_at), "expire_at": opened.expire_at, "evo_step": opened.evo_step, "single_use": opened.single_use, "msg_id_hex": opened.msg_id.hex(), "security_report": security_report})
 
 @bp.route("/session/<sid>/open", methods=["POST"])
 def session_open(sid: str):
@@ -1006,8 +1262,8 @@ def session_open(sid: str):
     meta = _load_session(sid)
     if meta is None: return (jsonify({"success": False, "error": "Session not found."}), 404) if is_ajax else abort(404)
 
-    if meta.state != "active":
-        msg = _('session.not_active')
+    if not meta.can_open:
+        msg = _('session.safety_unverified') if not meta.safety_confirmed else _('session.not_active')
         return jsonify({"success": False, "error": msg}) if is_ajax else (flash(msg, "error") or redirect(url_for("main.session_detail", sid=sid)))
 
     native_path = request.form.get("native_path", "").strip()
@@ -1058,15 +1314,17 @@ def _render_session_error(meta, sid, msg):
             "bonded":         meta.is_bonded,
             "secs_remaining": seconds_until_expiry(meta.evo_config),
         }
-    # Fingerprint (Security Code)
-    fingerprint = None
+    safety_code = None
     if meta.peer_pub:
-        fingerprint = get_fingerprint(meta.my_pub, meta.peer_pub)
+        try:
+            safety_code = get_session_safety_code(meta)
+        except Exception:
+            safety_code = None
 
     return render_template(
         "session.html", meta=meta, sid=sid, evo_info=evo_info,
         now=int(time.time()), open_error=msg,
-        fingerprint=fingerprint,
+        safety_code=safety_code,
     )
 
 
@@ -1106,9 +1364,10 @@ def session_export(sid: str):
     if meta is None:
         abort(404)
 
+    identity = _get_device_identity()
     if meta.role == "X" and meta.state == "pending":
         try:
-            file_bytes = serialize_initiator_file(meta)
+            file_bytes = serialize_initiator_file(meta, identity_priv=identity.private_key)
             filename   = f"session_init_{sid[:8]}.paracci"
         except Exception as e:
             flash(_('session.create_error', error=str(e)), "error")
@@ -1121,7 +1380,11 @@ def session_export(sid: str):
                 y_pub=meta.my_pub,
                 evo_config=meta.evo_config,
                 label=meta.label,
-                y_qseed=meta.my_qseed
+                y_qseed=meta.my_qseed,
+                x_pub=meta.peer_pub,
+                x_identity_pub=meta.peer_identity_pub,
+                y_identity_pub=meta.my_identity_pub,
+                identity_priv=identity.private_key,
             )
             filename = f"session_resp_{sid[:8]}.paracci"
         except Exception as e:
@@ -1213,7 +1476,7 @@ def profile():
 
 def _get_preview_response_data(file_data, pid):
     """Prepares necessary data and mode for the preview page."""
-    filename = file_data["filename"]
+    filename = sanitize_attachment_filename(file_data["filename"])
     mime = file_data["mime"]
     ext = Path(filename).suffix.lower()
     is_dangerous = ext in DANGEROUS_EXTENSIONS
@@ -1240,7 +1503,7 @@ def preview(pid: str):
 
     resp_html = _get_preview_response_data(file_data, pid)
     response = make_response(resp_html)
-    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; media-src 'self' data:; object-src 'none'; base-uri 'none';"
+    response.headers["Content-Security-Policy"] = _content_security_policy()
     return response
 
 
@@ -1259,7 +1522,7 @@ def preview_download(pid: str):
         io.BytesIO(file_data["content"]),
         mimetype=file_data["mime"],
         as_attachment=True,
-        download_name=file_data["filename"]
+        download_name=sanitize_attachment_filename(file_data["filename"])
     )
 
 
@@ -1326,6 +1589,15 @@ def api_benchmark_report():
 # ---------------------------------------------------------------------------
 # 404
 # ---------------------------------------------------------------------------
+
+@bp.app_errorhandler(SecurityError)
+def trusted_host_rejected(e):
+    """Convert Werkzeug trusted-host failures into the loopback auth status."""
+    logger.warning("Loopback trusted host rejected: %s", e)
+    if request.path.startswith("/api/"):
+        return jsonify({"success": False, "error": "Forbidden."}), 403
+    return "Forbidden", 403
+
 
 @bp.app_errorhandler(404)
 def not_found(e):

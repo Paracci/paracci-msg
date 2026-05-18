@@ -196,6 +196,8 @@ def _validate_seal_session(session: SessionMeta) -> None:
         raise EnvelopeError("Session not initialized.")
     if session.state != "active":
         raise EnvelopeError("Session not active.")
+    if not session.safety_confirmed:
+        raise EnvelopeError("Session safety code has not been confirmed.")
     if not session.is_bonded:
         if session.role == "X":
             raise EnvelopeError("Bond not established. X must finalize first.")
@@ -339,6 +341,8 @@ def _validate_envelope_context(header: EnvelopeHeader, session: SessionMeta) -> 
         raise EnvelopeError("This file does not belong to this session.")
     if session.keys is None:
         raise EnvelopeError("Session keys missing.")
+    if not session.can_open:
+        raise EnvelopeError("Session safety code has not been confirmed.")
     if session.role == "X" and header.direction == DIR_X_TO_Y:
         raise EnvelopeError("Cannot open your own message.")
     if session.role == "Y" and header.direction == DIR_Y_TO_X:

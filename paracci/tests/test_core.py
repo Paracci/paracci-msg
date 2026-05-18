@@ -17,7 +17,7 @@ from core.crypto import (
     generate_keypair, ecdh, derive_session_keys,
     encrypt, decrypt, EncryptedBlob,
     new_message_id, message_id_fingerprint,
-    constant_time_compare, random_bytes,
+    constant_time_compare, random_bytes, generate_identity_keypair,
 )
 from core.evolution import (
     make_evo_config, serialize_evo_config, deserialize_evo_config,
@@ -31,7 +31,10 @@ from core.session import (
     serialize_session_meta,
     deserialize_session_meta,
     apply_bond_nonce_to_y,
+    confirm_safety_code,
+    get_session_safety_code,
     SESSION_STATE_ACTIVE,
+    SESSION_STATE_UNVERIFIED,
 )
 from core.envelope import seal_envelope, open_envelope, EnvelopeError, EnvelopeTTLError
 from core.burn import BurnDB, BurnGuard, is_device_initialized, init_device, unlock_device, AlreadyBurnedError, TTLExpiredError
@@ -39,6 +42,37 @@ from core.burn import BurnDB, BurnGuard, is_device_initialized, init_device, unl
 PASS = "[OK]"
 FAIL = "[FAIL]"
 results = []
+
+_create_initiator_session_impl = create_initiator_session
+_accept_initiator_and_create_responder_impl = accept_initiator_and_create_responder
+
+
+def _new_identity():
+    priv, pub = generate_identity_keypair()
+    return priv, pub
+
+
+def create_initiator_session(*args, **kwargs):
+    if "identity_pub" not in kwargs or "identity_priv" not in kwargs:
+        identity_priv, identity_pub = _new_identity()
+        kwargs["identity_pub"] = identity_pub
+        kwargs["identity_priv"] = identity_priv
+    return _create_initiator_session_impl(*args, **kwargs)
+
+
+def accept_initiator_and_create_responder(*args, **kwargs):
+    if "identity_pub" not in kwargs or "identity_priv" not in kwargs:
+        identity_priv, identity_pub = _new_identity()
+        kwargs["identity_pub"] = identity_pub
+        kwargs["identity_priv"] = identity_priv
+    return _accept_initiator_and_create_responder_impl(*args, **kwargs)
+
+
+def confirm_pair(meta_x, meta_y):
+    code_x = get_session_safety_code(meta_x)
+    code_y = get_session_safety_code(meta_y)
+    assert code_x == code_y
+    return confirm_safety_code(meta_x, code_x), confirm_safety_code(meta_y, code_y)
 
 
 def run_test(name: str, fn):
@@ -222,16 +256,19 @@ def test_full_session_handshake():
     meta_y, resp_file = accept_initiator_and_create_responder(
         init_file, local_label="Secret with X"
     )
-    assert meta_y.state == SESSION_STATE_ACTIVE
+    assert meta_y.state == SESSION_STATE_UNVERIFIED
     assert meta_y.keys is not None
     assert meta_y.bond_seed is None # No message received yet
 
     # X accepts responder, finalizes session
     meta_x2 = finalize_initiator_session(meta_x, resp_file)
-    assert meta_x2.state == SESSION_STATE_ACTIVE
+    assert meta_x2.state == SESSION_STATE_UNVERIFIED
     assert meta_x2.keys is not None
     assert meta_x2.bond_seed is not None # X generated bond seed on finalize
     assert meta_x2.bond_nonce is not None
+    meta_x2, meta_y = confirm_pair(meta_x2, meta_y)
+    assert meta_x2.state == SESSION_STATE_ACTIVE
+    assert meta_y.state == SESSION_STATE_ACTIVE
 
     # X and Y have same evolution seed?
     assert meta_x2.keys.evo_seed == meta_y.keys.evo_seed
@@ -265,7 +302,7 @@ def _make_sessions():
     meta_x, init_file = create_initiator_session("Test", session_ttl_sec=EVO_UNLIMITED)
     meta_y, resp_file = accept_initiator_and_create_responder(init_file, "Test")
     meta_x2 = finalize_initiator_session(meta_x, resp_file)
-    return meta_x2, meta_y
+    return confirm_pair(meta_x2, meta_y)
 
 
 def test_x_sends_y_receives():
@@ -520,6 +557,7 @@ def test_full_conversation():
     )
     meta_y, resp_file = accept_initiator_and_create_responder(init_file, "Full Test")
     meta_x = finalize_initiator_session(meta_x, resp_file)
+    meta_x, meta_y = confirm_pair(meta_x, meta_y)
 
     messages = [
         ("X", "Hello Y, this is my first message."),

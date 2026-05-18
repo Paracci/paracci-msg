@@ -1,4 +1,6 @@
 document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('report-back-btn')?.addEventListener('click', () => history.back());
+
   const rawContentTag = document.getElementById('raw-content');
   const container = document.getElementById('markdown-container');
   if (!rawContentTag || !container) return;

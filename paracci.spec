@@ -29,6 +29,7 @@ datas = [
     (str(ROOT / "paracci" / "app" / "templates"), "paracci/app/templates"),
     (str(ROOT / "paracci" / "app" / "static"),    "paracci/app/static"),
     (str(ROOT / "paracci" / "app" / "i18n"),      "paracci/app/i18n"),
+    (str(ROOT / "paracci" / "app" / "reports"),   "paracci/app/reports"),
 ]
 
 binaries = []
@@ -86,6 +87,7 @@ hiddenimports += [
     "core.crypto",
     "core.envelope",
     "core.evolution",
+    "core.identity",
     "core.integrity",
     "core.logger",
     "core.package",

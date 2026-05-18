@@ -56,6 +56,14 @@ def test_ui_api_session_roundtrip_and_attachment_cache(tmp_path):
         {"import_path": str(init_path), "local_label": "Y", "auto_export_path": str(resp_path)},
     )
     finalized = x.dispatch("session_import", {"import_path": str(resp_path), "local_label": "unused"})
+    x.dispatch("session_confirm_safety", {
+        "session_id_hex": finalized["session_id_hex"],
+        "safety_code": finalized["safety_code"],
+    })
+    y.dispatch("session_confirm_safety", {
+        "session_id_hex": imported["session_id_hex"],
+        "safety_code": imported["safety_code"],
+    })
 
     assert init_path.exists()
     assert resp_path.exists()

@@ -4,6 +4,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const container = document.getElementById('preview-body-container');
     const allowDownload = container ? (container.dataset.allowDownload === 'true') : true;
 
+    document.getElementById('preview-close-btn')?.addEventListener('click', () => {
+        if (window.pywebview?.api?.close) {
+            window.pywebview.api.close();
+        } else {
+            window.close();
+        }
+    });
+
     // Prevent standard copy/save/print shortcuts if download is disabled
     if (!allowDownload) {
         document.addEventListener('keydown', function(e) {

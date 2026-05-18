@@ -10,11 +10,14 @@
 {% set shell_can_finalize = endpoint == 'main.session_detail' and shell_role == 'X' and shell_state == 'pending' %}
 {% set shell_can_open = endpoint == 'main.session_detail' and shell_state == 'active' %}
 {% set shell_can_attach = endpoint == 'main.session_detail' and shell_state == 'active' and shell_is_bonded %}
+{% set locale_next = request.full_path if request.query_string else request.path %}
 <!DOCTYPE html>
 <html lang="{{ g.locale }}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="paracci-csrf-token" content="{{ csrf_token }}">
+  <meta name="paracci-browser-token" content="{{ paracci_browser_token }}">
   <title>{% block title %}{{ _('base.title_bar') }}{% endblock %}</title>
 
   <link rel="stylesheet" href="{{ url_for('static', filename='css/variables.css', v=range(1, 99999) | random) }}">
@@ -59,44 +62,37 @@
       data-sidebar-collapse="{{ _('base.sidebar_collapse') }}"
       data-sidebar-expand="{{ _('base.sidebar_expand') }}">
 
-  <script>
-    window.PARACCI_I18N = {
-        "status_weak": "{{ _('unlock.status_weak') }}",
-        "status_short": "{{ _('unlock.status_short') }}",
-        "status_medium": "{{ _('unlock.status_medium') }}",
-        "status_strong": "{{ _('unlock.status_strong') }}",
-        "copy_protection_btn": "{{ _('session.copy_protection_btn') }}",
-        "clearing_clipboard": "{{ _('session.clearing_clipboard') }}",
-        "clipboard_cleared": "{{ _('session.clipboard_cleared') }}",
-        "text_copied_notify": "{{ _('session.text_copied_notify') }}",
-        "processing": "{{ _('session.processing', default='Processing...') }}",
-        "server_error": "{{ _('session.server_error', default='Server error') }}",
-        "processing_failed": "{{ _('session.processing_failed', default='Processing failed.') }}",
-        "msg_not_processed": "{{ _('session.msg_not_processed', default='Message could not be processed') }}",
-        "clipboard_failed": "{{ _('session.clipboard_failed', default='Clipboard access failed.') }}",
-        "download_failed": "{{ _('session.download_failed', default='Download failed') }}",
-        "file_selected": "{{ _('setup.file_selected') }}",
-        "hw_report_title": "{{ _('setup.hw_report_title') }}",
-        "hw_report_error": "{{ _('setup.hw_report_error') }}",
-        "close": "{{ _('common.close') }}",
-        "preview_label": "{{ _('preview.page_title', filename='') | replace(': ', '') }}",
-        "error": "{{ _('common.error') }}",
-        "download": "{{ _('session.download') }}",
-        "security_warning": "{{ _('session.security_warning') }}",
-        "clipboard_failed_locked": "{{ _('session.clipboard_failed_locked') }}",
-        "attachments_added": "{{ _('session.attachments_added', count='{count}') }}",
-        "attachment_attached": "{{ _('session.attachment_attached', filename='{filename}') }}",
-        "drop_failed": "{{ _('session.drop_failed') }}",
-        "quantum_armor_active": "{{ _('setup.quantum_armor_active') }}",
-        "render_error": "{{ _('common.render_error') }}",
-        "marked_missing": "{{ _('common.marked_missing') }}"
-    };
-
-    (function() {
-      const collapsed = localStorage.getItem('paracci_sidebar_collapsed') === 'true';
-      if (collapsed) document.body.classList.add('sidebar-collapsed');
-    })();
-  </script>
+  <template id="paracci-i18n-json">{{ {
+      "status_weak": _("unlock.status_weak"),
+      "status_short": _("unlock.status_short"),
+      "status_medium": _("unlock.status_medium"),
+      "status_strong": _("unlock.status_strong"),
+      "copy_protection_btn": _("session.copy_protection_btn"),
+      "clearing_clipboard": _("session.clearing_clipboard"),
+      "clipboard_cleared": _("session.clipboard_cleared"),
+      "text_copied_notify": _("session.text_copied_notify"),
+      "processing": _("session.processing", default="Processing..."),
+      "server_error": _("session.server_error", default="Server error"),
+      "processing_failed": _("session.processing_failed", default="Processing failed."),
+      "msg_not_processed": _("session.msg_not_processed", default="Message could not be processed"),
+      "clipboard_failed": _("session.clipboard_failed", default="Clipboard access failed."),
+      "download_failed": _("session.download_failed", default="Download failed"),
+      "file_selected": _("setup.file_selected"),
+      "hw_report_title": _("setup.hw_report_title"),
+      "hw_report_error": _("setup.hw_report_error"),
+      "close": _("common.close"),
+      "preview_label": _("preview.page_title", filename="") | replace(": ", ""),
+      "error": _("common.error"),
+      "download": _("session.download"),
+      "security_warning": _("session.security_warning"),
+      "clipboard_failed_locked": _("session.clipboard_failed_locked"),
+      "attachments_added": _("session.attachments_added", count="{count}"),
+      "attachment_attached": _("session.attachment_attached", filename="{filename}"),
+      "drop_failed": _("session.drop_failed"),
+      "quantum_armor_active": _("setup.quantum_armor_active"),
+      "render_error": _("common.render_error"),
+      "marked_missing": _("common.marked_missing")
+    } | tojson }}</template>
   <!--
     PROJECT IDENTITY SEAL: {{ iar_report.identity_hash }}
     AUTHENTICITY: {{ iar_report.version_signature }}
@@ -126,7 +122,7 @@
 
 
 
-  <div id="download-toast" class="download-toast" onclick="handleToastClick()" role="status" aria-live="polite">
+  <div id="download-toast" class="download-toast" role="status" aria-live="polite">
     <div class="toast-icon" aria-hidden="true">
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="22" height="22">
         <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
@@ -166,7 +162,7 @@
             <small>{{ _('base.offline_status') }}</small>
           </span>
         </a>
-        <button type="button" class="sidebar-toggle" onclick="toggleSidebarCollapsed()" aria-label="{{ _('base.sidebar_collapse') }}" title="{{ _('base.sidebar_collapse') }}">
+        <button type="button" class="sidebar-toggle" aria-label="{{ _('base.sidebar_collapse') }}" title="{{ _('base.sidebar_collapse') }}">
           <svg class="toggle-icon-expanded" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.6" stroke="currentColor" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
           </svg>
@@ -232,12 +228,36 @@
           <div class="lang-switcher">
             <button type="button" class="lang-btn">{{ g.locale | upper }}</button>
             <div class="lang-dropdown">
-              <a href="{{ url_for('main.set_locale', lang='tr') }}" class="lang-link {% if g.locale == 'tr' %}active{% endif %}">Turkce</a>
-              <a href="{{ url_for('main.set_locale', lang='en') }}" class="lang-link {% if g.locale == 'en' %}active{% endif %}">English</a>
-              <a href="{{ url_for('main.set_locale', lang='de') }}" class="lang-link {% if g.locale == 'de' %}active{% endif %}">Deutsch</a>
-              <a href="{{ url_for('main.set_locale', lang='fr') }}" class="lang-link {% if g.locale == 'fr' %}active{% endif %}">Francais</a>
-              <a href="{{ url_for('main.set_locale', lang='ru') }}" class="lang-link {% if g.locale == 'ru' %}active{% endif %}">Russkiy</a>
-              <a href="{{ url_for('main.set_locale', lang='es') }}" class="lang-link {% if g.locale == 'es' %}active{% endif %}">Espanol</a>
+              <form method="POST" action="{{ url_for('main.set_locale', lang='tr') }}" class="lang-form">
+                <input type="hidden" name="next" value="{{ locale_next }}">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="lang-link {% if g.locale == 'tr' %}active{% endif %}">Turkce</button>
+              </form>
+              <form method="POST" action="{{ url_for('main.set_locale', lang='en') }}" class="lang-form">
+                <input type="hidden" name="next" value="{{ locale_next }}">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="lang-link {% if g.locale == 'en' %}active{% endif %}">English</button>
+              </form>
+              <form method="POST" action="{{ url_for('main.set_locale', lang='de') }}" class="lang-form">
+                <input type="hidden" name="next" value="{{ locale_next }}">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="lang-link {% if g.locale == 'de' %}active{% endif %}">Deutsch</button>
+              </form>
+              <form method="POST" action="{{ url_for('main.set_locale', lang='fr') }}" class="lang-form">
+                <input type="hidden" name="next" value="{{ locale_next }}">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="lang-link {% if g.locale == 'fr' %}active{% endif %}">Francais</button>
+              </form>
+              <form method="POST" action="{{ url_for('main.set_locale', lang='ru') }}" class="lang-form">
+                <input type="hidden" name="next" value="{{ locale_next }}">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="lang-link {% if g.locale == 'ru' %}active{% endif %}">Russkiy</button>
+              </form>
+              <form method="POST" action="{{ url_for('main.set_locale', lang='es') }}" class="lang-form">
+                <input type="hidden" name="next" value="{{ locale_next }}">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="lang-link {% if g.locale == 'es' %}active{% endif %}">Espanol</button>
+              </form>
             </div>
           </div>
         </div>

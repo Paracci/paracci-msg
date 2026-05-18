@@ -68,7 +68,7 @@
       </div>
       <div class="flow-content">
         <strong>{{ _('setup.step3_title', default='Finalize') }}</strong>
-        <span>{{ _('setup.step3_p1') }} <a href="{{ url_for('main.session_import') }}" class="text-primary underline">{{ _('setup.step3_link') }}</a></span>
+        <span>{{ _('setup.step3_p1') }} <a href="{{ url_for('main.session_import') }}" class="text-primary underline">{{ _('setup.step3_link') }}</a>. {{ _('session.safety_code_title') }}.</span>
       </div>
     </div>
   </div>
@@ -135,8 +135,8 @@
         <div class="settings-group security-profiles-group">
           
           <label class="settings-item profile-label cursor-pointer" for="prof-standard">
-            <input type="radio" name="security_profile" id="prof-standard" value="standard" checked 
-                   onchange="updateSecurityParams(1, 64, 1)" class="profile-radio-input hidden-input">
+            <input type="radio" name="security_profile" id="prof-standard" value="standard" checked
+                   data-security-t="1" data-security-m="64" data-security-p="1" class="profile-radio-input hidden-input">
             <div class="settings-info">
               <span class="settings-title">{{ _('setup.standard') }}</span>
               <span class="settings-desc">{{ _('setup.standard_desc') }}</span>
@@ -150,7 +150,7 @@
 
           <label class="settings-item profile-label cursor-pointer" for="prof-paranoid">
             <input type="radio" name="security_profile" id="prof-paranoid" value="paranoid"
-                   onchange="updateSecurityParams(2, 256, 4)" class="profile-radio-input hidden-input">
+                   data-security-t="2" data-security-m="256" data-security-p="4" class="profile-radio-input hidden-input">
             <div class="settings-info">
               <span class="settings-title">{{ _('setup.paranoid') }}</span>
               <span class="settings-desc">{{ _('setup.paranoid_desc') }}</span>
@@ -164,7 +164,7 @@
 
           <label class="settings-item profile-label cursor-pointer" for="prof-quantum">
             <input type="radio" name="security_profile" id="prof-quantum" value="quantum"
-                   onchange="updateSecurityParams(4, 1024, 8)" class="profile-radio-input hidden-input">
+                   data-security-t="4" data-security-m="1024" data-security-p="8" class="profile-radio-input hidden-input">
             <div class="settings-info">
               <span class="settings-title">{{ _('setup.quantum') }}</span>
               <span class="settings-desc">{{ _('setup.quantum_desc') }}</span>
@@ -177,8 +177,8 @@
           </label>
 
           <label class="settings-item profile-label cursor-pointer" for="prof-custom">
-            <input type="radio" name="security_profile" id="prof-custom" value="custom" 
-                   onchange="toggleCustomSecurity(true)" class="profile-radio-input hidden-input">
+            <input type="radio" name="security_profile" id="prof-custom" value="custom"
+                   data-custom-security="true" class="profile-radio-input hidden-input">
             <div class="settings-info">
               <span class="settings-title">{{ _('setup.custom') }}</span>
               <span class="settings-desc">{{ _('setup.custom_desc') }}</span>
@@ -204,17 +204,17 @@
         <div class="settings-group mb-2">
           <label class="settings-item flex-between cursor-pointer" for="argon_t">
             <span class="settings-title">{{ _('setup.argon_t') }}</span>
-            <input type="number" id="argon_t" name="custom_t" value="1" min="1" max="16" oninput="runBenchmark()"
+            <input type="number" id="argon_t" name="custom_t" value="1" min="1" max="16"
                    class="apple-input-number text-right bg-transparent border-none text-primary font-medium font-mono outline-none">
           </label>
           <label class="settings-item flex-between cursor-pointer" for="argon_m">
             <span class="settings-title">{{ _('setup.argon_m') }}</span>
-            <input type="number" id="argon_m" name="custom_m" value="64" min="16" max="4096" step="16" oninput="runBenchmark()"
+            <input type="number" id="argon_m" name="custom_m" value="64" min="16" max="4096" step="16"
                    class="apple-input-number text-right bg-transparent border-none text-primary font-medium font-mono outline-none">
           </label>
           <label class="settings-item flex-between cursor-pointer" for="argon_p">
             <span class="settings-title">{{ _('setup.argon_p') }}</span>
-            <input type="number" id="argon_p" name="custom_p" value="1" min="1" max="32" oninput="runBenchmark()"
+            <input type="number" id="argon_p" name="custom_p" value="1" min="1" max="32"
                    class="apple-input-number text-right bg-transparent border-none text-primary font-medium font-mono outline-none">
           </label>
         </div>

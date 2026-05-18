@@ -20,21 +20,29 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from core.session import (
     create_initiator_session,
     accept_initiator_and_create_responder,
-    finalize_initiator_session
+    finalize_initiator_session,
+    confirm_safety_code,
+    get_session_safety_code,
 )
 from core.envelope import seal_envelope, open_envelope
 from core.package import create_package, extract_package
+from core.crypto import generate_identity_keypair
 
 def run_e2e_test(profile="quantum"):
     print(f"\n[>] Starting E2E Integration Test (Profile: {profile})")
     print("-" * 50)
     
     try:
+        x_identity_priv, x_identity_pub = generate_identity_keypair()
+        y_identity_priv, y_identity_pub = generate_identity_keypair()
+
         # 1. User X: Create Session
         print(f"[X] Step 1: User X creating session...")
         meta_x_init, init_file = create_initiator_session(
             label="Test Session",
-            profile=profile
+            profile=profile,
+            identity_pub=x_identity_pub,
+            identity_priv=x_identity_priv,
         )
         print(f"[+] User X session created. (ID: {meta_x_init.session_id.hex()[:8]})")
 
@@ -42,9 +50,11 @@ def run_e2e_test(profile="quantum"):
         print(f"[Y] Step 2: User Y accepting initiator file...")
         meta_y, resp_file = accept_initiator_and_create_responder(
             initiator_file_bytes=init_file,
-            local_label="X's Session"
+            local_label="X's Session",
+            identity_pub=y_identity_pub,
+            identity_priv=y_identity_priv,
         )
-        print(f"[+] User Y session active. (Role: {meta_y.role})")
+        print(f"[+] User Y session imported. (Role: {meta_y.role})")
         print(f"[i] User Y sync_key: {meta_y.keys.sync_key.hex()[:16]}...")
 
         # 3. User X: Finalize with Resp
@@ -55,6 +65,12 @@ def run_e2e_test(profile="quantum"):
         )
         print(f"[+] User X session finalized. (Role: {meta_x.role})")
         print(f"[i] User X sync_key: {meta_x.keys.sync_key.hex()[:16]}...")
+        safety_code = get_session_safety_code(meta_x)
+        if safety_code != get_session_safety_code(meta_y):
+            print("[!] ERROR: Safety codes do not match.")
+            return False
+        meta_x = confirm_safety_code(meta_x, safety_code)
+        meta_y = confirm_safety_code(meta_y, safety_code)
 
         # --- VALIDATION: Sync Keys must match ---
         if meta_x.keys.sync_key != meta_y.keys.sync_key:
