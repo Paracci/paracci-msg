@@ -22,6 +22,7 @@ import pyotp
 import qrcode
 import base64
 from io import BytesIO
+from PIL import Image, ImageDraw, ImageOps, UnidentifiedImageError
 from werkzeug.exceptions import SecurityError
 
 import app as ag_app
@@ -29,16 +30,17 @@ from core.config import ParacciConfig
 from core.identity import get_or_create_device_identity
 from core.envelope import seal_envelope, open_envelope, EnvelopeError, EnvelopeTTLError
 from core.package import (
+    PackageLimitError,
     create_package,
     extract_package,
-    package_to_template_data,
     sanitize_attachment_filename,
 )
+from core.crypto import wipe
 from core.sanitizer import sanitize_image
 from core.security_utils import scan_text_for_security
 from core.burn import (
     is_device_initialized, init_device, unlock_device, DeviceError,
-    BurnGuard, AlreadyBurnedError, TTLExpiredError
+    DeviceLockedError, BurnGuard, AlreadyBurnedError, TTLExpiredError
 )
 from core.session import (
     deserialize_session_meta, serialize_session_meta,
@@ -48,7 +50,14 @@ from core.session import (
     confirm_safety_code, get_session_safety_code,
     SESSION_COLORS, SESSION_STATE_UNVERIFIED, SessionError
 )
-from core.evolution import seconds_until_expiry, session_expires_at
+from core.evolution import (
+    MAX_EVO_STEP,
+    SECURITY_PROFILES,
+    seconds_until_expiry,
+    session_expires_at,
+    validate_argon2_params,
+    validate_session_ttl,
+)
 from . import APP_DIR
 from .i18n_manager import i18n
 
@@ -68,6 +77,9 @@ STAGED_ATTACHMENT_CACHE = {}
 # ── Security Configuration ──
 MAX_ATTACHMENT_SIZE = 50 * 1024 * 1024  # 50MB
 MAX_ATTACHMENT_COUNT = 10
+NO_DOWNLOAD_PREVIEW_MAX_DIMENSION = 1024
+NO_DOWNLOAD_PREVIEW_JPEG_QUALITY = 60
+NO_DOWNLOAD_PREVIEW_WATERMARK = "PARACCI PREVIEW"
 
 DANGEROUS_EXTENSIONS = {
     '.exe', '.msi', '.bat', '.cmd', '.ps1', '.vbs', '.pif', '.scr', 
@@ -79,6 +91,8 @@ CODE_EXTENSIONS = {
     '.py', '.js', '.html', '.css', '.c', '.cpp', '.h', '.java', '.go', '.rs', '.sh', 
     '.json', '.yaml', '.md', '.sql', '.php', '.asp', '.aspx', '.jsp'
 }
+
+SENSITIVE_CACHE_CLEAR_LIMIT = 100
 
 
 def _content_security_policy() -> str:
@@ -111,17 +125,72 @@ def _apply_security_headers(response):
     return response
 
 
+def _mark_sensitive_no_store(response):
+    """Prevent browser/proxy reuse of decrypted preview and attachment content."""
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
 @bp.after_app_request
 def add_security_headers(response):
     """Add global security headers."""
     return _apply_security_headers(response)
 
+def _drop_cached_entry(entry, byte_keys):
+    """Drop Paracci-owned references to cached plaintext bytes.
+
+    Python cannot guarantee zeroization of immutable bytes; this only shortens
+    the lifetime of references controlled by this process.
+    """
+    if not isinstance(entry, dict):
+        return
+    for key in byte_keys:
+        value = entry.get(key)
+        if isinstance(value, (bytearray, list)):
+            wipe(value)
+        entry[key] = b""
+    entry.clear()
+
+
+def _normalize_cache_ids(raw_ids):
+    """Return bounded string cache IDs, or None to mean all cache entries."""
+    if raw_ids is None:
+        return None
+    if not isinstance(raw_ids, (list, tuple, set)):
+        return []
+    normalized = []
+    for value in raw_ids:
+        if not isinstance(value, str):
+            continue
+        value = value.strip()
+        if value and len(value) <= 128:
+            normalized.append(value)
+        if len(normalized) >= SENSITIVE_CACHE_CLEAR_LIMIT:
+            break
+    return normalized
+
+
+def _clear_preview_cache(ids=None):
+    """Clear selected preview entries, or all entries when ids is None."""
+    normalized_ids = _normalize_cache_ids(ids)
+    targets = list(PREVIEW_CACHE.keys()) if normalized_ids is None else normalized_ids
+    cleared = 0
+    for cache_id in targets:
+        entry = PREVIEW_CACHE.pop(cache_id, None)
+        if entry is None:
+            continue
+        _drop_cached_entry(entry, ("content", "preview_content"))
+        cleared += 1
+    return cleared
+
+
 def _cleanup_preview_cache():
     """Cleans expired preview files from memory."""
     now = time.time()
     expired = [k for k, v in PREVIEW_CACHE.items() if v["expires"] < now]
-    for k in expired:
-        del PREVIEW_CACHE[k]
+    return _clear_preview_cache(expired)
 
 def _add_to_preview_cache(filename, content, mime, allow_download, ttl=600):
     """Adds a file temporarily to the preview cache."""
@@ -137,12 +206,87 @@ def _add_to_preview_cache(filename, content, mime, allow_download, ttl=600):
     return pid
 
 
+def _can_send_original_attachment(file_data):
+    """Return whether this preview entry may expose original attachment bytes."""
+    return bool(file_data and file_data.get("allow_download") is True)
+
+
+def _build_no_download_image_preview(file_data):
+    """Build a degraded image preview for no-download attachments."""
+    if not file_data or not str(file_data.get("mime", "")).startswith("image/"):
+        return None
+
+    # No-download is a UX-level hint, not DRM; this only closes the raw-original bypass.
+    try:
+        with Image.open(io.BytesIO(file_data["content"])) as image:
+            image = ImageOps.exif_transpose(image)
+            image.thumbnail(
+                (NO_DOWNLOAD_PREVIEW_MAX_DIMENSION, NO_DOWNLOAD_PREVIEW_MAX_DIMENSION)
+            )
+
+            has_alpha = image.mode in ("RGBA", "LA") or (
+                image.mode == "P" and "transparency" in image.info
+            )
+            if has_alpha:
+                rgba = image.convert("RGBA")
+                background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+                background.alpha_composite(rgba)
+                image = background.convert("RGB")
+            else:
+                image = image.convert("RGB")
+
+            draw = ImageDraw.Draw(image)
+            text = NO_DOWNLOAD_PREVIEW_WATERMARK
+            try:
+                left, top, right, bottom = draw.textbbox((0, 0), text)
+                text_width = right - left
+                text_height = bottom - top
+            except AttributeError:
+                text_width, text_height = draw.textsize(text)
+
+            margin = max(12, min(image.size) // 40)
+            pad = 6
+            x = max(margin, image.width - text_width - margin)
+            y = max(margin, image.height - text_height - margin)
+            draw.rectangle(
+                [x - pad, y - pad, x + text_width + pad, y + text_height + pad],
+                fill=(255, 255, 255),
+                outline=(30, 30, 30),
+            )
+            draw.text((x, y), text, fill=(30, 30, 30))
+
+            output = io.BytesIO()
+            image.save(
+                output,
+                format="JPEG",
+                quality=NO_DOWNLOAD_PREVIEW_JPEG_QUALITY,
+                optimize=True,
+            )
+            return output.getvalue(), "image/jpeg"
+    except (UnidentifiedImageError, OSError, ValueError, KeyError) as exc:
+        logger.warning("Could not build no-download image preview: %s", exc)
+        return None
+
+
+def _clear_staged_attachment_cache(ids=None):
+    """Clear selected staged attachments, or all entries when ids is None."""
+    normalized_ids = _normalize_cache_ids(ids)
+    targets = list(STAGED_ATTACHMENT_CACHE.keys()) if normalized_ids is None else normalized_ids
+    cleared = 0
+    for cache_id in targets:
+        entry = STAGED_ATTACHMENT_CACHE.pop(cache_id, None)
+        if entry is None:
+            continue
+        _drop_cached_entry(entry, ("content",))
+        cleared += 1
+    return cleared
+
+
 def _cleanup_staged_attachment_cache():
     """Cleans expired native staged attachments from memory."""
     now = time.time()
     expired = [k for k, v in STAGED_ATTACHMENT_CACHE.items() if v["expires"] < now]
-    for k in expired:
-        del STAGED_ATTACHMENT_CACHE[k]
+    return _clear_staged_attachment_cache(expired)
 
 
 def _add_to_staged_attachment_cache(filename, content, ttl=600):
@@ -340,10 +484,14 @@ def check_lock():
 
     # 1. Device not initialized yet?
     if not is_device_initialized(ag_app.db):
+        _clear_preview_cache()
+        _clear_staged_attachment_cache()
         return redirect(url_for("main.unlock"))
 
     # 2. Device key not in memory? (Locked)
     if ag_app.device_key is None:
+        _clear_preview_cache()
+        _clear_staged_attachment_cache()
         return redirect(url_for("main.unlock"))
 
     client_id = session.get("paracci_client_id")
@@ -395,26 +543,30 @@ def inject_user():
 
 @bp.route("/unlock", methods=["GET", "POST"])
 def unlock():
-    """Route used to initialize the device or unlock it with a PIN."""
+    """Route used to initialize the device or unlock it with a passphrase."""
     initialized = is_device_initialized(ag_app.db)
     mode = "init" if not initialized else "unlock"
+    lockout_seconds = ag_app.db.get_unlock_rate_limit().get("retry_after_seconds", 0) if initialized else 0
+    if request.method == "GET" and (not initialized or ag_app.device_key is None):
+        _clear_preview_cache()
+        _clear_staged_attachment_cache()
 
     if request.method == "POST":
         pin = request.form.get("pin")
         if not pin:
             flash(_('auth.pin_required'), "error")
-            return render_template("unlock.html", mode=mode, is_initialized=initialized)
+            return render_template("unlock.html", mode=mode, is_initialized=initialized, lockout_seconds=lockout_seconds)
 
         try:
             if mode == "init":
-                # Redirect to 2FA setup after PIN is set during initial setup
+                # Redirect to 2FA setup after the passphrase is set during initial setup
                 device_key = init_device(ag_app.db, pin)
                 ag_app.device_key = device_key # Set globally since it's initial setup
                 ag_app.active_client_id = session.get("paracci_client_id")
                 session['setup_in_progress'] = True # Temporary flag
                 return redirect(url_for("main.unlock_2fa_setup"))
             else:
-                # Normal unlock: check 2FA if PIN is correct
+                # Normal unlock: check 2FA if the passphrase is correct
                 device_key = unlock_device(ag_app.db, pin)
                 
                 if ag_app.db.is_2fa_enabled():
@@ -439,11 +591,15 @@ def unlock():
                 flash(_('auth.unlock_success'), "success")
                 return redirect(url_for("main.index"))
                 
+        except DeviceLockedError as e:
+            flash(str(e), "error")
+            return render_template("unlock.html", mode=mode, is_initialized=initialized, lockout_seconds=e.retry_after_seconds)
         except DeviceError as e:
             flash(str(e), "error")
-            return render_template("unlock.html", mode=mode, is_initialized=initialized)
+            lockout_seconds = ag_app.db.get_unlock_rate_limit().get("retry_after_seconds", 0) if initialized else 0
+            return render_template("unlock.html", mode=mode, is_initialized=initialized, lockout_seconds=lockout_seconds)
 
-    return render_template("unlock.html", mode=mode, is_initialized=initialized)
+    return render_template("unlock.html", mode=mode, is_initialized=initialized, lockout_seconds=lockout_seconds)
 
 @bp.route("/unlock/2fa/setup", methods=["GET", "POST"])
 def unlock_2fa_setup():
@@ -468,14 +624,8 @@ def unlock_2fa_setup():
         code = request.form.get("code")
         totp = pyotp.TOTP(secret)
         if totp.verify(code):
-            # Encrypt 2FA secret with device_key before storing
-            # We have device_key in memory from initial unlock (init_device)
-            # during setup, init_device returns device_key directly.
-            # However, we need to ensure we have it.
             if ag_app.device_key:
-                from core.crypto import encrypt
-                blob = encrypt(ag_app.device_key, secret.encode('utf-8'), aad=b"paracci.2fa_secret.v1")
-                ag_app.db.set_2fa_secret(blob.nonce + blob.ciphertext)
+                ag_app.db.set_2fa_secret(secret, ag_app.device_key)
                 ag_app.db.set_2fa_enabled(True)
                 session.pop('unlock_id', None)
                 session.pop('2fa_setup_secret', None)
@@ -518,20 +668,13 @@ def unlock_2fa_verify():
             return _reject_security("pending unlock client mismatch")
         device_key = pending["device_key"]
         
-        # Get and Decrypt 2FA secret
-        enc_secret = ag_app.db.get_2fa_secret_raw() # We'll add this helper or use get_device_meta
-        if not enc_secret:
-            flash("2FA Secret not found.", "error")
-            return redirect(url_for("main.unlock"))
-            
         try:
-            from core.crypto import decrypt, EncryptedBlob
-            nonce = enc_secret[:12]
-            ciphertext = enc_secret[12:]
-            blob = EncryptedBlob(nonce=nonce, ciphertext=ciphertext)
-            secret = decrypt(device_key, blob, aad=b"paracci.2fa_secret.v1").decode('utf-8')
-        except Exception:
+            secret = ag_app.db.get_2fa_secret(device_key)
+        except DeviceError:
             flash("Security Error: Could not decrypt 2FA secret.", "error")
+            return redirect(url_for("main.unlock"))
+        if not secret:
+            flash("2FA Secret not found.", "error")
             return redirect(url_for("main.unlock"))
 
         totp = pyotp.TOTP(secret)
@@ -563,6 +706,7 @@ def settings_2fa():
         action = request.form.get("action")
         if action == "disable":
             ag_app.db.set_2fa_enabled(False)
+            ag_app.db.delete_2fa_secret()
             flash(_('auth.2fa_disabled_success'), "success")
             return redirect(url_for("main.settings"))
         
@@ -576,7 +720,7 @@ def settings_2fa():
             secret = session.get('2fa_setup_secret')
             code = request.form.get("code")
             if secret and pyotp.TOTP(secret).verify(code):
-                ag_app.db.set_2fa_secret(secret)
+                ag_app.db.set_2fa_secret(secret, ag_app.device_key)
                 ag_app.db.set_2fa_enabled(True)
                 session.pop('2fa_setup_secret', None)
                 flash(_('auth.2fa_enabled_success'), "success")
@@ -723,7 +867,7 @@ def _parse_file_header_raw(file_bytes: bytes) -> dict | None:
             
             # Illogical value checks (Anti-Tamper)
             if direction not in [0x01, 0x02]: return None
-            if evo_step > 100000: return None # 100k step limit (CPU DoS protection)
+            if evo_step > MAX_EVO_STEP: return None # CPU DoS protection
             
             return {
                 "file_type":  file_type,
@@ -840,18 +984,23 @@ def session_new():
 
     try:
         session_ttl_sec = int(session_ttl_str)
-    except ValueError:
+        session_ttl_sec = validate_session_ttl(session_ttl_sec)
+    except (TypeError, ValueError):
         flash(_('session.invalid_ttl'), "error")
         return render_template("setup.html", mode="new", is_import=False)
 
     custom_params = None
+    if security_profile != "custom" and security_profile not in SECURITY_PROFILES:
+        flash(_('session.invalid_params'), "error")
+        return render_template("setup.html", mode="new", is_import=False)
+
     if security_profile == "custom":
         try:
             t = int(request.form.get("custom_t", "256"))
             m = int(request.form.get("custom_m", "2048")) * 1024  # MB to KB
             p = int(request.form.get("custom_p", "2"))
-            custom_params = {"t": t, "m": m, "p": p}
-        except ValueError:
+            custom_params = validate_argon2_params(t, m, p)
+        except (TypeError, ValueError):
             flash(_('session.invalid_params'), "error")
             return render_template("setup.html", mode="new", is_import=False)
 
@@ -917,6 +1066,26 @@ def api_stage_attachment():
         "filename": safe_fname,
         "size": len(content),
     })
+
+
+@bp.route("/api/sensitive-cache/clear", methods=["POST"])
+def api_sensitive_cache_clear():
+    """Clear short-lived plaintext caches owned by the current local app."""
+    if not request.is_json:
+        return jsonify({"success": False, "error": "JSON body required."}), 415
+    payload = request.get_json(silent=True) or {}
+    preview_ids = payload.get("preview_ids")
+    staged_attachment_ids = payload.get("staged_attachment_ids")
+    cleared_preview = _clear_preview_cache(preview_ids if preview_ids is not None else [])
+    cleared_staged = _clear_staged_attachment_cache(
+        staged_attachment_ids if staged_attachment_ids is not None else []
+    )
+    response = jsonify({
+        "success": True,
+        "cleared_preview": cleared_preview,
+        "cleared_staged": cleared_staged,
+    })
+    return _mark_sensitive_no_store(response)
 
 def _process_initiator_import(file_bytes, local_label, native_path, color=None):
     """Starts Y role session by processing an incoming Initiator file."""
@@ -1167,10 +1336,12 @@ def _gather_attachments(upload_files, staged_ids=None):
         staged = STAGED_ATTACHMENT_CACHE.pop(attachment_id, None)
         if not staged or staged["expires"] < time.time():
             return None, "A staged attachment expired. Please attach it again."
-        total_size += len(staged["content"])
+        content = staged.get("content", b"")
+        total_size += len(content)
         if total_size > MAX_ATTACHMENT_SIZE:
             return None, f"Total file size exceeds the {MAX_ATTACHMENT_SIZE // (1024*1024)}MB limit."
-        files.append((staged["filename"], staged["content"]))
+        files.append((staged["filename"], content))
+        _drop_cached_entry(staged, ("content",))
 
     return files, None
 
@@ -1205,8 +1376,9 @@ def session_seal(sid: str):
         flash(error, "error")
         return redirect(url_for("main.session_detail", sid=sid))
 
-    package_blob = create_package(text, files, allow_download=allow_download)
+    package_blob = b""
     try:
+        package_blob = create_package(text, files, allow_download=allow_download)
         sealed = seal_envelope(package_blob, meta, single_use=True, ttl_seconds=ttl_seconds)
         updated = meta._replace(tx_count=meta.tx_count + 1, send_seed=sealed.next_seed)
         _save_session(updated)
@@ -1215,6 +1387,9 @@ def session_seal(sid: str):
         logger.exception("Message could not be encrypted")
         flash(f"Message could not be encrypted: {e}", "error")
         return redirect(url_for("main.session_detail", sid=sid))
+    finally:
+        files.clear()
+        package_blob = b""
 
 
 def _prepare_open_response(meta, opened, sid, is_ajax):
@@ -1233,13 +1408,12 @@ def _prepare_open_response(meta, opened, sid, is_ajax):
     evo_info = {"tx_count": updated_meta.tx_count, "bonded": updated_meta.is_bonded, "secs_remaining": seconds_until_expiry(updated_meta.evo_config)} if updated_meta.keys else None
 
     package = extract_package(opened.payload)
-    display_data = package_to_template_data(package)
-    security_report = scan_text_for_security(display_data["text"])
+    security_report = scan_text_for_security(package.text)
 
     attachments = []
     for att in package.attachments:
         safe_name = sanitize_attachment_filename(att.filename)
-        pid = _add_to_preview_cache(safe_name, att.content, att.mime_type, display_data["allow_download"])
+        pid = _add_to_preview_cache(safe_name, att.content, att.mime_type, package.allow_download)
         attachments.append({
             "pid": pid,
             "filename": safe_name,
@@ -1251,9 +1425,9 @@ def _prepare_open_response(meta, opened, sid, is_ajax):
         })
 
     if is_ajax:
-        return jsonify({"success": True, "text": display_data["text"], "attachments": attachments, "allow_download": display_data["allow_download"], "time_left": _fmt_time_left(opened.expire_at), "expire_at": opened.expire_at, "evo_step": opened.evo_step, "single_use": opened.single_use, "msg_id_hex": opened.msg_id.hex(), "safety_code": safety_code, "rx_count": updated_meta.rx_count, "security_report": security_report})
+        return jsonify({"success": True, "text": package.text, "attachments": attachments, "allow_download": package.allow_download, "time_left": _fmt_time_left(opened.expire_at), "expire_at": opened.expire_at, "evo_step": opened.evo_step, "single_use": opened.single_use, "msg_id_hex": opened.msg_id.hex(), "safety_code": safety_code, "rx_count": updated_meta.rx_count, "security_report": security_report})
 
-    return render_template("session.html", meta=updated_meta, sid=sid, evo_info=evo_info, now=int(time.time()), safety_code=safety_code, opened_msg={"text": display_data["text"], "attachments": attachments, "allow_download": display_data["allow_download"], "time_left": _fmt_time_left(opened.expire_at), "expire_at": opened.expire_at, "evo_step": opened.evo_step, "single_use": opened.single_use, "msg_id_hex": opened.msg_id.hex(), "security_report": security_report})
+    return render_template("session.html", meta=updated_meta, sid=sid, evo_info=evo_info, now=int(time.time()), safety_code=safety_code, opened_msg={"text": package.text, "attachments": attachments, "allow_download": package.allow_download, "time_left": _fmt_time_left(opened.expire_at), "expire_at": opened.expire_at, "evo_step": opened.evo_step, "single_use": opened.single_use, "msg_id_hex": opened.msg_id.hex(), "security_report": security_report})
 
 @bp.route("/session/<sid>/open", methods=["POST"])
 def session_open(sid: str):
@@ -1286,8 +1460,13 @@ def session_open(sid: str):
     db, _device_key = _get_db_and_key()
     guard = BurnGuard(db)
     try:
-        guard.pre_open_check(msg_id=raw["msg_id"], expire_at=raw["expire_at"], single_use=raw["single_use"])
-        opened = open_envelope(file_bytes, meta)
+        burn_reserved = guard.pre_open_check(msg_id=raw["msg_id"], expire_at=raw["expire_at"], single_use=raw["single_use"])
+        try:
+            opened = open_envelope(file_bytes, meta)
+        except EnvelopeError as e:
+            if burn_reserved:
+                guard.mark_open_failed(raw["msg_id"], str(e))
+            raise
         
         if opened.bond_nonce is not None and not meta.is_bonded:
             try:
@@ -1297,9 +1476,16 @@ def session_open(sid: str):
 
         guard.post_open_burn(msg_id=opened.msg_id, session_id=opened.session_id, direction=opened.direction, single_use=opened.single_use, file_path=native_path)
         return _prepare_open_response(meta, opened, sid, is_ajax)
-    except (AlreadyBurnedError, TTLExpiredError) as e:
+    except (AlreadyBurnedError, TTLExpiredError, EnvelopeTTLError) as e:
         msg = "This message was already opened or has expired."
         return jsonify({"success": False, "error": msg}) if is_ajax else _render_session_error(meta, sid, msg)
+    except PackageLimitError as e:
+        msg = str(e)
+        msg_id = raw.get("msg_id", b"").hex() if isinstance(raw, dict) else ""
+        logger.warning("Rejected unsafe package expansion for session=%s msg=%s: %s", sid[:8], msg_id, msg)
+        if is_ajax:
+            return jsonify({"success": False, "error": msg}), 400
+        return _render_session_error(meta, sid, msg)
     except Exception as e:
         if is_ajax: return jsonify({"success": False, "error": str(e)})
         return _render_session_error(meta, sid, str(e))
@@ -1424,10 +1610,16 @@ def settings():
         # Get checkbox values
         anti_screenshot = True if request.form.get("anti_screenshot") else False
         quiet_mode      = True if request.form.get("quiet_mode") else False
-        
+
+        try:
+            default_ttl = validate_session_ttl(int(request.form.get("default_ttl", 0)))
+        except (TypeError, ValueError):
+            flash(_('session.invalid_ttl'), "error")
+            return redirect(url_for("main.settings"))
+
         cfg.set("anti_screenshot", anti_screenshot)
         cfg.set("quiet_mode", quiet_mode)
-        cfg.set("default_ttl", int(request.form.get("default_ttl", 0)))
+        cfg.set("default_ttl", default_ttl)
         cfg.set("auto_cleanup_hours", int(request.form.get("auto_cleanup_hours", 24)))
         
         flash(_('settings.save_success'), "success")
@@ -1478,19 +1670,51 @@ def _get_preview_response_data(file_data, pid):
     """Prepares necessary data and mode for the preview page."""
     filename = sanitize_attachment_filename(file_data["filename"])
     mime = file_data["mime"]
+    allow_download = file_data["allow_download"]
     ext = Path(filename).suffix.lower()
     is_dangerous = ext in DANGEROUS_EXTENSIONS
     is_code = ext in CODE_EXTENSIONS
     mode = "image" if mime.startswith("image/") else ("video" if mime.startswith("video/") else ("text" if mime == "text/plain" else ("pdf" if mime == "application/pdf" else "default")))
+    media_url = None
+    context = {
+        "pid": pid,
+        "filename": filename,
+        "mode": mode,
+        "mime": mime,
+        "is_dangerous": False,
+        "allow_download": allow_download,
+        "media_url": media_url,
+    }
 
     if is_code or is_dangerous:
         try:
-            return render_template("preview.html", pid=pid, filename=filename, mode="code", code_content=file_data["content"].decode("utf-8", errors="replace"), lang=ext[1:] if ext else "txt", is_dangerous=is_dangerous, allow_download=file_data["allow_download"])
+            context.update(
+                mode="code",
+                code_content=file_data["content"].decode("utf-8", errors="replace"),
+                lang=ext[1:] if ext else "txt",
+                is_dangerous=is_dangerous,
+            )
+            return render_template("preview.html", **context)
         except:
-            return render_template("preview.html", pid=pid, filename=filename, mode="default", mime=mime, is_dangerous=True, allow_download=file_data["allow_download"])
+            context.update(mode="default", is_dangerous=True)
+            return render_template("preview.html", **context)
     if mode == "text":
-        return render_template("preview.html", pid=pid, filename=filename, mode=mode, mime=mime, code_content=file_data["content"].decode("utf-8", errors="replace"), is_dangerous=False, allow_download=file_data["allow_download"])
-    return render_template("preview.html", pid=pid, filename=filename, mode=mode, mime=mime, is_dangerous=False, allow_download=file_data["allow_download"])
+        context.update(code_content=file_data["content"].decode("utf-8", errors="replace"))
+        return render_template("preview.html", **context)
+
+    if mode == "image":
+        if allow_download:
+            media_url = url_for("main.preview", pid=pid, raw=1)
+        else:
+            media_url = url_for("main.preview", pid=pid, variant="preview")
+    elif mode == "video":
+        if allow_download:
+            media_url = url_for("main.preview", pid=pid, raw=1)
+        else:
+            mode = "default"
+
+    context.update(mode=mode, media_url=media_url)
+    return render_template("preview.html", **context)
 
 @bp.route("/preview/<pid>")
 def preview(pid: str):
@@ -1499,12 +1723,23 @@ def preview(pid: str):
     if not file_data: return f"<h3>{_('preview.not_found_title')}</h3><p>{_('preview.not_found_desc')}</p>", 404
 
     if request.args.get("raw") == "1":
-        return send_file(io.BytesIO(file_data["content"]), mimetype=file_data["mime"], as_attachment=False)
+        if not _can_send_original_attachment(file_data):
+            abort(403)
+        response = send_file(io.BytesIO(file_data["content"]), mimetype=file_data["mime"], as_attachment=False)
+        return _mark_sensitive_no_store(response)
+
+    if request.args.get("variant") == "preview":
+        preview_data = _build_no_download_image_preview(file_data)
+        if not preview_data:
+            abort(415)
+        preview_content, preview_mime = preview_data
+        response = send_file(io.BytesIO(preview_content), mimetype=preview_mime, as_attachment=False)
+        return _mark_sensitive_no_store(response)
 
     resp_html = _get_preview_response_data(file_data, pid)
     response = make_response(resp_html)
     response.headers["Content-Security-Policy"] = _content_security_policy()
-    return response
+    return _mark_sensitive_no_store(response)
 
 
 # ---------------------------------------------------------------------------
@@ -1515,15 +1750,16 @@ def preview(pid: str):
 def preview_download(pid: str):
     """Allows downloading a previewed file."""
     file_data = PREVIEW_CACHE.get(pid)
-    if not file_data or not file_data["allow_download"]:
+    if not _can_send_original_attachment(file_data):
         abort(403)
 
-    return send_file(
+    response = send_file(
         io.BytesIO(file_data["content"]),
         mimetype=file_data["mime"],
         as_attachment=True,
         download_name=sanitize_attachment_filename(file_data["filename"])
     )
+    return _mark_sensitive_no_store(response)
 
 
 # ---------------------------------------------------------------------------

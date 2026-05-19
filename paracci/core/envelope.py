@@ -32,10 +32,13 @@ from .crypto import (
 )
 from .evolution import (
     EvoConfig,
+    MAX_EVO_STEP,
     _advance_seed,
     _derive_msg_keys,
     check_session_ttl,
     compute_bond_seed,
+    validate_evo_config,
+    validate_evo_step,
 )
 from .integrity import generate_file_seal, verify_file_seal
 from .session import SessionMeta
@@ -53,7 +56,6 @@ FLAG_HAS_TTL = 0x02
 
 HEADER_SIZE = 52
 SEAL_SIZE = 16
-MAX_EVO_STEP = 100000
 
 
 class EnvelopeHeader(NamedTuple):
@@ -151,8 +153,10 @@ def _parse_header(data: bytes) -> EnvelopeHeader:
 
     if direction not in (DIR_X_TO_Y, DIR_Y_TO_X):
         raise EnvelopeDirectionError("Invalid message direction.")
-    if evo_step > MAX_EVO_STEP:
-        raise EnvelopeError("Evolution step too large.")
+    try:
+        validate_evo_step(evo_step)
+    except Exception as exc:
+        raise EnvelopeError("Evolution step too large.") from exc
 
     return EnvelopeHeader(
         magic=MAGIC_BYTES,
@@ -202,6 +206,10 @@ def _validate_seal_session(session: SessionMeta) -> None:
         if session.role == "X":
             raise EnvelopeError("Bond not established. X must finalize first.")
         raise EnvelopeError("Bond not established. Y must receive X's first message.")
+    try:
+        validate_evo_config(session.evo_config)
+    except Exception as exc:
+        raise EnvelopeError("Invalid evolution configuration.") from exc
     check_session_ttl(session.evo_config)
 
 
@@ -210,7 +218,10 @@ def _prepare_seal_keys(session: SessionMeta) -> tuple[int, bytes, bytes, int]:
     if current_seed is None:
         raise EnvelopeError("No sending seed available.")
 
-    step = session.tx_count
+    try:
+        step = validate_evo_step(session.tx_count)
+    except Exception as exc:
+        raise EnvelopeError("Invalid evolution step.") from exc
     kxy, kyx, next_seed = _derive_msg_keys(current_seed, step)
     if session.role == "X":
         return DIR_X_TO_Y, kxy, next_seed, step
@@ -226,6 +237,7 @@ def _compute_work_key(
     config: EvoConfig,
 ) -> bytes:
     """Computes a key derived with Argon2id for Quantum Armor (Time-Lock)."""
+    config = validate_evo_config(config)
     return hash_secret_raw(
         secret=msg_key,
         salt=header + (qseed or b"no-quantum-armor"),
@@ -349,6 +361,10 @@ def _validate_envelope_context(header: EnvelopeHeader, session: SessionMeta) -> 
         raise EnvelopeError("Cannot open your own message.")
     if header.expire_at > 0 and int(time.time()) >= header.expire_at:
         raise EnvelopeTTLError("Message expired. Cannot open.")
+    try:
+        validate_evo_config(session.evo_config)
+    except Exception as exc:
+        raise EnvelopeError("Invalid evolution configuration.") from exc
     check_session_ttl(session.evo_config)
 
 
@@ -377,24 +393,30 @@ def _derive_receive_keys(
     bond_nonce: Optional[bytes],
     session: SessionMeta,
 ) -> tuple[bytes, bytes]:
+    try:
+        header_step = validate_evo_step(header.evo_step)
+        rx_count = validate_evo_step(session.rx_count)
+    except Exception as exc:
+        raise EnvelopeError("Invalid evolution step.") from exc
+
     if bond_nonce is not None:
         current_seed = compute_bond_seed(session.keys.evo_seed, bond_nonce)
         start_step = 0
     elif session.recv_seed is not None:
         current_seed = session.recv_seed
-        start_step = session.rx_count
+        start_step = rx_count
     else:
         raise EnvelopeError("Bond not established. X's first message is required.")
 
-    if header.evo_step < session.rx_count:
+    if header_step < rx_count:
         raise EnvelopeError(
-            f"Old message rejected (step {header.evo_step} < current {session.rx_count})."
+            f"Old message rejected (step {header_step} < current {rx_count})."
         )
 
-    for step in range(start_step, header.evo_step):
+    for step in range(start_step, header_step):
         current_seed = _advance_seed(current_seed, step)
 
-    kxy, kyx, next_seed = _derive_msg_keys(current_seed, header.evo_step)
+    kxy, kyx, next_seed = _derive_msg_keys(current_seed, header_step)
     if header.direction == DIR_X_TO_Y and session.role == "Y":
         return kxy, next_seed
     if header.direction == DIR_Y_TO_X and session.role == "X":

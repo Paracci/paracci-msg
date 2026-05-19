@@ -22,6 +22,24 @@ from .crypto import (
 
 EVO_UNLIMITED = 0
 
+# Security Profiles: Argon2id workload settings (Time-Lock)
+# t: time_cost (iterations), m: memory_cost (KB), p: parallelism
+SECURITY_PROFILES = {
+    "standard": {"t": 2, "m": 65536, "p": 2},
+    "paranoid": {"t": 8, "m": 262144, "p": 4},
+    "quantum": {"t": 256, "m": 2097152, "p": 2},
+}
+
+MIN_ARGON2_TIME = 1
+MIN_ARGON2_MEM_KB = 16384
+MIN_ARGON2_PAR = 1
+MAX_ARGON2_TIME = max(profile["t"] for profile in SECURITY_PROFILES.values())
+MAX_ARGON2_MEM_KB = max(profile["m"] for profile in SECURITY_PROFILES.values())
+MAX_ARGON2_PAR = max(profile["p"] for profile in SECURITY_PROFILES.values())
+MAX_SESSION_TTL_SEC = 2592000
+MAX_EVO_STEP = 100000
+MAX_UINT32 = 0xFFFFFFFF
+
 
 class EvoConfig(NamedTuple):
     """
@@ -39,6 +57,70 @@ class EvoStep(NamedTuple):
     key_x_to_y: bytes
     key_y_to_x: bytes
     next_seed:  bytes
+
+
+class EvoConfigValidationError(ValueError):
+    pass
+
+
+def _require_int(value, label: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise EvoConfigValidationError(f"{label} must be an integer.")
+    return value
+
+
+def _require_uint32(value, label: str) -> int:
+    value = _require_int(value, label)
+    if value < 0 or value > MAX_UINT32:
+        raise EvoConfigValidationError(f"{label} is outside the supported range.")
+    return value
+
+
+def validate_argon2_params(time_cost: int, memory_cost: int, parallelism: int) -> dict:
+    """Validates Argon2id workload settings. memory_cost is measured in KB."""
+    time_cost = _require_int(time_cost, "Argon2 time cost")
+    memory_cost = _require_int(memory_cost, "Argon2 memory cost")
+    parallelism = _require_int(parallelism, "Argon2 parallelism")
+
+    if not (MIN_ARGON2_TIME <= time_cost <= MAX_ARGON2_TIME):
+        raise EvoConfigValidationError("Argon2 time cost is outside the supported range.")
+    if not (MIN_ARGON2_MEM_KB <= memory_cost <= MAX_ARGON2_MEM_KB):
+        raise EvoConfigValidationError("Argon2 memory cost is outside the supported range.")
+    if not (MIN_ARGON2_PAR <= parallelism <= MAX_ARGON2_PAR):
+        raise EvoConfigValidationError("Argon2 parallelism is outside the supported range.")
+
+    return {"t": time_cost, "m": memory_cost, "p": parallelism}
+
+
+def validate_session_ttl(session_ttl_sec: int) -> int:
+    session_ttl_sec = _require_int(session_ttl_sec, "Session TTL")
+    if session_ttl_sec < 0 or session_ttl_sec > MAX_SESSION_TTL_SEC:
+        raise EvoConfigValidationError("Session TTL is outside the supported range.")
+    return session_ttl_sec
+
+
+def validate_evo_step(step: int) -> int:
+    step = _require_int(step, "Evolution step")
+    if step < 0 or step > MAX_EVO_STEP:
+        raise EvoStepMismatchError("Step count too large, rejected for CPU safety.")
+    return step
+
+
+def validate_evo_config(config: EvoConfig) -> EvoConfig:
+    ttl = validate_session_ttl(config.session_ttl_sec)
+    created_at = _require_uint32(config.created_at, "EvoConfig created_at")
+    params = validate_argon2_params(
+        config.argon2_time,
+        config.argon2_mem,
+        config.argon2_par,
+    )
+    return EvoConfig(
+        session_ttl_sec=ttl,
+        created_at=created_at,
+        argon2_time=params["t"],
+        argon2_mem=params["m"],
+        argon2_par=params["p"],
+    )
 
 
 # Internal helpers
@@ -66,8 +148,7 @@ def compute_keys_at_step(bond_seed: bytes, step: int) -> EvoStep:
     """
     Computes keys for step N from bond_seed.
     """
-    if step > 100000: # 100k step limit (for CPU safety)
-        raise EvoStepMismatchError("Step count too large, rejected for CPU safety.")
+    step = validate_evo_step(step)
 
     current = bond_seed
     for i in range(step):
@@ -121,18 +202,19 @@ def make_evo_config(
     """Creates a new evolution configuration (EvoConfig)."""
     if created_at is None:
         created_at = int(time.time())
-    return EvoConfig(
+    return validate_evo_config(EvoConfig(
         session_ttl_sec=session_ttl_sec,
         created_at=created_at,
         argon2_time=argon2_time,
         argon2_mem=argon2_mem,
         argon2_par=argon2_par
-    )
+    ))
 
 
 def serialize_evo_config(config: EvoConfig) -> bytes:
     """Converts the EvoConfig object to binary data."""
-    # v2.1: TTL(4) + Created(4) + Time(2) + Mem(4) + Par(2) = 16 bytes
+    config = validate_evo_config(config)
+    # v2.1: TTL(4) + Created(4) + Time(2) + Mem(4) + Par(4) = 18 bytes
     return struct.pack(">IIHII", 
         config.session_ttl_sec, 
         config.created_at,
@@ -145,17 +227,17 @@ def serialize_evo_config(config: EvoConfig) -> bytes:
 def deserialize_evo_config(data: bytes) -> EvoConfig:
     """Converts binary data to an EvoConfig object."""
     if len(data) >= 18:
-        # v2.1 format: TTL(4), Created(4), Time(2), Mem(4), Par(2)
+        # v2.1 format: TTL(4), Created(4), Time(2), Mem(4), Par(4)
         ttl, created, a_time, a_mem, a_par = struct.unpack(">IIHII", data[:18])
-        return EvoConfig(ttl, created, a_time, a_mem, a_par)
+        return validate_evo_config(EvoConfig(ttl, created, a_time, a_mem, a_par))
     elif len(data) >= 16:
         # v1 compatibility: if 4 fields exist, ttl=3rd, created_at=4th
         _a, _b, ttl, created = struct.unpack(">IIII", data[:16])
-        return EvoConfig(ttl, created, 2, 65536, 4)
+        return validate_evo_config(EvoConfig(ttl, created, 2, 65536, 4))
     elif len(data) >= 8:
         # v2.0 format (fallback)
         ttl, created = struct.unpack(">II", data[:8])
-        return EvoConfig(ttl, created, 2, 65536, 4)
+        return validate_evo_config(EvoConfig(ttl, created, 2, 65536, 4))
     raise ValueError("EvoConfig data too short.")
 
 

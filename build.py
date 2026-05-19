@@ -37,8 +37,7 @@ WORK_DIR    = ROOT / "build_cache"   # PyInstaller work/ temp
 
 APP_NAME    = "Paracci"
 
-# Required packages for building (not runtime deps)
-BUILD_DEPS  = ["pyinstaller>=6.0", "pyinstaller-hooks-contrib"]
+DEV_LOCK    = ROOT / "requirements-dev.lock"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -72,11 +71,16 @@ def clean_artifacts() -> None:
             print(f"    Removed: {d}")
 
 
-def install_build_deps() -> None:
-    """Upgrade pip and install build-time dependencies."""
+def install_build_deps() -> int:
+    """Upgrade pip and install locked build-time dependencies."""
+    if not DEV_LOCK.exists():
+        print(f"\n  [ERROR] Dev dependency lock not found: {DEV_LOCK}")
+        return 1
     print("\n  [INSTALL] Installing build dependencies...")
-    run([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
-    run([sys.executable, "-m", "pip", "install", "--upgrade"] + BUILD_DEPS)
+    rc = run([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
+    if rc != 0:
+        return rc
+    return run([sys.executable, "-m", "pip", "install", "--require-hashes", "-r", str(DEV_LOCK)])
 
 
 def find_pyinstaller() -> str:
@@ -203,7 +207,9 @@ def main() -> int:
         return 1
 
     if args.install:
-        install_build_deps()
+        rc = install_build_deps()
+        if rc != 0:
+            return rc
 
     if args.clean:
         clean_artifacts()

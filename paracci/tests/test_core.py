@@ -37,7 +37,18 @@ from core.session import (
     SESSION_STATE_UNVERIFIED,
 )
 from core.envelope import seal_envelope, open_envelope, EnvelopeError, EnvelopeTTLError
-from core.burn import BurnDB, BurnGuard, is_device_initialized, init_device, unlock_device, AlreadyBurnedError, TTLExpiredError
+from core.burn import (
+    BURN_STATUS_BURNED,
+    BURN_STATUS_FAILED,
+    BURN_STATUS_OPENING,
+    BurnDB,
+    BurnGuard,
+    is_device_initialized,
+    init_device,
+    unlock_device,
+    AlreadyBurnedError,
+    TTLExpiredError,
+)
 
 PASS = "[OK]"
 FAIL = "[FAIL]"
@@ -472,11 +483,21 @@ def test_burn_workflow():
         msg_id = new_message_id()
         session_id = new_message_id()
 
-        # First time: no fail
-        guard.pre_open_check(msg_id, expire_at=0, single_use=True)
+        # First time: reserve before decrypt.
+        reserved = guard.pre_open_check(msg_id, expire_at=0, single_use=True)
+        assert reserved is True
+        assert db.get_burn_status(msg_id) == BURN_STATUS_OPENING
 
-        # Burn
+        # A concurrent or repeated open cannot pass while the message is reserved.
+        try:
+            guard.pre_open_check(msg_id, expire_at=0, single_use=True)
+            assert False, "Opening reservation allowed a second opener!"
+        except AlreadyBurnedError:
+            pass
+
+        # Successful decrypt finalizes the burn.
         guard.post_open_burn(msg_id, session_id, direction=1, single_use=True, file_path=None)
+        assert db.get_burn_status(msg_id) == BURN_STATUS_BURNED
 
         # Second time: reject
         try:
@@ -484,6 +505,26 @@ def test_burn_workflow():
             assert False, "Burned message opened again!"
         except AlreadyBurnedError:
             pass
+
+        # Failed decrypts are retryable until one attempt burns successfully.
+        retry_msg_id = new_message_id()
+        assert guard.pre_open_check(retry_msg_id, expire_at=0, single_use=True) is True
+        guard.mark_open_failed(retry_msg_id, "decrypt failed")
+        assert db.get_burn_status(retry_msg_id) == BURN_STATUS_FAILED
+
+        assert guard.pre_open_check(retry_msg_id, expire_at=0, single_use=True) is True
+        assert db.get_burn_status(retry_msg_id) == BURN_STATUS_OPENING
+        guard.post_open_burn(retry_msg_id, session_id, direction=1, single_use=True, file_path=None)
+        assert db.get_burn_status(retry_msg_id) == BURN_STATUS_BURNED
+
+        # Expired messages are rejected before any reservation row is created.
+        expired_msg_id = new_message_id()
+        try:
+            guard.pre_open_check(expired_msg_id, expire_at=int(time.time()) - 1, single_use=True)
+            assert False, "Expired message created a burn reservation!"
+        except TTLExpiredError:
+            pass
+        assert db.get_burn_status(expired_msg_id) is None
 
 run_test("Single-use message burn workflow", test_burn_workflow)
 
@@ -507,7 +548,7 @@ run_test("TTL expired message burn check", test_ttl_check)
 def test_device_key_persistence():
     with tempfile.TemporaryDirectory() as tmpdir:
         db = BurnDB(os.path.join(tmpdir, "test.db"))
-        pin = "test1234"
+        pin = "Correct-Horse-95175328"
         key1 = init_device(db, pin)
         key2 = unlock_device(db, pin)
         assert key1 == key2
@@ -519,7 +560,7 @@ run_test("Device key persistence (PIN init -> unlock)", test_device_key_persiste
 def test_session_db_roundtrip():
     with tempfile.TemporaryDirectory() as tmpdir:
         db = BurnDB(os.path.join(tmpdir, "test.db"))
-        pin = "test-pin"
+        pin = "Correct-Horse-Session-95175328"
         device_key = init_device(db, pin)
 
         meta_x, init_file = create_initiator_session("DB Test")

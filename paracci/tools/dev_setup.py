@@ -34,7 +34,7 @@ from core.session import (
     get_session_safety_code
 )
 
-DEFAULT_PIN = "95175328"
+DEFAULT_PIN = "Correct-Horse-95175328"
 
 def setup_user(user_name: str):
     data_dir = ROOT_DIR / f"data_{user_name}"

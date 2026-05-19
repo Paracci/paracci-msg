@@ -179,14 +179,18 @@ def verify_identity_signature(
 
 
 def wipe(data: bytes | bytearray | list):
-    """Wipes sensitive data from memory by overwriting with zeros."""
+    """Best-effort process hygiene for mutable sensitive containers.
+
+    Python cannot guarantee zeroization of immutable bytes/str objects or copies
+    already held by Flask responses, DOM strings, base64 values, or libraries.
+    """
     if isinstance(data, bytearray):
         for i in range(len(data)):
             data[i] = 0
     elif isinstance(data, list):
         for i in range(len(data)):
             data[i] = None
-    # bytes are immutable and cannot be overwritten, only references can be deleted
+    # bytes are immutable; only this local reference can be dropped.
     del data
     gc.collect()
 
@@ -207,16 +211,16 @@ def ecdh(private_key_bytes: bytes, peer_public_key_bytes: bytes) -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# PIN Based Key Derivation (KDF)
+# Passphrase Based Key Derivation (KDF)
 # ---------------------------------------------------------------------------
 
-def derive_master_key(pin: str, salt: bytes) -> bytes:
+def derive_master_key(passphrase: str, salt: bytes) -> bytes:
     """
-    Derives the master key from the user PIN code.
+    Derives the device master key from the user passphrase.
     Slows down brute-force attacks using Argon2id (Time-Lock / Quantum Protection).
     """
     master_key = hash_secret_raw(
-        secret=pin.encode(),
+        secret=passphrase.encode("utf-8"),
         salt=salt,
         time_cost=ARGON2_TIME,
         memory_cost=ARGON2_MEM,

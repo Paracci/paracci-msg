@@ -34,7 +34,7 @@ from core.crypto import EncryptedBlob, decrypt, encrypt, wipe
 from core.envelope import EnvelopeError, EnvelopeTTLError, open_envelope, seal_envelope
 from core.evolution import EVO_UNLIMITED, seconds_until_expiry, session_expires_at
 from core.identity import get_or_create_device_identity
-from core.package import Attachment, create_package, extract_package
+from core.package import Attachment, PackageLimitError, create_package, extract_package
 from core.sanitizer import sanitize_image
 from core.security_utils import scan_text_for_security
 from core.session import (
@@ -366,17 +366,17 @@ class DeviceService:
             blob = EncryptedBlob(nonce=encrypted[:12], ciphertext=encrypted[12:])
             return decrypt(device_key, blob, aad=b"paracci.device.2fa.v1").decode("utf-8")
 
-        legacy = self.db.get_2fa_secret()
+        legacy = self.db.get_2fa_secret(device_key)
         if legacy:
             self.set_2fa_secret(legacy)
-            self.db.delete_device_meta("2fa_secret")
+            self.db.delete_2fa_secret()
         return legacy
 
     def set_2fa_secret(self, secret: str) -> None:
         device_key = self.ensure_unlocked()
         blob = encrypt(device_key, secret.encode("utf-8"), aad=b"paracci.device.2fa.v1")
         self.db.set_device_meta("2fa_secret_enc_v1", blob.nonce + blob.ciphertext)
-        self.db.delete_device_meta("2fa_secret")
+        self.db.delete_2fa_secret()
 
     def set_2fa_enabled(self, enabled: bool) -> None:
         self.db.set_2fa_enabled(enabled)
@@ -628,12 +628,17 @@ class MessageService:
 
         guard = BurnGuard(self.sessions.device.db)
         try:
-            guard.pre_open_check(
+            burn_reserved = guard.pre_open_check(
                 msg_id=header["msg_id"],
                 expire_at=header["expire_at"],
                 single_use=header["single_use"],
             )
-            opened = open_envelope(file_bytes, meta)
+            try:
+                opened = open_envelope(file_bytes, meta)
+            except EnvelopeError as exc:
+                if burn_reserved:
+                    guard.mark_open_failed(header["msg_id"], str(exc))
+                raise
             if opened.bond_nonce is not None and not meta.is_bonded:
                 meta = apply_bond_nonce_to_y(meta, opened.bond_nonce)
             updated = meta._replace(rx_count=opened.next_step, recv_seed=opened.next_seed)
@@ -650,7 +655,10 @@ class MessageService:
         except EnvelopeError as exc:
             raise MessageServiceError(str(exc)) from exc
 
-        package = extract_package(opened.payload)
+        try:
+            package = extract_package(opened.payload)
+        except PackageLimitError as exc:
+            raise MessageServiceError(str(exc)) from exc
         attachments = [
             AttachmentPayload(
                 filename=att.filename,

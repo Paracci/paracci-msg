@@ -8,7 +8,7 @@ unless they are protocol tests.
 
 Provides X25519 key generation/ECDH, HKDF-SHA512 derivation,
 ChaCha20-Poly1305 encryption, Argon2id PIN/session work factors, message IDs,
-fingerprints, hashes, and best-effort memory wipe helpers.
+fingerprints, hashes, and best-effort memory hygiene helpers.
 
 ## `session.py`
 
@@ -50,8 +50,11 @@ Loads and saves `config.json` under `DATA_DIR`.
 
 Implements OS-specific best-effort security integration:
 
-- Windows: anti-screenshot, secure delete, clipboard clear, recent-doc clear.
-- macOS: data directory, secure delete, clipboard clear, recent-doc clear,
-  best-effort window sharing restriction.
-- Linux: XDG data directory, `shred` fallback, clipboard tools, recent-doc clear,
-  limited anti-screenshot support.
+- Windows: screen capture reduction, best-effort delete, clipboard auto-clear,
+  recent-doc cleanup.
+- macOS: data directory, best-effort delete, clipboard auto-clear, recent-doc
+  cleanup, and best-effort window sharing restriction.
+- Linux: XDG data directory, `shred` fallback, clipboard tools, recent-doc
+  cleanup, and an explicit unimplemented capture-reduction stub.
+
+See `SECURITY_SHIELDS.md` before changing shield guarantees or product copy.

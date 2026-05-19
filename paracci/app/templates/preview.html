@@ -53,11 +53,11 @@
 
   <div id="preview-body-container" class="preview-content card" data-allow-download="{{ 'true' if allow_download else 'false' }}">
     <div class="preview-viewport">
-      {% if mode == 'image' %}
-        <img src="{{ url_for('main.preview', pid=pid, raw=1) }}" alt="{{ filename }}" class="preview-img">
-      {% elif mode == 'video' %}
+      {% if mode == 'image' and media_url %}
+        <img src="{{ media_url }}" alt="{{ filename }}" class="preview-img">
+      {% elif mode == 'video' and media_url %}
         <video controls controlslist="nodownload" class="preview-video">
-          <source src="{{ url_for('main.preview', pid=pid, raw=1) }}" type="{{ mime }}">
+          <source src="{{ media_url }}" type="{{ mime }}">
           {{ _('preview.video_not_supported') }}
         </video>
       {% elif mode == 'code' %}

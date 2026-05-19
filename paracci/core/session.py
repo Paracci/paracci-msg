@@ -29,10 +29,13 @@ from .crypto import (
 from .evolution import (
     EVO_UNLIMITED,
     EvoConfig,
+    SECURITY_PROFILES,
     compute_bond_seed,
     deserialize_evo_config,
     make_evo_config,
     serialize_evo_config,
+    validate_argon2_params,
+    validate_evo_config,
 )
 
 MAGIC_BYTES = b"PARC"
@@ -58,14 +61,6 @@ ED25519_PUBLIC_LEN = 32
 ED25519_SIGNATURE_LEN = 64
 SESSION_ID_LEN = 16
 QSEED_LEN = 128
-
-# Security Profiles: Argon2id workload settings (Time-Lock)
-# t: time_cost (iterations), m: memory_cost (KB), p: parallelism
-SECURITY_PROFILES = {
-    "standard": {"t": 2, "m": 65536, "p": 2},
-    "paranoid": {"t": 8, "m": 262144, "p": 4},
-    "quantum": {"t": 256, "m": 2097152, "p": 2},
-}
 
 SESSION_COLORS = [
     "#0a84ff",
@@ -379,7 +374,22 @@ def create_initiator_session(
     qseed = random_bytes(QSEED_LEN)
     created_at = int(time.time())
 
-    params = custom_params if profile == "custom" and custom_params else SECURITY_PROFILES.get(profile, SECURITY_PROFILES["paranoid"])
+    if profile == "custom":
+        if not custom_params:
+            raise SessionError("Custom security parameters are required.")
+        try:
+            params = validate_argon2_params(
+                custom_params["t"],
+                custom_params["m"],
+                custom_params["p"],
+            )
+        except (KeyError, TypeError) as exc:
+            raise SessionError("Invalid custom security parameters.") from exc
+    elif profile in SECURITY_PROFILES:
+        params = SECURITY_PROFILES[profile]
+    else:
+        raise SessionError("Invalid security profile.")
+
     evo_config = make_evo_config(
         session_ttl_sec=session_ttl_sec,
         created_at=created_at,
@@ -434,7 +444,7 @@ def accept_initiator_and_create_responder(
     x_pub = info["x_pub"]
     x_identity_pub = info["x_identity_pub"]
     x_qseed = info["x_qseed"]
-    evo_config = info["evo_config"]
+    evo_config = validate_evo_config(info["evo_config"])
 
     y_priv, y_pub = generate_keypair()
     y_qseed = random_bytes(QSEED_LEN)
@@ -505,6 +515,7 @@ def finalize_initiator_session(meta: SessionMeta, responder_file_bytes: bytes) -
 
     y_pub = info["y_pub"]
     y_qseed = info["y_qseed"]
+    evo_config = validate_evo_config(meta.evo_config)
     shared_secret = ecdh(meta.my_priv, y_pub)
     q_salt = (meta.my_qseed or b"") + (y_qseed or b"")
     keys = derive_session_keys(
@@ -513,9 +524,9 @@ def finalize_initiator_session(meta: SessionMeta, responder_file_bytes: bytes) -
         y_public=y_pub,
         extra_salt=meta.session_id,
         quantum_salt=q_salt if q_salt else None,
-        a_time=meta.evo_config.argon2_time,
-        a_mem=meta.evo_config.argon2_mem,
-        a_par=meta.evo_config.argon2_par,
+        a_time=evo_config.argon2_time,
+        a_mem=evo_config.argon2_mem,
+        a_par=evo_config.argon2_par,
     )
 
     bond_nonce = random_bytes(32)
@@ -532,6 +543,7 @@ def finalize_initiator_session(meta: SessionMeta, responder_file_bytes: bytes) -
         rx_count=0,
         peer_qseed=y_qseed,
         peer_username=info.get("username"),
+        evo_config=evo_config,
         state=SESSION_STATE_UNVERIFIED,
         peer_identity_pub=info["y_identity_pub"],
         handshake_version=HANDSHAKE_VERSION,

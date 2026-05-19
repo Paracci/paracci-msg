@@ -14,11 +14,12 @@ class MacOSShield(BaseShield):
 
     def apply_anti_screenshot(self, window, enabled: bool) -> bool:
         """
-        Theoretical implementation for macOS anti-screenshot.
-        Sets NSWindow sharingType to NSWindowSharingNone (0).
+        Best-effort macOS window sharing restriction.
+        Sets NSWindow sharingType to NSWindowSharingNone (0) when possible;
+        this does not block every screenshot, recording, or privileged capture path.
         """
         if not enabled:
-            logging.info("[MacOSShield] Anti-Screenshot DISABLED by user config")
+            logging.info("[MacOSShield] Capture-reduction disabled by user config")
             return False
 
         # Detect headless/CI or offscreen QPA to avoid segfaults on invalid handles
@@ -26,7 +27,7 @@ class MacOSShield(BaseShield):
         is_offscreen = os.environ.get("QT_QPA_PLATFORM") == "offscreen"
         
         if is_ci or is_offscreen:
-            logging.info("[MacOSShield] Anti-Screenshot skipped in CI/offscreen environment")
+            logging.info("[MacOSShield] Capture-reduction skipped in CI/offscreen environment")
             return False
 
         try:
@@ -58,7 +59,7 @@ class MacOSShield(BaseShield):
 
             if ptr:
                 objc_msgSend(ptr, setSharingType, 0)
-                logging.info(f"[MacOSShield] Anti-Screenshot ENABLED (handle: {hex(ptr)})")
+                logging.info(f"[MacOSShield] Capture-reduction requested (handle: {hex(ptr)})")
                 return True
             
             logging.warning("[MacOSShield] Could not acquire native NSWindow pointer")
@@ -73,7 +74,7 @@ class MacOSShield(BaseShield):
         return str(base / app_name)
 
     def secure_delete(self, file_path: str) -> bool:
-        """Overwrites file with random bytes before deletion on macOS."""
+        """Best-effort overwrite/delete; SSDs, snapshots, journals, and sync may retain data."""
         try:
             p = Path(file_path)
             size = p.stat().st_size
@@ -90,7 +91,7 @@ class MacOSShield(BaseShield):
         except: return False
 
     def copy_to_clipboard(self, text: str, clear_delay: int = 30) -> bool:
-        """Securely copies to clipboard using pbcopy on macOS."""
+        """Copies to clipboard and auto-clears after delay; local processes can read it meanwhile."""
         def _set_clipboard(content):
             """Internal macOS clipboard setter."""
             try:

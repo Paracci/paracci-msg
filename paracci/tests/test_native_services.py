@@ -14,7 +14,7 @@ def make_services(path: Path) -> NativeServices:
     path.mkdir(parents=True, exist_ok=True)
     os.environ["DATA_DIR"] = str(path)
     svc = NativeServices(path, "en")
-    svc.device.initialize("95175328")
+    svc.device.initialize("Correct-Horse-95175328")
     return svc
 
 

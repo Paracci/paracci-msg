@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parent
 def build() -> int:
     tool = shutil.which("pyside6-deploy")
     if not tool:
-        print("[ERROR] pyside6-deploy was not found. Install requirements first.")
+        print("[ERROR] pyside6-deploy was not found. Install requirements-dev.lock first.")
         return 1
 
     cmd = [

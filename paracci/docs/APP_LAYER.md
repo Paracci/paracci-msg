@@ -41,6 +41,7 @@ The native app does not use:
 - local HTTP routes
 - WebView or WebEngine rendering
 
-Sensitive opened-message state is cleared from the UI API cache when the reading
-room closes, the opened item is cleared, or the device locks. This is best-effort
-process memory hygiene, not a claim of perfect memory zeroization.
+Sensitive opened-message state is dropped from Paracci-controlled UI API and
+preview caches when the reading room closes, the opened item is cleared, the
+page navigates away, or the device locks. This is best-effort process memory
+hygiene, not a claim of perfect memory zeroization; see `SECURITY_SHIELDS.md`.
