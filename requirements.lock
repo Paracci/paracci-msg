@@ -408,6 +408,34 @@ pycparser==3.0 \
     --hash=sha256:600f49d217304a5902ac3c37e1281c9fe94e4d0489de643a9504c5cdfdfc6b29 \
     --hash=sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
     # via cffi
+pyobjc-core==10.3.2; sys_platform == "darwin" \
+    --hash=sha256:16644a92fb9661de841ba6115e5354db06a1d193a5e239046e840013c7b3874d \
+    --hash=sha256:dbf1475d864ce594288ce03e94e3a98dc7f0e4639971eb1e312bdf6661c21e0e
+    # via pywebview
+pyobjc-framework-Cocoa==10.3.2; sys_platform == "darwin" \
+    --hash=sha256:c49e99fc4b9e613fb308651b99d52a8a9ae9916c8ef27aa2f5d585b6678a59bf \
+    --hash=sha256:673968e5435845bef969bfe374f31a1a6dc660c98608d2b84d5cae6eafa5c39d
+    # via pywebview
+pyobjc-framework-Quartz==10.3.2; sys_platform == "darwin" \
+    --hash=sha256:604188ee8ff051ffe74a12cb3274403fe9c3fa02b15fc4132685c0f74285ffe5 \
+    --hash=sha256:193e7752c93e2d1304f914e3a8c069f4b66de237376c5285ba7c72e9ee0e3b15
+    # via pywebview
+pyobjc-framework-Security==10.3.2; sys_platform == "darwin" \
+    --hash=sha256:2fae458eaa4263c3daf8a12ad62a92bc14be32ed251dcaa95d2caca324520036 \
+    --hash=sha256:8e018ad36a5ba4ebf1da45cc3ca2a658906ed1e3f9ffdde8f743c813a233d735
+    # via pywebview
+pyobjc-framework-UniformTypeIdentifiers==10.3.2; sys_platform == "darwin" \
+    --hash=sha256:59e8b11d78d89a24f7fb944853b93705ca48febf1ae42be57d16100e38703f69 \
+    --hash=sha256:9ee1c3297efead181deeae50d3322582517f6e5fd45e247f5691cdae995bda62 \
+    --hash=sha256:a1a01cf7d41346e9c2002f979783d797b35f07def5b3c7c426f2c4f34f8163d1
+    # via pywebview
+pyobjc-framework-WebKit==10.3.2; sys_platform == "darwin" \
+    --hash=sha256:3ef315a185289c051f43f1d2aebf94a2cdd4408731d1d712972e2e130a17e632 \
+    --hash=sha256:b60d097a87867c252286855158cc35d991e2273f162f40f8e38e95153894bbbf \
+    --hash=sha256:c72c1b0c5b72fd5203cd4b445e96494eab2518ef688629d2ea75dced95c236e9 \
+    --hash=sha256:efce711d3cbe5ef34620002ae2189b802420e6e2923973ed4c59989443b5499f \
+    --hash=sha256:f8e89d51511b0bf2d6ec8d8a0cf8e74b3451987fb10a3adf5d6181cc77c1260a
+    # via pywebview
 pyotp==2.9.0 \
     --hash=sha256:346b6642e0dbdde3b4ff5a930b664ca82abfa116356ed48cc42c7d6590d36f63 \
     --hash=sha256:81c2e5865b8ac55e825b0358e496e1d9387c811e85bb40e71a3b29b288963612
