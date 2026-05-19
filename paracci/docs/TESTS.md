@@ -1,44 +1,68 @@
-# Test Structure And Scope
+# Test Structure & Scope
 
-Run the full Python release gate from the repository root:
+Paracci maintains automated test coverage across its core cryptography engine, session lifecycles, and desktop integrations.
 
-```powershell
-python -m pytest paracci\tests -q
-```
+## Running Tests
 
-Run audits:
+Run all unit and integration tests from the repository root:
 
 ```powershell
-python paracci\audits\guardian.py
+python -m pytest paracci/tests -q
 ```
 
-## Covered Areas
+Run the security and dependency audit suite:
 
-- Cryptography primitives: X25519, HKDF, ChaCha20-Poly1305, AAD tamper
-  rejection, message ID fingerprints.
-- Evolution and ratchet behavior: deterministic steps, bond seed derivation,
-  expiry handling.
-- Session lifecycle: initiator creation, responder import, initiator finalize,
-  encrypted session metadata round trips.
-- Envelope protocol: X-to-Y and Y-to-X messages, bond nonce ceremony, self-open
-  rejection, tampered file rejection, TTL rejection, wrong-session rejection.
-- Burn/device persistence: single-use burn registry, TTL pre-checks, PIN-based
-  device unlock.
-- Native services: Flask-free session/message round trip, encrypted 2FA metadata
-  upgrade, and first-launch data copy behavior.
-- UI API: command coverage, JSON-safe DTOs, path-based file operations, opened
-  attachment cache, and save-permission enforcement.
-- Worker bridge: JSON-RPC success/error envelope mapping.
-- QML shell: offscreen load and controller error mapping.
-- QML visual smoke: nonblank shell render at `900x640`, `1180x820`, and
-  `1440x900`.
-- macOS SwiftPM: worker bridge round trip through `swift test` on macOS CI.
+```powershell
+python paracci/audits/guardian.py
+```
 
-## Current Gaps
+Run dependency vulnerability scanning:
 
-- SwiftUI tests require macOS and run under SwiftPM in the macOS CI lane.
-- Packaging smoke tests still need Windows, Ubuntu, and macOS runners with real
-  app launch, unlock, session import/create, seal/open, save/export, and clean
-  close.
-- Visual regression checks for QML/macOS frames are planned after the platform
-  shells reach workflow parity.
+```powershell
+python -m pip_audit -r requirements.lock -r requirements-dev.lock
+```
+
+---
+
+## Test Areas
+
+### 1. Cryptography Primitives
+- Key generation, signature validation, and shared secret derivation (X25519).
+- Key derivation and hardening (HKDF-SHA512, HKDF-SHA256, and Argon2id profiles).
+- Symmetric envelope encryption and tamper/modification detection (ChaCha20-Poly1305 AEAD).
+- Process memory sanitation (wipe buffers and arrays).
+
+### 2. Session Lifecycle
+- Generating authenticated setup metadata (initiator and responder setup files).
+- Handshake verification and out-of-band safety code computation.
+- Session bonding and master key derivation.
+- SQLite-bound encrypted session state preservation.
+
+### 3. Envelope Protocol
+- Sealing and opening `.paracci` message packages.
+- Rate limits, step-based evolution ratchets, and anti-replay counters.
+- Expiration checks and Time-To-Live (TTL) enforcement.
+- Safe assembly/extraction of zipped payload contents (limit verification).
+
+### 4. Burn Database
+- Single-use message opening checks and SQLite transaction atomic registrations.
+- Transition states: Reserved/Opening, Burned, and Failed (retry window recovery).
+- Safe file-overwrite and delete functions.
+- Local brute-force rates, failed unlock delays, and lockout limits.
+
+### 5. Desktop Integrations
+- Platform-native credential store bindings (Windows DPAPI, macOS Keychain, Linux Secret Service).
+- Verification of two-factor decryption locking behavior per platform.
+- Graceful key-binding service failure fallbacks.
+
+### 6. App Server & UI Routes
+- Verification of local Flask server routing and Bearer token check.
+- Header validation (Host, Origin, Referer, and Fetch Metadata).
+- CSRF validation and cookie flag checks.
+
+---
+
+## Test Gaps & Release Checklist
+- **WebView Interface Manual Check**: Launch the application locally under different platforms using `--debug` mode to manually verify the UI layout, attachments drawer, and configuration settings.
+- **Multi-User Simulation**: Run parallel debug modes (`run.py --user x` and `run.py --user y`) to execute Alice-and-Bob handshake ceremonies and verify message delivery.
+- **Standalone Binary Packaging Gates**: Packaged executables require confirmation on clean target operating systems to verify native shell loading, anti-screenshot behaviors, and proper device key storage registration.

@@ -1,74 +1,46 @@
-# Dual-Native UI Guide
+# Web UI & Frontend Design Guide
 
-Paracci uses a bifurcated native design strategy:
+Paracci uses a single-frame web interface rendered by Flask (Jinja2 templates) and displayed inside a native `pywebview` window. The design features a premium, responsive layout styled with custom CSS.
 
-- macOS follows SwiftUI/AppKit desktop conventions with native sidebars,
-  toolbars, settings, inspectors, materials, commands, and narrow AppKit
-  bridges.
-- Windows/Linux use a custom premium Qt Quick/QML shell with the same workflow
-  structure and semantic design tokens.
+## Layout & Navigation
 
-The design source is
-[Paracci Dual-Native Redesign](https://www.figma.com/design/O1kQi5Y1sWhrRe5pZdDJWs).
+- **Sidebar**: The main navigation hub, containing profiles, active sessions, and setting tabs.
+- **Header/Toolbar**: Top action bar containing session configuration, sync actions, export/import buttons, and device state indicators (e.g. lock status, security level).
+- **Central Canvas**: The main workspace containing the setup workflow, open-message reading room, or message composer.
+- **Inspector Panel**: A collapsible panel displaying cryptographic safety codes, session TTL countdowns, and platform-native key binding status.
 
-## Structure
+---
 
-- The app shell is sidebar + toolbar + central workflow + optional inspector.
-- Top-level commands are grouped in toolbar surfaces.
-- Session metadata belongs in the inspector, not raw labels inside message
-  content.
-- Composer, open-message drop zone, reading room, and attachments are stable
-  desktop work surfaces.
+## Design System & Styling (CSS)
 
-## Theme
+The frontend styling utilizes Vanilla CSS structured with custom properties. It avoids TailwindCSS or external frameworks to maintain complete control over visual aesthetics and security boundaries.
 
-Dark mode remains the default for the custom QML shell. The design source and
-QML tokens include light, dark, and future `system` theme intent. macOS should
-prefer system-adaptive colors/materials instead of hardcoded Apple-looking
-skins.
+### CSS Variables & HSL Colors
+Color roles are defined semantically using HSL color tokens to support harmonious adjustments:
+- `--background`: Base dark canvas background.
+- `--card-background`: Contrast backgrounds for containers and card components.
+- `--text-primary` & `--text-secondary`: High and low contrast typography.
+- `--accent`: Highlighting critical actions or focus rings.
+- `--critical`, `--warning`, & `--success`: Clear semantic state indications.
 
-Semantic color roles are used over decorative palettes:
+### Visual Polish
+- **Glassmorphism**: Backdrop blur filters (`backdrop-filter: blur()`) are applied to overlays, toolbars, and select dialogs to create a layered, premium aesthetic.
+- **Harmonious Gradients**: Subtle background gradients are utilized to guide user focus and soften dark surfaces.
+- **Micro-Animations**: Transitions on button hovers, form field focusing, and layout switching create a tactile, premium application feel.
 
-- `background`
-- `contentBackground`
-- `controlGlass`
-- `separator`
-- `textPrimary`
-- `textSecondary`
-- `critical`
-- `warning`
-- `success`
-- `focusRing`
+---
 
-## Components
+## Front-End Security UX
 
-The Figma file defines:
+- **State Indicators**: Safety and key-hardening profiles are displayed transparently (e.g., standard, paranoid, high, and maximum workload indicators).
+- **Burn Semantics Feedback**: Clear messaging indicates when an envelope will be burned on open ("This envelope will be destroyed on this device after reading").
+- **Clipboard & File Selection**: Timeouts for clipboard clearing and staging limits for files are visibly communicated in the UI.
+- **No Path Exposing**: All folder and file selections utilize native OS dialogs managed by `pywebview`, hiding absolute system paths from the Web DOM.
 
-- sidebar row
-- toolbar button
-- status pill
-- inspector row
-- composer
-- reading room
-- attachment row
-- security banner
-- settings row
+---
 
-QML component files live under `paracci/desktop/qml/`. macOS equivalents live as
-SwiftUI views under `platform/macos/ParacciMac/Sources/Views`.
+## Component Directories
 
-## Security UX
-
-- Security states are explicit and calm: Protected, Best effort, Unavailable,
-  Blocked, Expired, and Burned.
-- Anti-screenshot copy is platform honest.
-- Clipboard/save restrictions are visible before action.
-- Dangerous attachments use native warnings and conservative text preview.
-- The UI must not claim perfect Python memory zeroization.
-
-## Motion
-
-Allowed motion is functional only: progress indicators, short fades, toolbar or
-sidebar reveal, and subtle press feedback. Decorative blobs, neon glow, hover
-lift, hover scale, parallax, and infinite ambient animations are not part of the
-design system.
+- **Jinja2 Templates**: Located in [templates/](paracci/app/templates/). Contains the layout scaffolding (`base.html`), setup flows (`setup.html`), message views (`message.html`), and benchmarks.
+- **CSS Styles**: Located in [static/css/](paracci/app/static/css/). Contains the design system tokens, typography rules, layout utilities, and component-specific stylesheets.
+- **JS Scripts**: Located in [static/js/](paracci/app/static/js/). Handles client-side forms, drop-zone file events, localized translations, and token authorization.
