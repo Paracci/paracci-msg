@@ -74,7 +74,7 @@
   </div>
 </div>
 
-<form id="setupForm" method="POST" action="{{ url_for('main.session_new') }}" data-armor-text="{{ _('base.quantum_armor') }}">
+<form id="setupForm" method="POST" action="{{ url_for('main.session_new') }}" data-armor-text="{{ _('base.argon_work_active') }}">
   <div class="card">
     <div class="card-body">
       <div class="form-group">
@@ -162,12 +162,12 @@
             </div>
           </label>
 
-          <label class="settings-item profile-label cursor-pointer" for="prof-quantum">
-            <input type="radio" name="security_profile" id="prof-quantum" value="quantum"
+          <label class="settings-item profile-label cursor-pointer" for="prof-maximum">
+            <input type="radio" name="security_profile" id="prof-maximum" value="quantum"
                    data-security-t="4" data-security-m="1024" data-security-p="8" class="profile-radio-input hidden-input">
             <div class="settings-info">
-              <span class="settings-title">{{ _('setup.quantum') }}</span>
-              <span class="settings-desc">{{ _('setup.quantum_desc') }}</span>
+              <span class="settings-title">{{ _('setup.maximum') }}</span>
+              <span class="settings-desc">{{ _('setup.maximum_desc') }}</span>
             </div>
             <div class="profile-checkmark text-primary opacity-0 transition-opacity">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
@@ -270,8 +270,8 @@
 </div>
 
 <div class="card">
-  <form method="POST" enctype="multipart/form-data" action="{{ url_for('main.session_import') }}" id="importForm" data-armor-text="{{ _('base.quantum_armor') }}">
-    <input type="hidden" name="native_path" id="import-native-path" value="{{ init_path|default('', true) }}">
+  <form method="POST" enctype="multipart/form-data" action="{{ url_for('main.session_import') }}" id="importForm" data-armor-text="{{ _('base.argon_work_active') }}">
+    <input type="hidden" name="native_file_id" id="import-native-file-id" value="{{ init_native_file_id|default('', true) }}" data-filename="{{ init_path|default('', true) }}">
     <div class="card-body">
       
       <div class="form-group">

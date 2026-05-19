@@ -12,7 +12,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from core.crypto import hash_secret_raw, LowLevelArgon2Type
 
 def run_bench():
-    print("--- Paracci Quantum Armor Calibration Tool ---", flush=True)
+    print("--- Paracci Maximum Argon2id Calibration Tool ---", flush=True)
     print(f"[*] System: {psutil.cpu_count(logical=True)} Cores | {round(psutil.virtual_memory().total / (1024**3), 2)} GB RAM", flush=True)
     print("[!] Target: Find the heaviest profile that fixes message opening time to ~180 seconds (3 min).\n", flush=True)
 
@@ -106,8 +106,8 @@ def run_bench():
             f.write(f"| {r['memory_mb']} | {r['iterations']} | {r['duration']:.2f} | {rec} |\n")
         
         if best_match:
-            f.write(f"\n## Recommended Setting (Quantum Armor)\n")
-            f.write(f"The best 3-minute protection setting for your computer:\n")
+            f.write(f"\n## Recommended Setting (Maximum Argon2id)\n")
+            f.write(f"High-cost Argon2id key derivation setting for your computer. Increases offline brute-force resistance; does not guarantee absolute cryptographic security:\n")
             f.write(f"- **Memory (m):** `{best_match['memory_mb']} MB` ({best_match['memory_mb']*1024} KB)\n")
             f.write(f"- **Iteration (t):** `{best_match['iterations']}`\n")
             f.write(f"- **Parallelism (p):** `2` (For stability)\n")

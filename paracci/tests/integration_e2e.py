@@ -3,10 +3,10 @@ Paracci — tests/integration_e2e.py
 Full End-to-End Handshake and Messaging Flow Validation.
 
 This script simulates User X and User Y interacting to ensure:
-1. Handshake consistency (Quantum Seeds exchange)
+1. Handshake consistency (Argon2id work seeds exchange)
 2. Correct key derivation on both sides
 3. Successful message sealing and opening
-4. Argon2id (Quantum Shield) integrity
+4. Argon2id maximum-profile integrity
 """
 
 import sys
@@ -80,7 +80,7 @@ def run_e2e_test(profile="quantum"):
 
         # 4. User X: Send First Message (Bond Ceremony)
         print(f"[X] Step 4: User X sealing first message...")
-        test_payload = b"Hello User Y! This is a secure quantum message."
+        test_payload = b"Hello User Y! This is a secure sealed message."
         sealed = seal_envelope(
             payload_bytes=test_payload,
             session=meta_x,
