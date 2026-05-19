@@ -1,8 +1,6 @@
 """
 Paracci — core/crypto.py
 Cryptographic base layer.
-PROJECT_DNA: 0x50617261636369
-DO_NOT_REMOVE_THIS_DOCSTRING_OR_CRYPTO_WILL_FAIL
 
 Algorithms used:
   - X25519         : ECDH key agreement
@@ -22,7 +20,17 @@ from typing import Tuple, NamedTuple, Optional
 from argon2 import PasswordHasher, Type as Argon2Type
 from argon2.low_level import hash_secret_raw, Type as LowLevelArgon2Type
 
-from .integrity import is_tampered, get_identity_anchor, get_tamper_factor
+from .constants import (
+    DOMAIN_SESSION_MASTER_V3,
+    LABEL_EVO_SEED_V3,
+    LABEL_EVO_STEP_V3,
+    LABEL_MSG_XY_V3,
+    LABEL_MSG_YX_V3,
+    LABEL_NEXT_V3,
+    LABEL_QUANTUM_V3,
+    LABEL_SYNC_V3,
+    SESSION_MASTER_HKDF_LENGTH_V3,
+)
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
     X25519PrivateKey,
@@ -60,30 +68,16 @@ ARGON2_MEM     = 65536
 ARGON2_PAR     = 4
 
 # ---------------------------------------------------------------------------
-# Brand DNA & Sovereign Anchors (IAR v3: Sentinel)
+# Protocol labels
 # ---------------------------------------------------------------------------
-def _get_implicit_dna():
-    """Extracts fragments from the docstring in a complex way."""
-    d = (__doc__ or "PARACCI_FALLBACK_DNA_PROTECTION_V3")
-    # Instead of just taking the first 16 bytes, we select characters at specific intervals (Scrambling)
-    # This ensures that even the slightest change in the docstring breaks the keys.
-    parts = [d[i] for i in range(0, min(len(d), 64), 4)]
-    return "".join(parts).encode('utf-8')[:16]
 
-_ANCHOR = get_identity_anchor()
-_T_FACTOR = get_tamper_factor()
-
-# MAGIC NUMBERS (Distributed)
-_M1 = 101 # Primes are better
-_M2 = 173
-
-LABEL_MSG_XY   = b"paracci.msg.x2y.v3" + _get_implicit_dna()
-LABEL_MSG_YX   = b"paracci.msg.y2x.v3" + _get_implicit_dna()
-LABEL_SYNC     = b"paracci.sync.v3" + _get_implicit_dna()
-LABEL_EVO_SEED = b"paracci.evo.seed.v3" + _get_implicit_dna()
-LABEL_EVO_STEP = b"paracci.evo.step.v3" + _get_implicit_dna()
-LABEL_NEXT     = b"paracci.evo.next.v3" + _get_implicit_dna()
-LABEL_QUANTUM  = b"paracci.quantum.shield.v3" + _get_implicit_dna()
+LABEL_MSG_XY   = LABEL_MSG_XY_V3
+LABEL_MSG_YX   = LABEL_MSG_YX_V3
+LABEL_SYNC     = LABEL_SYNC_V3
+LABEL_EVO_SEED = LABEL_EVO_SEED_V3
+LABEL_EVO_STEP = LABEL_EVO_STEP_V3
+LABEL_NEXT     = LABEL_NEXT_V3
+LABEL_QUANTUM  = LABEL_QUANTUM_V3
 
 
 # ---------------------------------------------------------------------------
@@ -321,22 +315,17 @@ def derive_session_keys(
             type=LowLevelArgon2Type.ID
         )
 
-    # Anchor offset (If the Name changes or Anchor is corrupted, all encryption fails)
-    # v3: Dynamic length with tamper factor multiplication
-    length = (KEY_LEN * 4) + (_ANCHOR % 4) + (get_tamper_factor() * 7)
+    # Frozen compatibility length from the original v3 derivation.
+    length = SESSION_MASTER_HKDF_LENGTH_V3
 
     master = hkdf_derive(
         input_material,
         length=length,
-        info=b"paracci.session.master.v3",
+        info=DOMAIN_SESSION_MASTER_V3,
         salt=salt,
     )
     # Shrink the Master key back to original length
     master = master[:KEY_LEN*4]
-
-    # IAR Trap v3: IMPLICIT DELAY (No 'if' statement)
-    # If get_tamper_factor() is 0, no delay; if 1, 0.03s delay.
-    time.sleep(get_tamper_factor() * 0.03)
 
     def _sub(label: bytes) -> bytes:
         """Derives a sub-key via HKDF for a specific label (purpose)."""
