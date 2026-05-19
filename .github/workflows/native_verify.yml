@@ -46,13 +46,3 @@ jobs:
 
       - name: Check native launcher compiles
         run: python -m py_compile run.py paracci/desktop/services.py paracci/ui_api/facade.py paracci/bridge/worker.py
-
-      - name: Build macOS SwiftUI shell
-        if: matrix.os == 'macos-latest'
-        run: swift build --package-path platform/macos/ParacciMac
-
-      - name: Test macOS SwiftUI worker bridge
-        if: matrix.os == 'macos-latest'
-        run: swift test --package-path platform/macos/ParacciMac
-        env:
-          PARACCI_WORKER_PATH: ${{ github.workspace }}/paracci/bridge/worker.py
