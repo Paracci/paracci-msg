@@ -290,16 +290,16 @@ function setFiles(input, files, dispatchChange = true) {
     if (dispatchChange) input.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
-function setNativePath(form, path) {
-    let input = form?.querySelector('input[name="native_path"]');
+function setNativeFileRef(form, fileRef) {
+    let input = form?.querySelector('input[name="native_file_id"]');
     if (!form) return null;
     if (!input) {
         input = document.createElement('input');
         input.type = 'hidden';
-        input.name = 'native_path';
+        input.name = 'native_file_id';
         form.appendChild(input);
     }
-    input.value = path;
+    input.value = fileRef?.id || '';
     form.querySelector('input[type="file"]')?.removeAttribute('required');
     return input;
 }
@@ -326,6 +326,16 @@ function rememberStagedAttachment(item) {
     if (typeof window.updateAttachmentBadge === 'function') window.updateAttachmentBadge();
 }
 
+function rememberStagedAttachments(items) {
+    const attachments = Array.isArray(items) ? items : [];
+    attachments.forEach(rememberStagedAttachment);
+    if (!attachments.length) return;
+    const label = attachments.length === 1
+        ? (window.PARACCI_I18N?.attachment_attached || "{filename} attached.").replace("{filename}", attachments[0].filename)
+        : (window.PARACCI_I18N?.attachments_added || "{count} file(s) added.").replace("{count}", attachments.length);
+    showNotification(label);
+}
+
 function clearStagedAttachments({ keepalive = false } = {}) {
     const stagedIds = (window.PARACCI_STAGED_ATTACHMENTS || [])
         .map(att => att?.id)
@@ -344,19 +354,28 @@ function clearStagedAttachments({ keepalive = false } = {}) {
     if (typeof window.updateAttachmentBadge === 'function') window.updateAttachmentBadge();
 }
 
-async function stageNativeAttachment(path) {
-    const response = await fetch('/api/stage-attachment', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path })
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok || !data.success) {
+function addNativeStagedAttachments(data) {
+    if (!data?.success) {
         throw new Error(data.error || window.PARACCI_I18N?.msg_not_processed || 'Attachment could not be staged.');
     }
-    rememberStagedAttachment(data);
-    const notifyMsg = (window.PARACCI_I18N?.attachment_attached || "{filename} attached.").replace("{filename}", data.filename);
-    showNotification(notifyMsg);
+    rememberStagedAttachments(data.attachments || []);
+}
+
+async function stageNativeAttachmentsFromPicker() {
+    const api = window.pywebview?.api;
+    if (!api?.select_attachments) return false;
+    const data = await api.select_attachments();
+    addNativeStagedAttachments(data);
+    return true;
+}
+
+function receiveNativeStagedAttachments(data) {
+    try {
+        addNativeStagedAttachments(data);
+    } catch (err) {
+        console.error('[Paracci] Native attachment staging failed:', err);
+        showNotification(err.message || window.PARACCI_I18N?.drop_failed || 'Drop failed.', 'error');
+    }
 }
 
 function updateOpenFileLabel(name) {
@@ -369,8 +388,8 @@ async function executeDropIntent(intent, payload) {
         case 'import': {
             const form = document.getElementById('importForm');
             if (payload.isNative) {
-                setNativePath(form, payload.path);
-                if (typeof window.updateNativeUI === 'function') window.updateNativeUI(payload.path);
+                setNativeFileRef(form, payload.fileRef);
+                if (typeof window.updateNativeUI === 'function') window.updateNativeUI(payload.fileRef);
             } else {
                 setFiles(document.getElementById('fileInput'), payload.files);
             }
@@ -381,7 +400,7 @@ async function executeDropIntent(intent, payload) {
         case 'finalize': {
             const form = document.getElementById('responder-form');
             if (payload.isNative) {
-                setNativePath(form, payload.path);
+                setNativeFileRef(form, payload.fileRef);
             } else {
                 setFiles(document.getElementById('responder-input'), payload.files, false);
             }
@@ -391,7 +410,7 @@ async function executeDropIntent(intent, payload) {
         case 'open': {
             const form = document.getElementById('open-message-form');
             if (payload.isNative) {
-                setNativePath(form, payload.path);
+                setNativeFileRef(form, payload.fileRef);
                 updateOpenFileLabel(payload.name);
             } else {
                 setFiles(document.getElementById('paracci_file'), payload.files);
@@ -401,7 +420,7 @@ async function executeDropIntent(intent, payload) {
         }
         case 'attach': {
             if (payload.isNative) {
-                await stageNativeAttachment(payload.path);
+                receiveNativeStagedAttachments({ success: true, attachments: payload.attachments || [] });
             } else {
                 setFiles(document.getElementById('attachments'), payload.files);
                 if (typeof window.updateAttachmentBadge === 'function') window.updateAttachmentBadge();
@@ -426,10 +445,10 @@ function handleGlobalDrop(files) {
     });
 }
 
-function handleNativeFileDrop(path) {
-    const name = (path || '').split(/[\\/]/).pop() || path;
-    const intent = resolveDropIntent({ name, path, isNative: true });
-    executeDropIntent(intent, { path, name, isNative: true }).catch(err => {
+function handleNativeFileRef(fileRef) {
+    const name = fileRef?.filename || '';
+    const intent = resolveDropIntent({ name, isNative: true });
+    executeDropIntent(intent, { fileRef, name, isNative: true }).catch(err => {
         console.error('[Paracci] Native drop handling failed:', err);
         showNotification(err.message || window.PARACCI_I18N?.drop_failed || 'Drop failed.', 'error');
     });
@@ -437,7 +456,11 @@ function handleNativeFileDrop(path) {
 
 window.toggleSidebarCollapsed = toggleSidebarCollapsed;
 window.resolveDropIntent = resolveDropIntent;
-window.handleNativeFileDrop = handleNativeFileDrop;
+window.handleNativeFileRef = handleNativeFileRef;
+window.rememberStagedAttachment = rememberStagedAttachment;
+window.rememberStagedAttachments = rememberStagedAttachments;
+window.receiveNativeStagedAttachments = receiveNativeStagedAttachments;
+window.stageNativeAttachmentsFromPicker = stageNativeAttachmentsFromPicker;
 window.clearStagedAttachments = clearStagedAttachments;
 
 window.addEventListener('pagehide', () => clearStagedAttachments({ keepalive: true }));
@@ -464,14 +487,14 @@ function handleToastClick() {
     }
 }
 
-// 4. Quantum Armor Helpers
-function showQuantumArmor() {
-    const shield = document.getElementById('quantumArmor');
+// 4. Argon2id Work Overlay Helpers
+function showArgonWorkOverlay() {
+    const shield = document.getElementById('argonWorkOverlay');
     if (shield) shield.classList.add('active');
 }
 
-function hideQuantumArmor() {
-    const shield = document.getElementById('quantumArmor');
+function hideArgonWorkOverlay() {
+    const shield = document.getElementById('argonWorkOverlay');
     if (shield) shield.classList.remove('active');
 }
 

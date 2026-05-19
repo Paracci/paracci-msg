@@ -7,6 +7,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from desktop.device_key_binding import (
+    DPAPI_DIFFERENT_ACCOUNT_CODE,
+    DPAPI_DIFFERENT_ACCOUNT_I18N,
+    DPAPI_DIFFERENT_ACCOUNT_MESSAGE,
+    DeviceBindingError,
+)
 from desktop.services import AttachmentPayload, NativeServices, OpenedMessage
 from ui_api import UIApi, UIApiError
 from ui_api.facade import CachedOpenMessage
@@ -147,6 +153,26 @@ def test_ui_api_device_lock_drops_open_cache_and_windows_status_is_best_effort(t
 
     assert locked["unlocked"] is False
     assert api._opened == {}
+
+
+def test_ui_api_maps_device_binding_error(tmp_path):
+    api = make_api(tmp_path / "device-binding-error")
+
+    def fail_unlock(_pin: str):
+        raise DeviceBindingError(
+            DPAPI_DIFFERENT_ACCOUNT_CODE,
+            DPAPI_DIFFERENT_ACCOUNT_I18N,
+            DPAPI_DIFFERENT_ACCOUNT_MESSAGE,
+        )
+
+    api.services.device.unlock = fail_unlock
+
+    try:
+        api.dispatch("device_unlock", {"pin": "Correct-Horse-95175328"})
+        assert False, "device binding error was not mapped"
+    except UIApiError as exc:
+        assert exc.code == DPAPI_DIFFERENT_ACCOUNT_CODE
+        assert exc.message == DPAPI_DIFFERENT_ACCOUNT_MESSAGE
 
 
 def test_worker_json_rpc_success_and_error(tmp_path):

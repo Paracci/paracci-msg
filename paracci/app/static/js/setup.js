@@ -12,15 +12,18 @@ function escapeHTML(value) {
     }[char]));
 }
 
-window.updateNativeUI = function(path) {
+window.updateNativeUI = function(fileRef) {
     const fileInput = document.getElementById('fileInput');
-    const nativeInput = document.getElementById('import-native-path');
+    const nativeInput = document.getElementById('import-native-file-id');
     const dropArea = document.getElementById('file-drop-area');
     const dropLabel = document.getElementById('drop-label');
     const selectedText = dropArea?.dataset.selectedText || window.PARACCI_I18N?.file_selected || 'File Selected';
-    const name = String(path || '').split(/[\\/]/).pop() || path;
+    const ref = typeof fileRef === 'object' && fileRef !== null
+        ? fileRef
+        : { id: '', filename: String(fileRef || '').split(/[\\/]/).pop() };
+    const name = ref.filename || nativeInput?.dataset.filename || '';
 
-    if (nativeInput) nativeInput.value = path || '';
+    if (nativeInput) nativeInput.value = ref.id || nativeInput.value || '';
     if (fileInput) {
         fileInput.value = '';
         fileInput.required = false;
@@ -34,7 +37,7 @@ window.updateNativeUI = function(path) {
 const initSetup = () => {
     const setupForm = document.getElementById('setupForm');
     const importForm = document.getElementById('importForm');
-    const armorText = setupForm?.dataset.armorText || importForm?.dataset.armorText || window.PARACCI_I18N?.quantum_armor || 'Quantum Armor Active...';
+    const armorText = setupForm?.dataset.armorText || importForm?.dataset.armorText || window.PARACCI_I18N?.argon_work_active || 'Maximum Argon2id Active...';
 
     if (setupForm) {
         setupForm.addEventListener('submit', () => {
@@ -116,7 +119,7 @@ const initSetup = () => {
     const fileInput = document.getElementById('fileInput');
     const dropArea = document.getElementById('file-drop-area');
     const dropLabel = document.getElementById('drop-label');
-    const nativeInput = document.getElementById('import-native-path');
+    const nativeInput = document.getElementById('import-native-file-id');
 
     if (fileInput && dropArea) {
         fileInput.addEventListener('change', () => {
@@ -147,7 +150,7 @@ const initSetup = () => {
         }, false);
 
         if (nativeInput?.value) {
-            window.updateNativeUI(nativeInput.value);
+            window.updateNativeUI({ id: nativeInput.value, filename: nativeInput.dataset.filename || '' });
         }
     }
 

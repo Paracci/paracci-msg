@@ -82,8 +82,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (openFileInput.files?.length) {
                 const label = document.getElementById('file-label');
                 if (label) label.textContent = openFileInput.files[0].name;
-                const nativePath = document.getElementById('open-native-path');
-                if (nativePath) nativePath.value = '';
+                const nativeFileId = document.getElementById('open-native-file-id');
+                if (nativeFileId) nativeFileId.value = '';
                 openFileInput.required = true;
             }
         });
@@ -106,7 +106,18 @@ function setupAttachmentDropZone() {
     const attDrop = document.getElementById('attachment-drop-zone');
     const attInput = document.getElementById('attachments');
     if (attDrop && attInput) {
-        attDrop.onclick = () => attInput.click();
+        attDrop.onclick = async () => {
+            if (window.pywebview?.api?.select_attachments && window.stageNativeAttachmentsFromPicker) {
+                try {
+                    await window.stageNativeAttachmentsFromPicker();
+                } catch (err) {
+                    console.error('[Paracci] Native attachment picker failed:', err);
+                    showNotification(err.message || window.PARACCI_I18N?.drop_failed || 'Attachment could not be staged.', 'error');
+                }
+                return;
+            }
+            attInput.click();
+        };
         attDrop.addEventListener('dragover', (e) => {
             e.preventDefault();
             attDrop.classList.add('highlight');
@@ -152,8 +163,8 @@ function setupTemplateEventBindings() {
     const responderInput = document.getElementById('responder-input');
     responderDrop?.addEventListener('click', () => responderInput?.click());
     responderInput?.addEventListener('change', () => {
-        const nativePath = document.getElementById('responder-native-path');
-        if (nativePath) nativePath.value = '';
+        const nativeFileId = document.getElementById('responder-native-file-id');
+        if (nativeFileId) nativeFileId.value = '';
         responderInput.required = true;
         requestFormSubmit(responderInput.form);
     });
@@ -210,7 +221,7 @@ function setupForms() {
         const origText = btn.textContent;
         btn.disabled = true;
         btn.textContent = window.PARACCI_CONFIG?.armor_text || 'Processing...';
-        if (window.showQuantumArmor) window.showQuantumArmor();
+        if (window.showArgonWorkOverlay) window.showArgonWorkOverlay();
 
         try {
             const response = await fetch(this.action, { method: 'POST', body: new FormData(this) });
@@ -261,7 +272,7 @@ function setupForms() {
         } finally {
             btn.disabled = false;
             btn.textContent = origText;
-            if (window.hideQuantumArmor) window.hideQuantumArmor();
+            if (window.hideArgonWorkOverlay) window.hideArgonWorkOverlay();
         }
     });
 
@@ -272,7 +283,7 @@ function setupForms() {
         const origText = btn.textContent;
         btn.disabled = true;
         btn.textContent = window.PARACCI_CONFIG?.armor_text || 'Processing...';
-        if (window.showQuantumArmor) window.showQuantumArmor();
+        if (window.showArgonWorkOverlay) window.showArgonWorkOverlay();
 
         const errorContainer = document.getElementById('dynamic-error-container');
         clearElement(errorContainer);
@@ -294,8 +305,8 @@ function setupForms() {
             renderDecryptedMessage(data);
             isMessageOpen = true;
             this.reset();
-            const nativePath = document.getElementById('open-native-path');
-            if (nativePath) nativePath.value = '';
+            const nativeFileId = document.getElementById('open-native-file-id');
+            if (nativeFileId) nativeFileId.value = '';
             const fileInput = document.getElementById('paracci_file');
             if (fileInput) fileInput.required = true;
             document.getElementById('message-view-container').scrollIntoView({ behavior: 'smooth' });
@@ -306,7 +317,7 @@ function setupForms() {
         } finally {
             btn.disabled = false;
             btn.textContent = origText;
-            if (window.hideQuantumArmor) window.hideQuantumArmor();
+            if (window.hideArgonWorkOverlay) window.hideArgonWorkOverlay();
         }
     });
 }
@@ -528,7 +539,7 @@ async function handleSecureCopy() {
 
 async function handleManualDownload(url, filename) {
     try {
-        if (window.showQuantumArmor) window.showQuantumArmor();
+        if (window.showArgonWorkOverlay) window.showArgonWorkOverlay();
         const response = await fetch(url);
         if (!response.ok) throw new Error(window.PARACCI_I18N?.download_failed || 'Download failed');
         const blob = await response.blob();
@@ -553,7 +564,7 @@ async function handleManualDownload(url, filename) {
                     }
                 } finally {
                     b64 = "";
-                    if (window.hideQuantumArmor) window.hideQuantumArmor();
+                    if (window.hideArgonWorkOverlay) window.hideArgonWorkOverlay();
                 }
             };
             reader.readAsDataURL(blob);
@@ -565,11 +576,11 @@ async function handleManualDownload(url, filename) {
             link.download = filename;
             link.click();
             URL.revokeObjectURL(objectUrl);
-            if (window.hideQuantumArmor) window.hideQuantumArmor();
+            if (window.hideArgonWorkOverlay) window.hideArgonWorkOverlay();
         }
     } catch (err) {
         console.error('Download error:', err);
-        if (window.hideQuantumArmor) window.hideQuantumArmor();
+        if (window.hideArgonWorkOverlay) window.hideArgonWorkOverlay();
     }
 }
 

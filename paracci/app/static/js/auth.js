@@ -262,7 +262,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 e.preventDefault();
                 return;
             }
-            const armorText = authForm.dataset.armorText || window.PARACCI_I18N?.quantum_armor || 'Quantum Armor Active...';
+            const armorText = authForm.dataset.armorText || window.PARACCI_I18N?.argon_work_active || 'Maximum Argon2id Active...';
             const spinner = document.createElement('span');
             spinner.className = 'spinner';
             submitBtn.disabled = true;

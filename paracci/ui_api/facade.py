@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from desktop.device_key_binding import DeviceBindingError
 from desktop.services import AttachmentPayload, NativeServices, OpenedMessage
 
 
@@ -61,6 +62,9 @@ class UIApi:
             return result if isinstance(result, dict) else {"value": result}
         except UIApiError:
             raise
+        except DeviceBindingError as exc:
+            message = self.services.i18n.translate(exc.i18n_key)
+            raise UIApiError(exc.code, message) from exc
         except Exception as exc:
             raise UIApiError(exc.__class__.__name__, str(exc)) from exc
 
@@ -80,16 +84,30 @@ class UIApi:
 
     def cmd_device_init(self, pin: str) -> dict[str, Any]:
         self.services.device.initialize(pin)
-        return self.cmd_device_status()
+        result = self.cmd_device_status()
+        self._attach_device_binding_warning(result)
+        return result
 
     def cmd_device_unlock(self, pin: str) -> dict[str, Any]:
         self.services.device.unlock(pin)
-        return self.cmd_device_status()
+        result = self.cmd_device_status()
+        self._attach_device_binding_warning(result)
+        return result
 
     def cmd_device_lock(self) -> dict[str, Any]:
         self.clear_open_cache()
         self.services.device.lock()
         return self.cmd_device_status()
+
+    def _attach_device_binding_warning(self, result: dict[str, Any]) -> None:
+        warning = self.services.device.device_binding_warning
+        if warning is None:
+            return
+        result["device_binding_warning"] = {
+            "code": warning.code,
+            "message": self.services.i18n.translate(warning.i18n_key),
+        }
+        self.services.device.device_binding_warning = None
 
     def cmd_2fa_new_secret(self) -> dict[str, Any]:
         secret = self.services.device.new_2fa_secret()

@@ -25,9 +25,7 @@ from core.burn import (
     BurnGuard,
     DeviceError,
     TTLExpiredError,
-    init_device,
     is_device_initialized,
-    unlock_device,
 )
 from core.config import ParacciConfig
 from core.crypto import EncryptedBlob, decrypt, encrypt, wipe
@@ -52,6 +50,12 @@ from core.session import (
     serialize_initiator_file,
     serialize_responder_file,
     serialize_session_meta,
+)
+from desktop.device_key_binding import (
+    DeviceBindingWarning,
+    consume_device_binding_warning,
+    initialize_device_with_binding,
+    unlock_device_with_binding,
 )
 from core.shields import shield
 
@@ -316,6 +320,7 @@ class DeviceService:
         self.data_dir = data_dir
         self.db = BurnDB(data_dir / "sessions.db")
         self.device_key: bytes | None = None
+        self.device_binding_warning: DeviceBindingWarning | None = None
 
     @property
     def is_unlocked(self) -> bool:
@@ -325,11 +330,15 @@ class DeviceService:
         return is_device_initialized(self.db)
 
     def initialize(self, pin: str) -> bytes:
-        self.device_key = init_device(self.db, pin)
+        self.device_binding_warning = None
+        self.device_key = initialize_device_with_binding(self.db, pin)
+        self.device_binding_warning = consume_device_binding_warning()
         return self.device_key
 
     def unlock(self, pin: str) -> bytes:
-        self.device_key = unlock_device(self.db, pin)
+        self.device_binding_warning = None
+        self.device_key = unlock_device_with_binding(self.db, pin)
+        self.device_binding_warning = consume_device_binding_warning()
         self._verify_stored_sessions_decryptable()
         return self.device_key
 
@@ -337,6 +346,7 @@ class DeviceService:
         if self.device_key is not None:
             wipe(self.device_key)
         self.device_key = None
+        self.device_binding_warning = None
 
     def ensure_unlocked(self) -> bytes:
         if self.device_key is None:
