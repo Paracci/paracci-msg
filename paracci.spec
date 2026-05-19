@@ -30,6 +30,7 @@ datas = [
     (str(ROOT / "paracci" / "app" / "static"),    "paracci/app/static"),
     (str(ROOT / "paracci" / "app" / "i18n"),      "paracci/app/i18n"),
     (str(ROOT / "paracci" / "app" / "reports"),   "paracci/app/reports"),
+    (str(ROOT / "paracci_icon.ico"),             "."),
 ]
 
 binaries = []

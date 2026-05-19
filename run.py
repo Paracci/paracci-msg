@@ -166,6 +166,25 @@ if __name__ == "__main__":
                     return result[0] if isinstance(result, (list, tuple)) else result
                 return None
 
+            def select_attachments(self):
+                result = window.create_file_dialog(
+                    webview.FileDialog.OPEN,
+                    allow_multiple=True,
+                    file_types=('All Files (*.*)',)
+                )
+                if not result:
+                    return {"success": True, "attachments": []}
+                paths = list(result) if isinstance(result, (list, tuple)) else [result]
+                try:
+                    from app.routes import stage_native_attachment_paths
+                    return {
+                        "success": True,
+                        "attachments": stage_native_attachment_paths(paths),
+                    }
+                except Exception as e:
+                    print(f"  [!] Attachment staging error: {e}")
+                    return {"success": False, "error": str(e)}
+
             def save_file(self, content_b64, filename):
                 # Native Windows Save As Dialog
                 import base64
@@ -293,16 +312,23 @@ if __name__ == "__main__":
                 # Global drop should only work for .paracci files and if we are not on the import page
                 if file_path.lower().endswith('.paracci'):
                     print(f"  [>] Global file drop detected: {file_path}")
-                    safe_path = file_path.replace('\\', '/')
+                    try:
+                        from app.routes import register_native_file_path
+                        file_ref = register_native_file_path(file_path)
+                    except Exception as e:
+                        print(f"  [!] Native file reference error: {e}")
+                        return
+                    ref_json = json.dumps(file_ref)
                     # If we are already on the import page, update the UI directly
                     # Otherwise, redirect with parameter
                     js_code = f"""
+                    const nativeRef = {ref_json};
                     if (window.location.href.includes('/session/import')) {{
                         if (typeof updateNativeUI === 'function') {{
-                            updateNativeUI('{safe_path}');
+                            updateNativeUI(nativeRef);
                         }}
                     }} else {{
-                        window.location.href = '/session/import?native_path={safe_path}';
+                        window.location.href = '/session/import?native_file_id=' + encodeURIComponent(nativeRef.id);
                     }}
                     """
                     window.evaluate_js(js_code)
@@ -324,7 +350,15 @@ if __name__ == "__main__":
         cfg = ParacciConfig()
         anti_screenshot_enabled = cfg.get("anti_screenshot")
         
-        webview.start(shield.apply_anti_screenshot, (window, anti_screenshot_enabled), debug=args.debug)
+        # Locate application icon relative to run.py
+        ICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "paracci_icon.ico")
+        if not os.path.exists(ICON_PATH):
+            ICON_PATH = None
+
+        if ICON_PATH:
+            webview.start(shield.apply_anti_screenshot, (window, anti_screenshot_enabled), debug=args.debug, icon=ICON_PATH)
+        else:
+            webview.start(shield.apply_anti_screenshot, (window, anti_screenshot_enabled), debug=args.debug)
         
         # Forcefully close Flask thread and the entire process when the app closes
         print("\n  [o] Paracci closed. Cleaning up processes...")

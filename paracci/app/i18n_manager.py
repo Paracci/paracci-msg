@@ -27,7 +27,7 @@ class I18nManager:
         """Initializes the i18n manager."""
         self.app = app
         self.translations = {}
-        self.default_locale = 'tr'
+        self.default_locale = 'en'
         if app:
             self.init_app(app)
 

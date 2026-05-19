@@ -89,7 +89,7 @@
     {% if meta.role == 'X' %}
       <div class="mt-8">
         <form action="{{ url_for('main.session_import_responder', sid=sid) }}" method="POST" enctype="multipart/form-data" id="responder-form">
-          <input type="hidden" name="native_path" id="responder-native-path">
+          <input type="hidden" name="native_file_id" id="responder-native-file-id">
           <div class="form-group mb-6">
             <div class="file-drop-area py-10 responder-drop-zone pointer dashed-accent-lg" id="responder-drop-area" data-drop-target="finalize">
               <input type="file" name="paracci_file" id="responder-input" accept=".paracci" required class="hidden">
@@ -306,7 +306,7 @@
     </div>
     <div class="card-body">
       <form id="open-message-form" enctype="multipart/form-data">
-        <input type="hidden" name="native_path" id="open-native-path">
+        <input type="hidden" name="native_file_id" id="open-native-file-id">
         <div id="session-drop-zone" class="card drop-zone attachment-drop-box mb-4" data-drop-target="open">
             <span class="file-icon-lg font-lg mb-2 block text-center">
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="24" height="24" class="mx-auto">
@@ -438,7 +438,7 @@
      data-auto-download="{{ 'true' if request.args.get('auto_download') == '1' else 'false' }}"
      data-export-url="{{ url_for('main.session_export', sid=sid) }}"
      data-export-filename="session_{{ sid[:8] }}.paracci"
-     data-armor-text="{{ _('base.quantum_armor') }}"
+     data-armor-text="{{ _('base.argon_work_active') }}"
      data-open-error="{{ _('session.invalid_file') }}"
      data-preview-label="{{ _('preview.page_title', filename='') | replace(': ', '') }}">
 </div>

@@ -77,7 +77,7 @@ def main():
     print("\n[?] Select Security Profile:")
     print("  1) Standard (Fast)")
     print("  2) Paranoid (Balanced)")
-    print("  3) Quantum-Armor (Maximum Armor)")
+    print("  3) Maximum Argon2id (high-cost offline brute-force resistance)")
     print("  4) Custom (Custom Settings)")
     
     if sys.stdin.isatty():

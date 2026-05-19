@@ -7,7 +7,7 @@ import datetime
 import glob
 import secrets
 import hmac
-from typing import Optional
+from typing import Optional, Sequence
 from pathlib import Path
 import logging
 import unicodedata
@@ -16,7 +16,7 @@ from urllib.parse import urljoin, urlparse
 from flask import (
     Blueprint, render_template, request, redirect,
     url_for, flash, send_file, abort, jsonify, current_app,
-    session, g, make_response
+    session, g, make_response, send_from_directory
 )
 import pyotp
 import qrcode
@@ -39,8 +39,14 @@ from core.crypto import wipe
 from core.sanitizer import sanitize_image
 from core.security_utils import scan_text_for_security
 from core.burn import (
-    is_device_initialized, init_device, unlock_device, DeviceError,
+    is_device_initialized, DeviceError,
     DeviceLockedError, BurnGuard, AlreadyBurnedError, TTLExpiredError
+)
+from desktop.device_key_binding import (
+    DeviceBindingError,
+    consume_device_binding_warning,
+    initialize_device_with_binding,
+    unlock_device_with_binding,
 )
 from core.session import (
     deserialize_session_meta, serialize_session_meta,
@@ -62,6 +68,12 @@ from . import APP_DIR
 from .i18n_manager import i18n
 
 logger = logging.getLogger(__name__)
+
+
+def _flash_device_binding_warning():
+    warning = consume_device_binding_warning()
+    if warning is not None:
+        flash(_(warning.i18n_key), "warning")
 _ = i18n.translate
 
 bp = Blueprint("main", __name__)
@@ -73,6 +85,10 @@ PREVIEW_CACHE = {}
 # Native attachment staging is RAM-only and short-lived.
 # Structure: { id: {"filename": str, "content": bytes, "expires": float} }
 STAGED_ATTACHMENT_CACHE = {}
+
+# Native file references are issued only by the pywebview Python bridge after an
+# OS dialog or native drop event. Web content submits opaque IDs, never paths.
+NATIVE_FILE_REF_CACHE = {}
 
 # ── Security Configuration ──
 MAX_ATTACHMENT_SIZE = 50 * 1024 * 1024  # 50MB
@@ -93,6 +109,14 @@ CODE_EXTENSIONS = {
 }
 
 SENSITIVE_CACHE_CLEAR_LIMIT = 100
+
+
+class NativeAttachmentStagingError(Exception):
+    """Raised when native-selected attachments cannot be staged safely."""
+
+
+class NativeFileReferenceError(Exception):
+    """Raised when a native file reference cannot be created or resolved."""
 
 
 def _content_security_policy() -> str:
@@ -301,6 +325,92 @@ def _add_to_staged_attachment_cache(filename, content, ttl=600):
     return attachment_id
 
 
+def _cleanup_native_file_ref_cache():
+    """Drop expired native file references."""
+    now = time.time()
+    expired = [k for k, v in NATIVE_FILE_REF_CACHE.items() if v["expires"] < now]
+    for ref_id in expired:
+        NATIVE_FILE_REF_CACHE.pop(ref_id, None)
+
+
+def register_native_file_path(path: str | Path, ttl=600) -> dict:
+    """Register a native OS-selected path and return an opaque web-safe ID."""
+    _cleanup_native_file_ref_cache()
+    path_str = str(path or "").strip()
+    if not path_str:
+        raise NativeFileReferenceError("Missing native file path.")
+    ref_id = str(uuid.uuid4())
+    filename = sanitize_attachment_filename(Path(path_str).name)
+    NATIVE_FILE_REF_CACHE[ref_id] = {
+        "path": path_str,
+        "filename": filename,
+        "expires": time.time() + ttl,
+    }
+    return {"id": ref_id, "filename": filename}
+
+
+def _resolve_native_file_ref(ref_id: str | None) -> dict | None:
+    """Resolve an opaque native file ID to its Python-side path metadata."""
+    _cleanup_native_file_ref_cache()
+    if not ref_id:
+        return None
+    ref_id = str(ref_id).strip()
+    if not ref_id:
+        return None
+    entry = NATIVE_FILE_REF_CACHE.get(ref_id)
+    if not entry or entry["expires"] < time.time():
+        NATIVE_FILE_REF_CACHE.pop(ref_id, None)
+        return None
+    return entry
+
+
+def _import_from_native_ref(ref_id: str | None) -> tuple[bytes | None, dict | None]:
+    """Read a file selected by native OS UI using its opaque reference ID."""
+    entry = _resolve_native_file_ref(ref_id)
+    if not entry:
+        return None, None
+    return _import_from_native(entry["path"]), entry
+
+
+def stage_native_attachment_paths(paths: Sequence[str | Path]) -> list[dict]:
+    """Stage OS-selected attachment paths without exposing paths to web content."""
+    if isinstance(paths, (str, Path)):
+        paths = [paths]
+    selected = [str(path or "").strip() for path in (paths or [])]
+    selected = [path for path in selected if path]
+    if not selected:
+        return []
+    if len(selected) > MAX_ATTACHMENT_COUNT:
+        raise NativeAttachmentStagingError(f"Maximum {MAX_ATTACHMENT_COUNT} files can be attached.")
+
+    staged_ids = []
+    staged_items = []
+    total_size = 0
+    try:
+        for native_path in selected:
+            content = _import_from_native(native_path)
+            if content is None:
+                raise NativeAttachmentStagingError("Could not read attachment.")
+            total_size += len(content)
+            if total_size > MAX_ATTACHMENT_SIZE:
+                raise NativeAttachmentStagingError(
+                    f"Total file size exceeds the {MAX_ATTACHMENT_SIZE // (1024*1024)}MB limit."
+                )
+            safe_fname = sanitize_attachment_filename(Path(native_path).name)
+            content = sanitize_image(content, safe_fname)
+            attachment_id = _add_to_staged_attachment_cache(safe_fname, content)
+            staged_ids.append(attachment_id)
+            staged_items.append({
+                "id": attachment_id,
+                "filename": safe_fname,
+                "size": len(content),
+            })
+        return staged_items
+    except Exception:
+        _clear_staged_attachment_cache(staged_ids)
+        raise
+
+
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
@@ -317,7 +427,12 @@ def _expected_origin() -> str:
 def _is_static_request() -> bool:
     """Static assets are intentionally public within the local origin."""
     static_path = current_app.static_url_path or "/static"
-    return request.endpoint == "static" or request.path.startswith(f"{static_path}/")
+    return (
+        request.endpoint == "static"
+        or request.endpoint == "main.favicon"
+        or request.path == "/favicon.ico"
+        or request.path.startswith(f"{static_path}/")
+    )
 
 
 def _same_origin_url(value: str | None) -> bool:
@@ -479,7 +594,7 @@ def check_lock():
     """Checks if the application is locked; redirects to the unlock page if locked."""
 
     # Routes exempt from locking
-    if request.endpoint in ["main.loopback_bootstrap", "main.unlock", "main.set_locale", "static", "main.unlock_2fa_setup", "main.unlock_2fa_verify"]:
+    if request.endpoint in ["main.loopback_bootstrap", "main.unlock", "main.set_locale", "static", "main.unlock_2fa_setup", "main.unlock_2fa_verify", "main.favicon"]:
         return
 
     # 1. Device not initialized yet?
@@ -560,14 +675,16 @@ def unlock():
         try:
             if mode == "init":
                 # Redirect to 2FA setup after the passphrase is set during initial setup
-                device_key = init_device(ag_app.db, pin)
+                device_key = initialize_device_with_binding(ag_app.db, pin)
                 ag_app.device_key = device_key # Set globally since it's initial setup
                 ag_app.active_client_id = session.get("paracci_client_id")
                 session['setup_in_progress'] = True # Temporary flag
+                _flash_device_binding_warning()
                 return redirect(url_for("main.unlock_2fa_setup"))
             else:
                 # Normal unlock: check 2FA if the passphrase is correct
-                device_key = unlock_device(ag_app.db, pin)
+                device_key = unlock_device_with_binding(ag_app.db, pin)
+                _flash_device_binding_warning()
                 
                 if ag_app.db.is_2fa_enabled():
                     # Cleanup old pending unlocks (older than 10 mins)
@@ -594,6 +711,10 @@ def unlock():
         except DeviceLockedError as e:
             flash(str(e), "error")
             return render_template("unlock.html", mode=mode, is_initialized=initialized, lockout_seconds=e.retry_after_seconds)
+        except DeviceBindingError as e:
+            flash(_(e.i18n_key), "error")
+            lockout_seconds = ag_app.db.get_unlock_rate_limit().get("retry_after_seconds", 0) if initialized else 0
+            return render_template("unlock.html", mode=mode, is_initialized=initialized, lockout_seconds=lockout_seconds)
         except DeviceError as e:
             flash(str(e), "error")
             lockout_seconds = ag_app.db.get_unlock_rate_limit().get("retry_after_seconds", 0) if initialized else 0
@@ -1043,29 +1164,13 @@ def _import_from_native(path):
 
 @bp.route("/api/stage-attachment", methods=["POST"])
 def api_stage_attachment():
-    """Stages a native attachment path in RAM for the next seal request."""
+    """Reject legacy web-submitted path staging."""
     if not request.is_json:
         return jsonify({"success": False, "error": "JSON body required."}), 415
-    payload = request.get_json(silent=True) or {}
-    native_path = (payload.get("path") or "").strip()
-    if not native_path:
-        return jsonify({"success": False, "error": "Missing attachment path."}), 400
-
-    content = _import_from_native(native_path)
-    if content is None:
-        return jsonify({"success": False, "error": "Could not read attachment."}), 400
-    if len(content) > MAX_ATTACHMENT_SIZE:
-        return jsonify({"success": False, "error": f"Attachment exceeds the {MAX_ATTACHMENT_SIZE // (1024 * 1024)}MB limit."}), 413
-
-    safe_fname = sanitize_attachment_filename(Path(native_path).name)
-    content = sanitize_image(content, safe_fname)
-    attachment_id = _add_to_staged_attachment_cache(safe_fname, content)
     return jsonify({
-        "success": True,
-        "id": attachment_id,
-        "filename": safe_fname,
-        "size": len(content),
-    })
+        "success": False,
+        "error": "Native attachment staging must use the desktop file picker.",
+    }), 400
 
 
 @bp.route("/api/sensitive-cache/clear", methods=["POST"])
@@ -1087,11 +1192,17 @@ def api_sensitive_cache_clear():
     })
     return _mark_sensitive_no_store(response)
 
-def _process_initiator_import(file_bytes, local_label, native_path, color=None):
+def _process_initiator_import(file_bytes, local_label, native_file_id="", native_filename="", color=None):
     """Starts Y role session by processing an incoming Initiator file."""
     if not local_label:
         flash(_('session.label_required'), "error")
-        return render_template("setup.html", mode="import", is_import=True)
+        return render_template(
+            "setup.html",
+            mode="import",
+            is_import=True,
+            init_native_file_id=native_file_id,
+            init_path=native_filename,
+        )
 
     try:
         logger.info("Processing Initiator (Argon2id Bond starting)...")
@@ -1113,7 +1224,13 @@ def _process_initiator_import(file_bytes, local_label, native_path, color=None):
     except Exception as e:
         logger.error(f"Initiator processing error: {e}")
         flash(_('session.import_error', error=str(e)), "error")
-        return render_template("setup.html", mode="import", is_import=True, init_path=native_path)
+        return render_template(
+            "setup.html",
+            mode="import",
+            is_import=True,
+            init_native_file_id=native_file_id,
+            init_path=native_filename,
+        )
 
 def _process_responder_import(file_bytes, session_id):
     """Completes X role session by processing an incoming Responder file."""
@@ -1140,18 +1257,33 @@ def _process_responder_import(file_bytes, session_id):
 def session_import():
     """Imports incoming session files (Init/Resp)."""
     if request.method == "GET":
-        init_path = request.args.get("native_path", "")
-        return render_template("setup.html", mode="import", is_import=True, init_path=init_path)
+        native_file_id = request.args.get("native_file_id", "").strip()
+        native_ref = _resolve_native_file_ref(native_file_id)
+        return render_template(
+            "setup.html",
+            mode="import",
+            is_import=True,
+            init_native_file_id=native_file_id if native_ref else "",
+            init_path=native_ref["filename"] if native_ref else "",
+        )
 
     local_label = request.form.get("label", "").strip()
-    native_path = request.form.get("native_path")
+    native_file_id = request.form.get("native_file_id", "").strip()
     file_bytes  = None
+    native_filename = ""
 
-    if native_path:
-        file_bytes = _import_from_native(native_path)
+    if native_file_id:
+        file_bytes, native_ref = _import_from_native_ref(native_file_id)
+        native_filename = native_ref["filename"] if native_ref else ""
         if not file_bytes:
-            flash(f"Could not read file: {native_path}", "error")
-            return render_template("setup.html", mode="import", is_import=True, init_path=native_path)
+            flash(f"Could not read file: {native_filename or 'selected file'}", "error")
+            return render_template(
+                "setup.html",
+                mode="import",
+                is_import=True,
+                init_native_file_id=native_file_id,
+                init_path=native_filename,
+            )
     else:
         f = request.files.get("paracci_file")
         if f and f.filename:
@@ -1164,7 +1296,12 @@ def session_import():
     raw_header = _parse_file_header_raw(file_bytes)
     if not raw_header:
         flash(_('session.import_invalid'), "error")
-        return render_template("setup.html", mode="import", init_path=native_path)
+        return render_template(
+            "setup.html",
+            mode="import",
+            init_native_file_id=native_file_id,
+            init_path=native_filename,
+        )
 
     file_type = raw_header["file_type"]
     session_id = raw_header["session_id"]
@@ -1183,7 +1320,13 @@ def session_import():
             if len(custom_color) in [4, 7]:
                 color = custom_color
             
-        return _process_initiator_import(file_bytes, local_label, native_path, color=color)
+        return _process_initiator_import(
+            file_bytes,
+            local_label,
+            native_file_id=native_file_id,
+            native_filename=native_filename,
+            color=color,
+        )
     elif file_type == 0x11:
         # Responder file is now only accepted from the session page.
         flash(_('setup.error_responder_redirect'), "warning")
@@ -1268,12 +1411,13 @@ def session_import_responder(sid: str):
         flash(_('session.error_x_only_responder'), "error")
         return redirect(url_for("main.session_detail", sid=sid))
 
-    native_path = request.form.get("native_path", "").strip()
+    native_file_id = request.form.get("native_file_id", "").strip()
     file_bytes = None
-    if native_path:
-        file_bytes = _import_from_native(native_path)
+    if native_file_id:
+        file_bytes, native_ref = _import_from_native_ref(native_file_id)
         if not file_bytes:
-            flash(f"Could not read file: {native_path}", "error")
+            filename = native_ref["filename"] if native_ref else "selected file"
+            flash(f"Could not read file: {filename}", "error")
             return redirect(url_for("main.session_detail", sid=sid))
     else:
         f = request.files.get("paracci_file")
@@ -1440,11 +1584,13 @@ def session_open(sid: str):
         msg = _('session.safety_unverified') if not meta.safety_confirmed else _('session.not_active')
         return jsonify({"success": False, "error": msg}) if is_ajax else (flash(msg, "error") or redirect(url_for("main.session_detail", sid=sid)))
 
-    native_path = request.form.get("native_path", "").strip()
+    native_file_id = request.form.get("native_file_id", "").strip()
     uploaded = request.files.get("paracci_file")
     file_bytes = None
-    if native_path:
-        file_bytes = _import_from_native(native_path)
+    native_file_path = None
+    if native_file_id:
+        file_bytes, native_ref = _import_from_native_ref(native_file_id)
+        native_file_path = native_ref["path"] if native_ref else None
     elif uploaded and uploaded.filename != "":
         file_bytes = uploaded.read()
 
@@ -1474,7 +1620,7 @@ def session_open(sid: str):
                 _save_session(meta)
             except Exception as e: flash(f"Error while establishing bond: {e}", "warning")
 
-        guard.post_open_burn(msg_id=opened.msg_id, session_id=opened.session_id, direction=opened.direction, single_use=opened.single_use, file_path=native_path)
+        guard.post_open_burn(msg_id=opened.msg_id, session_id=opened.session_id, direction=opened.direction, single_use=opened.single_use, file_path=native_file_path)
         return _prepare_open_response(meta, opened, sid, is_ajax)
     except (AlreadyBurnedError, TTLExpiredError, EnvelopeTTLError) as e:
         msg = "This message was already opened or has expired."
@@ -1833,6 +1979,16 @@ def trusted_host_rejected(e):
     if request.path.startswith("/api/"):
         return jsonify({"success": False, "error": "Forbidden."}), 403
     return "Forbidden", 403
+
+
+@bp.route('/favicon.ico')
+def favicon():
+    """Serves the favicon.ico from the application/project root directory."""
+    return send_from_directory(
+        os.path.abspath(os.path.join(current_app.root_path, "..", "..")),
+        "paracci_icon.ico",
+        mimetype="image/vnd.microsoft.icon"
+    )
 
 
 @bp.app_errorhandler(404)
