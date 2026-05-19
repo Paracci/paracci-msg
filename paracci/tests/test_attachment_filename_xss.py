@@ -111,6 +111,8 @@ def test_package_to_template_data_sanitizes_constructed_attachments():
     assert "<" not in filename
     assert ">" not in filename
     assert "script" in filename
+    assert data["attachments"][0]["data_b64"] == ""
+    assert data["attachments"][0]["full_b64"] == ""
 
 
 def test_session_js_no_attachment_filename_html_or_inline_handlers():

@@ -2,12 +2,14 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from desktop.services import NativeServices
+from desktop.services import AttachmentPayload, NativeServices, OpenedMessage
 from ui_api import UIApi, UIApiError
+from ui_api.facade import CachedOpenMessage
 
 
 def make_api(path: Path) -> UIApi:
@@ -24,7 +26,7 @@ def test_ui_api_device_settings_and_profile(tmp_path):
     assert status["initialized"] is False
     assert status["unlocked"] is False
 
-    initialized = api.dispatch("device_init", {"pin": "95175328"})
+    initialized = api.dispatch("device_init", {"pin": "Correct-Horse-95175328"})
     assert initialized["initialized"] is True
     assert initialized["unlocked"] is True
 
@@ -38,8 +40,8 @@ def test_ui_api_device_settings_and_profile(tmp_path):
 def test_ui_api_session_roundtrip_and_attachment_cache(tmp_path):
     x = make_api(tmp_path / "x")
     y = make_api(tmp_path / "y")
-    x.dispatch("device_init", {"pin": "95175328"})
-    y.dispatch("device_init", {"pin": "95175328"})
+    x.dispatch("device_init", {"pin": "Correct-Horse-95175328"})
+    y.dispatch("device_init", {"pin": "Correct-Horse-95175328"})
 
     init_path = tmp_path / "init.paracci"
     resp_path = tmp_path / "resp.paracci"
@@ -104,11 +106,47 @@ def test_ui_api_session_roundtrip_and_attachment_cache(tmp_path):
     assert Path(saved["output_path"]).read_text(encoding="utf-8") == "attachment text"
 
     y.dispatch("open_clear", {"open_id": opened["open_id"]})
+    assert opened["open_id"] not in y._opened
     try:
         y.dispatch("attachment_preview", {"open_id": opened["open_id"], "attachment_id": "0"})
         assert False, "cleared attachment cache remained accessible"
     except UIApiError as exc:
         assert exc.code == "open_not_found"
+
+
+def test_ui_api_device_lock_drops_open_cache_and_windows_status_is_best_effort(tmp_path):
+    api = make_api(tmp_path / "device-lock")
+    api.dispatch("device_init", {"pin": "Correct-Horse-95175328"})
+    api.services.shield.get_os_name = lambda: "Windows"
+
+    status = api.dispatch("device_status")
+    assert status["shield"] == {"state": "best_effort", "label": "Best effort"}
+
+    api._opened["open-id"] = CachedOpenMessage(
+        message=OpenedMessage(
+            text="secret",
+            attachments=[
+                AttachmentPayload(
+                    filename="secret.txt",
+                    content=b"attachment plaintext",
+                    mime_type="text/plain",
+                    allow_download=True,
+                )
+            ],
+            allow_download=True,
+            msg_id_hex="00",
+            evo_step=1,
+            expire_at=0,
+            single_use=True,
+            security_report={"is_safe": True, "risks": []},
+        ),
+        opened_at=int(time.time()),
+    )
+
+    locked = api.dispatch("device_lock")
+
+    assert locked["unlocked"] is False
+    assert api._opened == {}
 
 
 def test_worker_json_rpc_success_and_error(tmp_path):

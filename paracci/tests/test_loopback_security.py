@@ -1,6 +1,9 @@
 import importlib
 import sys
+import time
 from pathlib import Path
+
+import pyotp
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -141,7 +144,7 @@ def test_api_with_valid_tokens_reaches_route_validation(tmp_path, monkeypatch):
     bootstrap(client)
     from core.burn import init_device
 
-    ag_app.device_key = init_device(ag_app.db, "95175328")
+    ag_app.device_key = init_device(ag_app.db, "Correct-Horse-95175328")
     with client.session_transaction(base_url=ORIGIN) as sess:
         ag_app.active_client_id = sess["paracci_client_id"]
 
@@ -154,6 +157,78 @@ def test_api_with_valid_tokens_reaches_route_validation(tmp_path, monkeypatch):
 
     assert response.status_code == 400
     assert response.get_json()["error"] == "Could not read attachment."
+
+
+def test_session_new_rejects_over_limit_custom_kdf_params(tmp_path, monkeypatch):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    client = flask_app.test_client()
+    bootstrap(client)
+    _unlock_test_client(ag_app, client)
+
+    response = client.post(
+        "/session/new",
+        base_url=ORIGIN,
+        data={
+            "label": "bad-kdf",
+            "session_ttl": "86400",
+            "security_profile": "custom",
+            "custom_t": "257",
+            "custom_m": "64",
+            "custom_p": "1",
+            "color": "#0a84ff",
+        },
+        headers=auth_headers(client),
+    )
+
+    assert response.status_code == 200
+    assert ag_app.db.list_sessions() == []
+
+
+def test_settings_rejects_over_limit_default_ttl(tmp_path, monkeypatch):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    client = flask_app.test_client()
+    bootstrap(client)
+    _unlock_test_client(ag_app, client)
+
+    response = client.post(
+        "/settings",
+        base_url=ORIGIN,
+        data={
+            "default_ttl": "2592001",
+            "auto_cleanup_hours": "24",
+        },
+        headers=auth_headers(client),
+    )
+
+    assert response.status_code == 302
+    from core.config import ParacciConfig
+
+    assert ParacciConfig().get("default_ttl") == 0
+
+
+def test_settings_2fa_confirm_stores_encrypted_secret(tmp_path, monkeypatch):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    client = flask_app.test_client()
+    bootstrap(client)
+    _unlock_test_client(ag_app, client)
+
+    secret = "JBSWY3DPEHPK3PXP"
+    with client.session_transaction(base_url=ORIGIN) as sess:
+        sess["2fa_setup_secret"] = secret
+
+    response = client.post(
+        "/settings/2fa",
+        base_url=ORIGIN,
+        data={"action": "confirm_setup", "code": pyotp.TOTP(secret).now()},
+        headers=auth_headers(client),
+    )
+
+    stored = ag_app.db.get_device_meta("2fa_secret")
+    assert response.status_code == 302
+    assert ag_app.db.is_2fa_enabled() is True
+    assert isinstance(stored, bytes)
+    assert secret.encode("ascii") not in stored
+    assert ag_app.db.get_2fa_secret(ag_app.device_key) == secret
 
 
 def test_unexpected_host_is_rejected(tmp_path, monkeypatch):
@@ -177,7 +252,7 @@ def test_second_bootstrapped_client_cannot_reuse_unlocked_device_key(tmp_path, m
 
     from core.burn import init_device
 
-    ag_app.device_key = init_device(ag_app.db, "95175328")
+    ag_app.device_key = init_device(ag_app.db, "Correct-Horse-95175328")
     with client_one.session_transaction(base_url=ORIGIN) as sess:
         ag_app.active_client_id = sess["paracci_client_id"]
 
@@ -186,10 +261,30 @@ def test_second_bootstrapped_client_cannot_reuse_unlocked_device_key(tmp_path, m
     assert response.status_code == 403
 
 
+def test_unlock_route_renders_durable_lockout_state(tmp_path, monkeypatch):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    client = flask_app.test_client()
+    bootstrap(client)
+
+    from core.burn import init_device
+
+    init_device(ag_app.db, "Correct-Horse-95175328")
+    now = int(time.time())
+    for failed_at in (now - 1000, now - 990, now - 980, now - 960, now):
+        ag_app.db.record_unlock_failure(now=failed_at)
+
+    response = client.get("/unlock", base_url=ORIGIN, headers={"Host": HOST})
+
+    assert response.status_code == 200
+    assert b'maxlength="128"' in response.data
+    assert b"id=\"lockoutCountdown\"" in response.data
+    assert b"data-lockout-seconds=\"300\"" in response.data
+
+
 def _unlock_test_client(ag_app, client):
     from core.burn import init_device
 
-    ag_app.device_key = init_device(ag_app.db, "95175328")
+    ag_app.device_key = init_device(ag_app.db, "Correct-Horse-95175328")
     with client.session_transaction(base_url=ORIGIN) as sess:
         ag_app.active_client_id = sess["paracci_client_id"]
 

@@ -17,7 +17,7 @@ if not exist ".venv" (
     python -m venv .venv
     call .venv\Scripts\activate
     echo [INFO] Installing dependencies...
-    pip install -r requirements.txt
+    pip install --require-hashes -r requirements.lock
 ) else (
     call .venv\Scripts\activate
 )

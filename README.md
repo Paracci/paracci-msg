@@ -17,10 +17,10 @@ The application uses a **Flask + pywebview** architecture to deliver a native, h
 - **Local-Only Isolation**: The loopback web server binds strictly to `127.0.0.1` on a dynamically requested random free port, preventing external network exposure.
 - **Navigation Guard**: The native WebView window blocks all outbound page navigations to external URLs, ensuring code execution remains strictly within the local environment.
 - **Platform-Native Shields**:
-  - **Anti-Screenshot**: Leverages native OS APIs (e.g., `SetWindowDisplayAffinity` on Windows) to black out window contents from screenshot and screen-sharing tools.
-  - **Secure Clipboard**: Copies decrypted data to the clipboard with an automated background clearing timeout to prevent residual credential exposure.
-  - **Anti-Forensics**: Automatically sweeps the system "Recent Documents" cache on startup to clear trace paths of opened `.paracci` files.
-- **Memory-Bound Decryption**: Decrypted message payloads and attachments exist solely as ephemeral state in memory, wiped clean instantly when the session is locked or closed.
+  - **Screen Capture Reduction**: Uses best-effort native OS APIs where available (for example, `SetWindowDisplayAffinity` on Windows) to reduce common window capture exposure.
+  - **Clipboard Auto-Clear**: Copies decrypted text to the clipboard with an automated clearing timeout; local processes may read clipboard contents before clearing.
+  - **Recent-Item Cleanup**: Attempts to sweep known "Recent Documents" locations on startup, without guaranteeing complete forensic trace removal.
+- **Memory-Bound Decryption**: Decrypted message payloads and attachments are dropped from Paracci-controlled caches on close, lock, or navigation; Python, browser, OS, and library copies may still exist outside direct control. See [`paracci/docs/SECURITY_SHIELDS.md`](paracci/docs/SECURITY_SHIELDS.md).
 
 ## Install And Run
 
@@ -33,14 +33,20 @@ cd paracci-msg
 python -m venv .venv
 .\.venv\Scripts\activate
 
-# Install runtime dependencies
-pip install -r requirements.txt
+# Install locked runtime dependencies
+pip install --require-hashes -r requirements.lock
 
 # Run the app
 python run.py
 ```
 
 ### Development Launch Options
+
+```powershell
+# Install locked runtime plus development/audit tooling
+pip install --require-hashes -r requirements.lock
+pip install --require-hashes -r requirements-dev.lock
+```
 
 ```powershell
 # Run with distinct data profiles to test locally (Alice and Bob flow)
@@ -61,6 +67,9 @@ Run the test suite and internal security audits to verify protocol integrity:
 ```powershell
 # Run all unit and integration tests
 python -m pytest paracci\tests -q
+
+# Audit locked Python dependencies
+python -m pip_audit -r requirements.lock -r requirements-dev.lock
 
 # Run the automated security and dependency audit suite
 python paracci\audits\guardian.py

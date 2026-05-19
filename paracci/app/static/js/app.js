@@ -326,7 +326,18 @@ function rememberStagedAttachment(item) {
     if (typeof window.updateAttachmentBadge === 'function') window.updateAttachmentBadge();
 }
 
-function clearStagedAttachments() {
+function clearStagedAttachments({ keepalive = false } = {}) {
+    const stagedIds = (window.PARACCI_STAGED_ATTACHMENTS || [])
+        .map(att => att?.id)
+        .filter(Boolean);
+    if (stagedIds.length) {
+        fetch(window.PARACCI_CONFIG?.cache_clear_url || '/api/sensitive-cache/clear', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ preview_ids: [], staged_attachment_ids: stagedIds }),
+            keepalive
+        }).catch(err => console.warn('[Paracci] Staged attachment cache clear failed:', err));
+    }
     window.PARACCI_STAGED_ATTACHMENTS = [];
     const hidden = document.getElementById('staged_attachment_ids');
     if (hidden) hidden.value = '';
@@ -428,6 +439,9 @@ window.toggleSidebarCollapsed = toggleSidebarCollapsed;
 window.resolveDropIntent = resolveDropIntent;
 window.handleNativeFileDrop = handleNativeFileDrop;
 window.clearStagedAttachments = clearStagedAttachments;
+
+window.addEventListener('pagehide', () => clearStagedAttachments({ keepalive: true }));
+window.addEventListener('beforeunload', () => clearStagedAttachments({ keepalive: true }));
 
 // 3. Download Notifications (Global functions)
 let _currentDownloadPath = null;

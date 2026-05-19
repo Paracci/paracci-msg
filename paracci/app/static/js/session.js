@@ -4,6 +4,38 @@ let currentMsgRawText = "";
 let isMessageOpen = false;
 let quietMode = localStorage.getItem('paracci_quiet_mode') === 'true';
 let copyTimer = null;
+let currentPreviewIds = new Set();
+const MIN_SAFE_DOMPURIFY_VERSION = "3.1.3";
+
+function parseVersionParts(version) {
+    return String(version || "")
+        .split(".")
+        .map(part => Number.parseInt(part, 10))
+        .map(part => Number.isFinite(part) ? part : 0);
+}
+
+function compareVersions(left, right) {
+    const leftParts = parseVersionParts(left);
+    const rightParts = parseVersionParts(right);
+    const maxLength = Math.max(leftParts.length, rightParts.length);
+    for (let i = 0; i < maxLength; i += 1) {
+        const leftPart = leftParts[i] || 0;
+        const rightPart = rightParts[i] || 0;
+        if (leftPart !== rightPart) return leftPart > rightPart ? 1 : -1;
+    }
+    return 0;
+}
+
+function requireSafeDompurify() {
+    const sanitizer = window.DOMPurify;
+    if (!sanitizer || typeof sanitizer.sanitize !== "function") {
+        throw new Error("DOMPurify is not available.");
+    }
+    if (compareVersions(sanitizer.version, MIN_SAFE_DOMPURIFY_VERSION) < 0) {
+        throw new Error(`DOMPurify ${sanitizer.version || "unknown"} is below ${MIN_SAFE_DOMPURIFY_VERSION}.`);
+    }
+    return sanitizer;
+}
 
 document.addEventListener('DOMContentLoaded', () => {
     const configEl = document.getElementById('paracci-config');
@@ -11,6 +43,7 @@ document.addEventListener('DOMContentLoaded', () => {
         window.PARACCI_CONFIG = {
             sid: configEl.dataset.sid,
             open_url: configEl.dataset.openUrl,
+            cache_clear_url: configEl.dataset.cacheClearUrl,
             auto_download: configEl.dataset.autoDownload === 'true',
             export_url: configEl.dataset.exportUrl,
             export_filename: configEl.dataset.exportFilename,
@@ -141,6 +174,16 @@ function setupTemplateEventBindings() {
     });
     document.getElementById('exit-modal-cancel')?.addEventListener('click', () => window.cancelClose?.());
     document.getElementById('exit-modal-confirm')?.addEventListener('click', () => window.confirmClose?.());
+
+    document.getElementById('quiet-mode-checkbox')?.addEventListener('change', (e) => {
+        window.toggleQuietMode?.(e.target.checked);
+    });
+    document.getElementById('btn-copy-msg')?.addEventListener('click', () => {
+        window.handleSecureCopy?.();
+    });
+    document.getElementById('btn-close-msg')?.addEventListener('click', () => {
+        window.handleCloseClick?.();
+    });
 }
 
 function updateAttachmentBadge() {
@@ -183,14 +226,19 @@ function setupForms() {
             if (window.pywebview?.api?.save_file_silent) {
                 const reader = new FileReader();
                 reader.onloadend = async () => {
-                    const b64 = reader.result.split(',')[1];
-                    const savedPath = await window.pywebview.api.save_file_silent(b64, filename);
-                    if (savedPath) {
-                        if (window.showDownloadNotification) window.showDownloadNotification(filename, savedPath);
-                        this.reset();
-                        if (window.clearStagedAttachments) window.clearStagedAttachments();
-                        document.getElementById('allow_download').checked = false;
-                        updateAttachmentBadge();
+                    let b64 = "";
+                    try {
+                        b64 = String(reader.result || '').split(',')[1] || '';
+                        const savedPath = await window.pywebview.api.save_file_silent(b64, filename);
+                        if (savedPath) {
+                            if (window.showDownloadNotification) window.showDownloadNotification(filename, savedPath);
+                            this.reset();
+                            if (window.clearStagedAttachments) window.clearStagedAttachments();
+                            document.getElementById('allow_download').checked = false;
+                            updateAttachmentBadge();
+                        }
+                    } finally {
+                        b64 = "";
                     }
                 };
                 reader.readAsDataURL(blob);
@@ -201,6 +249,7 @@ function setupForms() {
                 a.href = url;
                 a.download = filename;
                 a.click();
+                window.URL.revokeObjectURL(url);
                 this.reset();
                 if (window.clearStagedAttachments) window.clearStagedAttachments();
                 document.getElementById('allow_download').checked = false;
@@ -280,6 +329,50 @@ function appendAlert(container, level, label, message) {
     container.appendChild(alert);
 }
 
+function clearServerSensitiveCaches({ keepalive = false } = {}) {
+    const previewIds = Array.from(currentPreviewIds);
+    currentPreviewIds.clear();
+    if (!previewIds.length) return Promise.resolve(false);
+
+    const url = window.PARACCI_CONFIG?.cache_clear_url || '/api/sensitive-cache/clear';
+    const payload = JSON.stringify({ preview_ids: previewIds, staged_attachment_ids: [] });
+    return fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+        keepalive
+    }).catch(err => {
+        console.warn('[Paracci] Sensitive cache clear failed:', err);
+        return false;
+    });
+}
+
+function clearOpenMessageState({ clearServer = true, keepalive = false } = {}) {
+    if (clearServer) clearServerSensitiveCaches({ keepalive });
+    currentMsgRawText = "";
+    window._currentMsgCanCopy = false;
+    isMessageOpen = false;
+    if (copyTimer) {
+        clearInterval(copyTimer);
+        copyTimer = null;
+    }
+
+    clearElement(document.getElementById('rendered-message'));
+    clearElement(document.getElementById('msg-security-report'));
+    clearElement(document.getElementById('attachments-list-items'));
+
+    const messageContainer = document.getElementById('message-view-container');
+    if (messageContainer) messageContainer.style.display = 'none';
+    const attachmentsContainer = document.getElementById('attachments-container');
+    if (attachmentsContainer) attachmentsContainer.style.display = 'none';
+    const copyBtn = document.getElementById('btn-copy-msg');
+    if (copyBtn) {
+        copyBtn.style.display = 'none';
+        copyBtn.disabled = false;
+        copyBtn.textContent = window.PARACCI_I18N?.copy_protection_btn || 'Copy (30s auto-clear)';
+    }
+}
+
 function attachmentUrl(att, key, fallbackPrefix) {
     const direct = att?.[key];
     if (typeof direct === 'string' && direct.startsWith('/') && !direct.startsWith('//')) return direct;
@@ -292,7 +385,11 @@ function renderDecryptedMessage(data) {
     const container = document.getElementById('message-view-container');
     if (!container) return;
 
+    clearOpenMessageState();
     currentMsgRawText = data.text;
+    (data.attachments || []).forEach(att => {
+        if (att?.pid) currentPreviewIds.add(String(att.pid));
+    });
     
     // Security Report
     const securityDiv = document.getElementById('msg-security-report');
@@ -310,8 +407,9 @@ function renderDecryptedMessage(data) {
 
     // Message Content
     try {
+        const sanitizer = requireSafeDompurify();
         const rawHtml = marked.parse(data.text);
-        document.getElementById('rendered-message').innerHTML = DOMPurify.sanitize(rawHtml);
+        document.getElementById('rendered-message').innerHTML = sanitizer.sanitize(rawHtml);
     } catch (e) {
         document.getElementById('rendered-message').textContent = data.text;
     }
@@ -421,7 +519,7 @@ async function handleSecureCopy() {
         btn.textContent = pattern.replace("{s}", timeLeft);
         if (timeLeft <= 0) {
             clearInterval(copyTimer);
-            btn.textContent = window.PARACCI_I18N?.copy_protection_btn || "Copy (30s protection)"; btn.disabled = false;
+            btn.textContent = window.PARACCI_I18N?.copy_protection_btn || "Copy (30s auto-clear)"; btn.disabled = false;
             showNotification(window.PARACCI_I18N?.clipboard_cleared || "Clipboard cleared.");
         }
     }, 1000);
@@ -439,33 +537,39 @@ async function handleManualDownload(url, filename) {
         if (api) {
             const reader = new FileReader();
             reader.onloadend = async () => {
-                const b64 = reader.result.split(',')[1];
-                let savedPath = null;
-                
-                // Prefer silent download for .paracci files if supported
-                if (filename.endsWith('.paracci') && api.save_file_silent) {
-                    savedPath = await api.save_file_silent(b64, filename);
-                    if (savedPath && window.showDownloadNotification) {
-                        window.showDownloadNotification(filename, savedPath);
+                let b64 = "";
+                try {
+                    b64 = String(reader.result || '').split(',')[1] || '';
+                    let savedPath = null;
+
+                    // Prefer silent download for .paracci files if supported
+                    if (filename.endsWith('.paracci') && api.save_file_silent) {
+                        savedPath = await api.save_file_silent(b64, filename);
+                        if (savedPath && window.showDownloadNotification) {
+                            window.showDownloadNotification(filename, savedPath);
+                        }
+                    } else if (api.save_file) {
+                        savedPath = await api.save_file(b64, filename);
                     }
-                } else if (api.save_file) {
-                    savedPath = await api.save_file(b64, filename);
+                } finally {
+                    b64 = "";
+                    if (window.hideQuantumArmor) window.hideQuantumArmor();
                 }
-                
-                if (window.hideQuantumArmor) window.hideQuantumArmor();
             };
             reader.readAsDataURL(blob);
         } else {
             // Browser Fallback (Legacy/Dev)
             const link = document.createElement('a');
-            link.href = URL.createObjectURL(blob);
+            const objectUrl = URL.createObjectURL(blob);
+            link.href = objectUrl;
             link.download = filename;
             link.click();
+            URL.revokeObjectURL(objectUrl);
             if (window.hideQuantumArmor) window.hideQuantumArmor();
         }
     } catch (err) {
         console.error('Download error:', err);
-        if (window.hideQuantumShield) window.hideQuantumShield();
+        if (window.hideQuantumArmor) window.hideQuantumArmor();
     }
 }
 
@@ -544,9 +648,15 @@ window.handleAttachmentPreview = async (target) => {
 };
 
 function closeMessage() {
-    const container = document.getElementById('message-view-container');
-    if (container) container.style.display = 'none';
-    isMessageOpen = false; currentMsgRawText = "";
+    clearOpenMessageState();
     if (window.pywebview?.api?.copy_and_clear) window.pywebview.api.copy_and_clear("", 0);
-    else navigator.clipboard.writeText('');
+    else if (navigator.clipboard?.writeText) navigator.clipboard.writeText('').catch(() => {});
 }
+
+window.addEventListener('pagehide', () => {
+    clearOpenMessageState({ keepalive: true });
+});
+
+window.addEventListener('beforeunload', () => {
+    clearOpenMessageState({ keepalive: true });
+});

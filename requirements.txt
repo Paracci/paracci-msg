@@ -1,19 +1,23 @@
-# ── Runtime dependencies ───────────────────────────────────────────────────
-# Flask web server (serves the UI via pywebview)
-Flask>=3.0.0
-# pywebview — native desktop window wrapping the Flask app
+# Runtime dependencies
+
+# Flask web server for the local UI
+Flask>=3.1.1
+
+# Native desktop window wrapper
 pywebview>=5.0.0
+
 # Cryptography primitives
-cryptography>=42.0.0
-# Password hashing (Argon2)
+cryptography>=44.0.1
+
+# Password hashing
 argon2-cffi>=23.1.0
+
 # TOTP / 2FA
 pyotp>=2.9.0
-# QR code generation
+
+# QR code generation and image processing
 qrcode>=7.4.2
-# Image processing (qrcode dependency)
-Pillow>=10.0.0
+Pillow>=10.3.0
+
 # Dependency version parsing
-packaging
-# Security audit tool (dev/CI only — safe to include)
-pip-audit
+packaging>=24.0

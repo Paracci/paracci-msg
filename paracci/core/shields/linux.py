@@ -12,8 +12,8 @@ class LinuxShield(BaseShield):
         return "Linux"
 
     def apply_anti_screenshot(self, window, enabled: bool) -> bool:
-        """Place holder for Linux anti-screenshot (X11/Wayland specific)."""
-        logging.warning("[LinuxShield] Anti-screenshot not yet implemented for Linux.")
+        """Explicit stub: Linux capture controls are compositor-specific and unimplemented."""
+        logging.warning("[LinuxShield] Capture-reduction is unimplemented on Linux/X11/Wayland.")
         return False
 
     def get_default_data_dir(self, app_name: str) -> str:
@@ -22,7 +22,7 @@ class LinuxShield(BaseShield):
         return str(Path(base) / app_name.lower())
 
     def secure_delete(self, file_path: str) -> bool:
-        """Uses 'shred' if available, otherwise random overwrite."""
+        """Best-effort shred/overwrite; SSDs, journals, snapshots, and sync may retain data."""
         try:
             subprocess.run(["shred", "-u", "-z", "-n", "1", file_path], check=True)
             return True
@@ -36,7 +36,7 @@ class LinuxShield(BaseShield):
             except: return False
 
     def clear_recent_documents(self) -> bool:
-        """Clears GNOME/KDE recent files if possible."""
+        """Attempts to clear known GNOME/KDE recent-file state."""
         try:
             # Typical path for GNOME
             recent = Path.home() / ".local/share/recently-used.xbel"
@@ -46,7 +46,7 @@ class LinuxShield(BaseShield):
         except: return False
 
     def copy_to_clipboard(self, text: str, clear_delay: int = 30) -> bool:
-        """Securely copies to clipboard using xclip or wl-copy."""
+        """Copies to clipboard and auto-clears after delay; local processes can read it meanwhile."""
         def _set_clipboard(content):
             """Internal Linux clipboard setter."""
             try:

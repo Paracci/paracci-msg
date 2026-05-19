@@ -5,7 +5,9 @@ from abc import ABC, abstractmethod
 class BaseShield(ABC):
     """
     Abstract Base Class for OS-Specific Security Adapters.
-    Defines the contract that every OS shield must fulfill.
+    Defines the best-effort contract that every OS shield must fulfill.
+    These helpers reduce exposure where the platform allows it; they are not
+    guarantees against capture, forensic recovery, or local process access.
     """
     
     @abstractmethod
@@ -15,7 +17,7 @@ class BaseShield(ABC):
 
     @abstractmethod
     def apply_anti_screenshot(self, window, enabled: bool) -> bool:
-        """Applies OS-specific anti-screenshot protection."""
+        """Attempts platform-specific capture reduction for the app window."""
         pass
 
     @abstractmethod
@@ -25,17 +27,17 @@ class BaseShield(ABC):
 
     @abstractmethod
     def secure_delete(self, file_path: str) -> bool:
-        """Performs a secure file deletion."""
+        """Attempts best-effort overwrite/delete; storage media may retain data."""
         pass
 
     @abstractmethod
     def clear_recent_documents(self) -> bool:
-        """Clears system-wide 'Recent Files' history."""
+        """Attempts to clear known recent-file locations for the current OS."""
         pass
 
     @abstractmethod
     def copy_to_clipboard(self, text: str, clear_delay: int = 30) -> bool:
-        """Copies text to clipboard and clears it after delay."""
+        """Copies text and schedules clearing; local processes may read it first."""
         pass
 
     def start_window_resize(self, window, direction: int) -> bool:

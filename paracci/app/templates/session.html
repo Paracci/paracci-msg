@@ -267,7 +267,7 @@
 
         <div class="form-group">
           <label for="ttl_seconds">{{ _('session.msg_ttl_label') }}</label>
-          <select id="ttl_seconds" name="ttl_seconds">
+          <select id="ttl_seconds" name="ttl_seconds" class="apple-select" data-style="form">
             <option value="0">{{ _('time.infinite') }}</option>
             <option value="3600">{{ _('time.1h') }}</option>
             <option value="86400">{{ _('time.1d') }}</option>
@@ -325,6 +325,75 @@
   </div>
 
 </div><!-- /action-grid -->
+
+  <!-- MESSAGE VIEW CONTAINER -->
+  <div id="message-view-container" style="display: none;">
+    <div class="opened-message">
+      <div class="opened-message-header">
+        <div class="flex items-center gap-2">
+          <span class="opened-label">{{ _('session.msg_opened') }}</span>
+          <span class="badge badge-error-soft" id="msg-badge-burn" style="display: none;">{{ _('session.msg_burned') }}</span>
+          <span class="badge badge-warn-soft" id="msg-badge-ttl" style="display: none;">
+            <span id="msg-time-left"></span>
+          </span>
+        </div>
+        <div class="header-actions">
+          <label class="quiet-mode-toggle font-xs text-dim cursor-pointer">
+            <input type="checkbox" id="quiet-mode-checkbox" class="accent-checkbox">
+            <span>{{ _('session.fast_close_toggle') }}</span>
+          </label>
+          <button type="button" class="btn btn-secondary btn-sm" id="btn-copy-msg" style="display: none;">
+            {{ _('session.copy_protection_btn') }}
+          </button>
+          <button type="button" class="btn btn-ghost btn-sm" id="btn-close-msg">
+            {{ _('common.close') }}
+          </button>
+        </div>
+      </div>
+      
+      <div class="message-body">
+        <!-- Alerts -->
+        <div class="alert alert-accent mb-4" id="allow-download-alert" style="display: none;">
+          <div>
+            <span>{{ _('session.allow_download_alert_p1') }}<strong>{{ _('session.allow_download_alert_bold') }}</strong>{{ _('session.allow_download_alert_p2') }}</span>
+          </div>
+        </div>
+        <div class="alert alert-info mb-4" id="no-download-alert" style="display: none;">
+          <div>
+            <span>{{ _('session.no_download_alert_p1') }}<strong>{{ _('session.no_download_alert_bold') }}</strong>{{ _('session.no_download_alert_p2') }}</span>
+          </div>
+        </div>
+        <div class="alert alert-error mb-4" id="single-use-alert" style="display: none;">
+          <div>
+            <span>{{ _('session.single_use_alert') }}</span>
+          </div>
+        </div>
+
+        <!-- Security Report -->
+        <div id="msg-security-report"></div>
+
+        <!-- Decrypted Message Text -->
+        <div id="rendered-message"></div>
+      </div>
+
+      <!-- Attachments -->
+      <div class="attachments-list" id="attachments-container" style="display: none;">
+        <h4>
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="18" height="18" class="inline-block">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+          </svg>
+          <span>{{ _('session.attachments_title') }}</span>
+        </h4>
+        <div id="attachments-list-items"></div>
+      </div>
+
+      <!-- Footer metadata -->
+      <div class="opened-message-footer">
+        <span>{{ _('session.evo_step_label') }} <strong id="msg-evo-step"></strong></span>
+        <span>{{ _('session.msg_id_label') }} <strong id="msg-id-short"></strong></span>
+      </div>
+    </div>
+  </div>
 
 {% endif %}
 

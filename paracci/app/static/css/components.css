@@ -34,7 +34,9 @@
 .settings-group:has(.apple-custom-select-wrapper.open),
 .settings-group.has-open-dropdown,
 .form-group:has(.apple-custom-select-wrapper.open),
-.form-group.has-open-dropdown {
+.form-group.has-open-dropdown,
+.card:has(.apple-custom-select-wrapper.open),
+.card.has-open-dropdown {
   z-index: 101;
   overflow: visible !important;
   position: relative;

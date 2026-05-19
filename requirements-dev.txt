@@ -1,0 +1,7 @@
+# Development, audit, lock, and build tooling
+
+pytest>=9.0.3
+pip-audit>=2.10.0
+pip-tools>=7.5.3
+pyinstaller>=6.20.0
+pyinstaller-hooks-contrib>=2026.5

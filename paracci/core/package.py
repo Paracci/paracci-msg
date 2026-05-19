@@ -1,10 +1,10 @@
 import io
 import zipfile
 import json
-import base64
 import random
 import re
 import unicodedata
+import zlib
 from pathlib import Path
 from typing import List, Dict, Tuple, NamedTuple
 
@@ -12,10 +12,24 @@ from .crypto import random_bytes
 
 FALLBACK_ATTACHMENT_FILENAME = "attachment.bin"
 MAX_ATTACHMENT_FILENAME_LENGTH = 180
+MAX_PACKAGE_ATTACHMENT_COUNT = 10
+MAX_PACKAGE_ZIP_ENTRY_COUNT = MAX_PACKAGE_ATTACHMENT_COUNT + 3
+MAX_PACKAGE_TEXT_BYTES = 1 * 1024 * 1024
+MAX_PACKAGE_METADATA_BYTES = 64 * 1024
+MAX_PACKAGE_ATTACHMENT_BYTES = 50 * 1024 * 1024
+MAX_PACKAGE_TOTAL_ATTACHMENT_BYTES = 50 * 1024 * 1024
+MAX_PACKAGE_PADDING_BYTES = 512 * 1024
+MAX_PACKAGE_ENTRY_COMPRESSED_BYTES = 60 * 1024 * 1024
+MAX_PACKAGE_COMPRESSION_RATIO = 100
+_ZIP_READ_CHUNK_BYTES = 64 * 1024
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
 _UNSAFE_FILENAME_CHARS_RE = re.compile(r"[^A-Za-z0-9._ -]+")
 _REPEATED_SEPARATORS_RE = re.compile(r"[\s_-]{2,}")
 _REPEATED_DOTS_RE = re.compile(r"\.{2,}")
+
+
+class PackageLimitError(ValueError):
+    """Raised when an incoming package fails safe extraction limits."""
 
 
 def sanitize_attachment_filename(name, fallback: str = FALLBACK_ATTACHMENT_FILENAME) -> str:
@@ -56,6 +70,53 @@ def _is_safe_attachment_path(path) -> bool:
         return False
     name = parts[1]
     return bool(name and name not in {".", ".."} and ".." not in name)
+
+
+def _compression_ratio_exceeds_limit(info: zipfile.ZipInfo) -> bool:
+    """Return True when ZIP metadata describes unsafe expansion."""
+    if info.file_size == 0:
+        return False
+    if info.compress_size == 0:
+        return True
+    return (info.file_size / info.compress_size) > MAX_PACKAGE_COMPRESSION_RATIO
+
+
+def _validate_zip_entry_info(info: zipfile.ZipInfo, max_uncompressed_bytes: int, label: str) -> None:
+    """Reject ZIP entries that exceed compressed, expanded, or ratio limits."""
+    if info.compress_size > MAX_PACKAGE_ENTRY_COMPRESSED_BYTES:
+        raise PackageLimitError(f"{label} is too large to open safely.")
+    if info.file_size > max_uncompressed_bytes:
+        raise PackageLimitError(f"{label} is too large to open safely.")
+    if _compression_ratio_exceeds_limit(info):
+        raise PackageLimitError(f"{label} expands too much to open safely.")
+
+
+def _read_zip_entry_limited(
+    zf: zipfile.ZipFile,
+    info: zipfile.ZipInfo,
+    max_uncompressed_bytes: int,
+    label: str,
+) -> bytes:
+    """Stream a ZIP entry into memory only after enforcing expansion limits."""
+    _validate_zip_entry_info(info, max_uncompressed_bytes, label)
+    total = 0
+    output = io.BytesIO()
+    try:
+        with zf.open(info) as src:
+            while True:
+                chunk = src.read(_ZIP_READ_CHUNK_BYTES)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_uncompressed_bytes:
+                    raise PackageLimitError(f"{label} is too large to open safely.")
+                output.write(chunk)
+    except PackageLimitError:
+        raise
+    except (zipfile.BadZipFile, RuntimeError, OSError, EOFError, zlib.error) as exc:
+        raise PackageLimitError("Package is malformed and cannot be opened safely.") from exc
+    return output.getvalue()
+
 
 class Attachment(NamedTuple):
     """Data structure representing message attachments."""
@@ -113,31 +174,99 @@ def extract_package(blob: bytes) -> Package:
     attachments = []
     allow_download = False
     
-    with zipfile.ZipFile(buffer, "r") as zf:
-        # 1. Read message
-        if "message.md" in zf.namelist():
-            text = zf.read("message.md").decode("utf-8")
-            
-        # 2. Read Metadata and Attachments
-        if "metadata.json" in zf.namelist():
-            meta_obj = json.loads(zf.read("metadata.json").decode("utf-8"))
-            meta_obj = meta_obj if isinstance(meta_obj, dict) else {}
-            allow_download = meta_obj.get("allow_download", False)
-            meta_list = meta_obj.get("attachments", [])
-            meta_list = meta_list if isinstance(meta_list, list) else []
-            zip_names = set(zf.namelist())
-            for item in meta_list:
-                if not isinstance(item, dict):
-                    continue
-                path = item.get("internal_path")
-                if _is_safe_attachment_path(path) and path in zip_names:
+    try:
+        with zipfile.ZipFile(buffer, "r") as zf:
+            infos = zf.infolist()
+            if len(infos) > MAX_PACKAGE_ZIP_ENTRY_COUNT:
+                raise PackageLimitError("Package contains too many files to open safely.")
+
+            zip_info_by_name = {}
+            for info in infos:
+                if info.filename in zip_info_by_name:
+                    raise PackageLimitError("Package metadata is malformed.")
+                zip_info_by_name[info.filename] = info
+
+                if info.filename == "message.md":
+                    max_size = MAX_PACKAGE_TEXT_BYTES
+                    label = "Package message"
+                elif info.filename == "metadata.json":
+                    max_size = MAX_PACKAGE_METADATA_BYTES
+                    label = "Package metadata"
+                elif info.filename == ".padding":
+                    max_size = MAX_PACKAGE_PADDING_BYTES
+                    label = "Package padding"
+                elif _is_safe_attachment_path(info.filename):
+                    max_size = MAX_PACKAGE_ATTACHMENT_BYTES
+                    label = "Package attachment"
+                else:
+                    max_size = MAX_PACKAGE_PADDING_BYTES
+                    label = "Package entry"
+                _validate_zip_entry_info(info, max_size, label)
+
+            # 1. Read message
+            message_info = zip_info_by_name.get("message.md")
+            if message_info is not None:
+                text = _read_zip_entry_limited(
+                    zf,
+                    message_info,
+                    MAX_PACKAGE_TEXT_BYTES,
+                    "Package message",
+                ).decode("utf-8")
+
+            # 2. Read Metadata and Attachments
+            metadata_info = zip_info_by_name.get("metadata.json")
+            if metadata_info is not None:
+                metadata_raw = _read_zip_entry_limited(
+                    zf,
+                    metadata_info,
+                    MAX_PACKAGE_METADATA_BYTES,
+                    "Package metadata",
+                )
+                meta_obj = json.loads(metadata_raw.decode("utf-8"))
+                if not isinstance(meta_obj, dict):
+                    raise PackageLimitError("Package metadata is malformed.")
+                allow_download = meta_obj.get("allow_download", False)
+                meta_list = meta_obj.get("attachments", [])
+                if not isinstance(meta_list, list):
+                    raise PackageLimitError("Package metadata is malformed.")
+                if len(meta_list) > MAX_PACKAGE_ATTACHMENT_COUNT:
+                    raise PackageLimitError("Package contains too many attachments to open safely.")
+
+                referenced_paths = set()
+                total_attachment_bytes = 0
+                for item in meta_list:
+                    if not isinstance(item, dict):
+                        raise PackageLimitError("Package metadata is malformed.")
+                    path = item.get("internal_path")
+                    if not _is_safe_attachment_path(path) or path not in zip_info_by_name:
+                        continue
+                    if path in referenced_paths:
+                        raise PackageLimitError("Package metadata is malformed.")
+                    referenced_paths.add(path)
+
+                    info = zip_info_by_name[path]
+                    if total_attachment_bytes + info.file_size > MAX_PACKAGE_TOTAL_ATTACHMENT_BYTES:
+                        raise PackageLimitError("Package attachments are too large to open safely.")
+                    content = _read_zip_entry_limited(
+                        zf,
+                        info,
+                        MAX_PACKAGE_ATTACHMENT_BYTES,
+                        "Package attachment",
+                    )
+                    total_attachment_bytes += len(content)
+                    if total_attachment_bytes > MAX_PACKAGE_TOTAL_ATTACHMENT_BYTES:
+                        raise PackageLimitError("Package attachments are too large to open safely.")
+
                     filename = sanitize_attachment_filename(item.get("original_name"))
-                    content = zf.read(path)
                     attachments.append(Attachment(
                         filename=filename,
                         content=content,
                         mime_type=_guess_mime(filename)
                     ))
+    except PackageLimitError:
+        raise
+    except (zipfile.BadZipFile, RuntimeError, OSError, EOFError, zlib.error, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PackageLimitError("Package is malformed and cannot be opened safely.") from exc
                     
     return Package(text=text, attachments=attachments, allow_download=allow_download)
 
@@ -161,25 +290,28 @@ def _guess_mime(filename: str) -> str:
 def package_to_template_data(package: Package) -> Dict:
     """
     Converts the package into a format easily displayable in templates.
-    Converts image/video files to base64.
+    Attachment bytes are intentionally not base64-encoded here; callers should
+    serve them through short-lived preview/download routes to avoid duplicating
+    decrypted content as long-lived strings.
     """
+    if len(package.attachments) > MAX_PACKAGE_ATTACHMENT_COUNT:
+        raise PackageLimitError("Package contains too many attachments to open safely.")
+    total_attachment_bytes = sum(len(att.content) for att in package.attachments)
+    if total_attachment_bytes > MAX_PACKAGE_TOTAL_ATTACHMENT_BYTES:
+        raise PackageLimitError("Package attachments are too large to open safely.")
+
     processed_attachments = []
     for att in package.attachments:
         filename = sanitize_attachment_filename(att.filename)
         is_media = att.mime_type.startswith(("image/", "video/"))
-        data_b64 = ""
-        if is_media:
-            data_b64 = base64.b64encode(att.content).decode("utf-8")
             
         processed_attachments.append({
             "filename": filename,
             "mime_type": att.mime_type,
             "is_media": is_media,
-            "data_b64": data_b64,
+            "data_b64": "",
             "size": len(att.content),
-            # All files can be base64 for download or a separate route can be used
-            # Base64 is sufficient for small files for now
-            "full_b64": base64.b64encode(att.content).decode("utf-8") if not is_media else data_b64
+            "full_b64": ""
         })
         
     return {

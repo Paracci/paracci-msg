@@ -9,8 +9,11 @@ from .base import BaseShield
 
 class WindowsShield(BaseShield):
     """
-    Windows implementation of the Paracci Quantum Armor.
+    Windows implementation of Paracci's best-effort platform shield.
     Uses private WinDLL instances and explicit 64-bit signatures to prevent crashes.
+    SetWindowDisplayAffinity can reduce common captures, but it does not cover
+    external cameras, privileged capture paths, all screen-sharing tools, or
+    unsupported Windows/window configurations.
     """
     
     def __init__(self):
@@ -131,7 +134,7 @@ class WindowsShield(BaseShield):
 
     def apply_anti_screenshot(self, window, enabled: bool) -> bool:
         """
-        Applies OS-specific anti-screenshot protection.
+        Attempts best-effort OS-specific screen capture reduction.
         WDA_MONITOR = 0x1, WDA_EXCLUDEFROMCAPTURE = 0x11 (Windows 10+)
         """
         h_val = self._get_hwnd(window)
@@ -143,26 +146,26 @@ class WindowsShield(BaseShield):
                 if h_val: break
             
             if not h_val:
-                logging.warning("[WindowsArmor] Could not obtain HWND for anti-screenshot")
+                logging.warning("[WindowsArmor] Could not obtain HWND for capture-reduction")
                 return False
 
         try:
             if not enabled:
                 self._user32.SetWindowDisplayAffinity(h_val, 0)
-                logging.info("[WindowsArmor] Anti-Screenshot DISABLED")
+                logging.info("[WindowsArmor] Capture-reduction disabled")
                 return True
 
-            # Try modern exclusion first (transparent in screenshots)
+            # Try modern best-effort exclusion first (transparent in many screenshots).
             if self._user32.SetWindowDisplayAffinity(h_val, 0x00000011):
-                logging.info("[WindowsArmor] Anti-Screenshot ENABLED (Armored Window)")
+                logging.info("[WindowsArmor] Capture-reduction requested (exclude from capture)")
                 return True
             else:
-                # Fallback to black-out mode
+                # Fallback to legacy monitor mode for older Windows capture APIs.
                 self._user32.SetWindowDisplayAffinity(h_val, 0x00000001)
-                logging.info("[WindowsArmor] Anti-Screenshot ENABLED (Legacy Mode)")
+                logging.info("[WindowsArmor] Capture-reduction requested (legacy monitor mode)")
                 return True
         except Exception as e:
-            logging.error(f"[WindowsArmor] Anti-Screenshot error: {e}")
+            logging.error(f"[WindowsArmor] Capture-reduction error: {e}")
             return False
 
     def get_default_data_dir(self, app_name: str) -> str:
@@ -170,6 +173,7 @@ class WindowsShield(BaseShield):
         return str(Path(base) / app_name)
 
     def secure_delete(self, file_path: str) -> bool:
+        """Best-effort overwrite/delete; SSDs, journals, snapshots, and sync may retain data."""
         try:
             p = Path(file_path)
             if not p.exists(): return True
@@ -194,7 +198,7 @@ class WindowsShield(BaseShield):
             return False
 
     def copy_to_clipboard(self, text: str, clear_delay: int = 30) -> bool:
-        """Securely copies to clipboard and auto-clears after delay with retry logic."""
+        """Copies to clipboard and auto-clears after delay; local processes can read it meanwhile."""
         def _set_clipboard(content):
             CF_UNICODETEXT = 13
             GHND = 0x0042 # GMEM_MOVEABLE (0x02) | GMEM_ZEROINIT (0x40)

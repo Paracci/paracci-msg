@@ -12,6 +12,9 @@ from typing import Any
 from desktop.services import AttachmentPayload, NativeServices, OpenedMessage
 
 
+OPEN_CACHE_TTL_SECONDS = 600
+
+
 class UIApiError(Exception):
     """Frontend-safe UI API failure."""
 
@@ -29,8 +32,7 @@ class UIApiError(Exception):
 class CachedOpenMessage:
     """Short-lived opened message cache entry."""
 
-    message: OpenedMessage
-    attachments: list[AttachmentPayload]
+    message: OpenedMessage | None
     opened_at: int
 
 
@@ -245,13 +247,13 @@ class UIApi:
         return {"session_id_hex": session_id_hex, "output_path": str(Path(output_path)), "filename": filename}
 
     def cmd_message_open(self, session_id_hex: str, message_path: str, burn_source: bool = True) -> dict[str, Any]:
+        self._cleanup_open_cache()
         path = Path(message_path)
         source_path = path if burn_source else None
         opened = self.services.messages.open_message(session_id_hex, path.read_bytes(), source_path)
         open_id = uuid.uuid4().hex
         self._opened[open_id] = CachedOpenMessage(
             message=opened,
-            attachments=opened.attachments,
             opened_at=int(time.time()),
         )
         return self._opened_message_to_dict(open_id, opened)
@@ -279,13 +281,30 @@ class UIApi:
 
     def cmd_open_clear(self, open_id: str | None = None) -> dict[str, Any]:
         if open_id:
-            self._opened.pop(open_id, None)
+            self._drop_open_cache_entry(self._opened.pop(open_id, None))
         else:
             self.clear_open_cache()
         return {"cleared": True}
 
     def clear_open_cache(self) -> None:
-        self._opened.clear()
+        for open_id in list(self._opened.keys()):
+            self._drop_open_cache_entry(self._opened.pop(open_id, None))
+
+    def _cleanup_open_cache(self) -> None:
+        now = int(time.time())
+        expired = [
+            open_id
+            for open_id, cached in self._opened.items()
+            if now - cached.opened_at > OPEN_CACHE_TTL_SECONDS
+        ]
+        for open_id in expired:
+            self._drop_open_cache_entry(self._opened.pop(open_id, None))
+
+    def _drop_open_cache_entry(self, cached: CachedOpenMessage | None) -> None:
+        if cached is None or cached.message is None:
+            return
+        cached.message.attachments.clear()
+        cached.message = None
 
     # ------------------------------------------------------------------
     # Reports
@@ -336,12 +355,13 @@ class UIApi:
         }
 
     def _get_attachment(self, open_id: str, attachment_id: str) -> AttachmentPayload:
+        self._cleanup_open_cache()
         cached = self._opened.get(open_id)
-        if cached is None:
+        if cached is None or cached.message is None:
             raise UIApiError("open_not_found", "Opened message is no longer available.")
         try:
             index = int(attachment_id)
-            return cached.attachments[index]
+            return cached.message.attachments[index]
         except (ValueError, IndexError) as exc:
             raise UIApiError("attachment_not_found", "Attachment is no longer available.") from exc
 
@@ -356,7 +376,7 @@ class UIApi:
         if not enabled:
             return {"state": "disabled", "label": "Disabled"}
         if os_name == "Windows":
-            return {"state": "protected", "label": "Protected"}
+            return {"state": "best_effort", "label": "Best effort"}
         if os_name == "macOS":
             return {"state": "best_effort", "label": "Best effort"}
         if os_name == "Linux":
