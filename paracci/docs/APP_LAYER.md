@@ -1,47 +1,30 @@
-# Native Application Layer
+# Application Layer
 
-The application layer is split by platform while sharing one Python service/UI
-API boundary.
+The Paracci application layer consists of a local Flask web server backend and a `pywebview` desktop window frame.
 
-## Shared Boundary
+## Shared UI API Boundary
 
-`paracci/ui_api` exposes device, 2FA, settings, sessions, message, attachment,
-profile, and armor-report commands as JSON-safe DTOs. It does not expose raw
-protocol objects to either frontend.
+The frontend communicates with the backend via REST endpoints defined in [routes.py](paracci/app/routes.py). The [facade.py](paracci/ui_api/facade.py) class transforms internal Python objects into JSON-safe Data Transfer Objects (DTOs) and enforces path-based safety limits so that web content does not directly control filesystem paths.
 
-## Windows/Linux
+## Desktop Shell Runtime
 
-`paracci/desktop/qml_app.py` loads `paracci/desktop/qml/Main.qml` and exposes the
-UI API through a `QObject` controller. QML owns the premium custom shell,
-navigation, toolbar, composer, reading room, inspector, and native file-dialog
-workflows.
+The application launcher [run.py](run.py) manages startup:
+- Starts a background Flask server on `127.0.0.1` using a randomly assigned loopback port.
+- Generates a per-launch cryptographically secure random bearer token.
+- Sets strict HTTP headers, SameSite session cookies, and CORS controls.
+- Instantiates a `pywebview` window pointing to the local loopback URL.
+- The `pywebview` shell wraps the native browser rendering engine (e.g., WebView2 on Windows, WebKit on macOS/Linux) to display the interface. It restricts navigation, blocking all external URL requests.
 
-## macOS
+## Web Front-End Interface
 
-`platform/macos/ParacciMac` is a SwiftUI/AppKit app. It owns native sidebars,
-toolbars, commands, settings, inspectors, file panels, and platform-specific
-window behavior. It calls `paracci/bridge/worker.py` over stdio JSON-RPC.
+The user interface uses standard web technologies:
+- **HTML Templates**: Located in [templates/](paracci/app/templates/), rendered server-side by Flask (Jinja2).
+- **CSS Stylesheets**: Located in [static/css/](paracci/app/static/css/), implementing a responsive design system using glassmorphism, HSL color tokens, and custom layouts.
+- **JavaScript UI Controllers**: Located in [static/js/](paracci/app/static/js/), managing DOM manipulation, forms, and network requests to the local Flask endpoints.
+- **Security Headers & CSP**: Enforces a strict Content Security Policy (CSP) blocking unauthorized script execution, external resources, and unsafe inline styles.
 
-## Temporary Fallback
+## Memory & Native State Hygiene
 
-`paracci/desktop/qt_app.py` remains available through `python run.py --ui
-widgets` until QML and SwiftUI parity gates pass.
+Opened message contents and decrypted files are held in process memory only while active. Decrypted payloads are dropped from Flask caches and UI state on navigation, window lock, or session termination. Clipboard copies are automatically cleared after a user-configured timeout. 
 
-## Native State
-
-The native app does not use:
-
-- Flask cookies
-- browser `localStorage`
-- `fetch`
-- `FormData`
-- DOMPurify
-- marked.js
-- pywebview JavaScript bridges
-- local HTTP routes
-- WebView or WebEngine rendering
-
-Sensitive opened-message state is dropped from Paracci-controlled UI API and
-preview caches when the reading room closes, the opened item is cleared, the
-page navigates away, or the device locks. This is best-effort process memory
-hygiene, not a claim of perfect memory zeroization; see `SECURITY_SHIELDS.md`.
+For full details on the limitations of the loopback model and memory security, see [SECURITY_SHIELDS.md](paracci/docs/SECURITY_SHIELDS.md).

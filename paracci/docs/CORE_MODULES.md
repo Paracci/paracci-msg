@@ -1,60 +1,56 @@
 # Core Modules
 
-`paracci/core` remains independent of the UI. Both the native Qt layer and any
-future CLI/test harnesses should call these modules through `desktop/services.py`
-unless they are protocol tests.
+The modules in `paracci/core` are independent of the web and desktop UI layers. Other layers (such as UI API controllers or test suites) interact with these modules via native Python imports or through the native desktop services layer.
 
-## `crypto.py`
+## [constants.py](paracci/core/constants.py)
 
-Provides X25519 key generation/ECDH, HKDF-SHA512 derivation,
-ChaCha20-Poly1305 encryption, Argon2id PIN/session work factors, message IDs,
-fingerprints, hashes, and best-effort memory hygiene helpers.
+Contains frozen protocol-stable byte constants, labels, and HMAC keys. This layer ensures long-term backwards compatibility across files, sessions, and database structures.
 
-## `session.py`
+## [crypto.py](paracci/core/crypto.py)
 
-Owns X/Y session setup:
+Provides cryptographic primitives:
+- X25519 key pair generation and ECDH key exchange.
+- HKDF-SHA512 and HKDF-SHA256 derivation.
+- ChaCha20-Poly1305 AEAD symmetric encryption.
+- Argon2id key-hardening implementation for user passphrases.
+- Message ID generation, cryptographic hashing, and process memory wipe/hygiene helpers.
 
-- initiator file creation
-- responder file creation
-- initiator finalization
-- bond nonce handling
-- encrypted `SessionMeta` serialization for SQLite
+## [session.py](paracci/core/session.py)
 
-## `envelope.py`
+Coordinates the two-party session setup. Handshake files (initiator and responder setup files) carry authenticated public metadata. They are integrity-protected but **not confidential**, since the wrapping key is derivable from the public session ID in the file header. Session keys are derived and evolved deterministically.
 
-Owns `.paracci` message files. The stable public API is:
+- Initiator and responder setup file creation.
+- Session bonding ceremonies.
+- Serialization of encrypted session metadata stored in the database.
+
+## [envelope.py](paracci/core/envelope.py)
+
+Manages `.paracci` message files. The stable public API is:
 
 ```python
 seal_envelope(payload_bytes, session, single_use=True, ttl_seconds=0)
 open_envelope(file_bytes, session)
 ```
 
-The module preserves the v2 message format with a 52-byte header, payload block,
-sync block, and 16-byte authenticity seal.
+Envelopes are encrypted and authenticated using session keys. Each envelope includes a unique message ID and step identifier to prevent replay attacks and unauthorized access.
 
-## `package.py`
+## [package.py](paracci/core/package.py)
 
-Builds and extracts the encrypted ZIP payload containing `message.md`,
-`metadata.json`, attachments, and random padding.
+Handles in-memory assembly and parsing of the encrypted envelope ZIP payload containing `message.md`, `metadata.json`, optional attachments, and random padding to prevent traffic analysis.
 
-## `burn.py`
+## [burn.py](paracci/core/burn.py)
 
-Provides `BurnDB`, device key initialization/unlock, burn registry, 2FA metadata
-storage primitives, and secure-delete delegation.
+Enforces single-use and TTL guarantees:
+- Manages the SQLite-based `BurnDB` store.
+- Enforces burn semantics: once an envelope is registered as opened, it cannot be opened again on this device. Copies of the envelope on other devices or storage locations are unaffected.
+- Manages device-key derivation from the user's passphrase. Workload parameters are configured via profiles (standard, paranoid, high, and maximum) to increase brute-force costs.
+- Integrates local rate-limiting and lockout durations to block automated brute-force attacks on the local vault.
+- Coordinates secure file-overwrite and deletion routines.
 
-## `config.py`
+## [config.py](paracci/core/config.py)
 
-Loads and saves `config.json` under `DATA_DIR`.
+Loads and saves localized user parameters in `config.json`.
 
-## `shields/`
+## [shields/](paracci/core/shields/)
 
-Implements OS-specific best-effort security integration:
-
-- Windows: screen capture reduction, best-effort delete, clipboard auto-clear,
-  recent-doc cleanup.
-- macOS: data directory, best-effort delete, clipboard auto-clear, recent-doc
-  cleanup, and best-effort window sharing restriction.
-- Linux: XDG data directory, `shred` fallback, clipboard tools, recent-doc
-  cleanup, and an explicit unimplemented capture-reduction stub.
-
-See `SECURITY_SHIELDS.md` before changing shield guarantees or product copy.
+Coordinates platform-dependent exposure mitigation adapters (such as anti-screenshotting, clipboard cleanup, and recent-items sweeps). See [SECURITY_SHIELDS.md](paracci/docs/SECURITY_SHIELDS.md) for full capability details.

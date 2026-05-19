@@ -1,34 +1,57 @@
-# Security Shields
+# Security Shields & Platform Protection
 
-Paracci shield controls are best-effort exposure reduction. They are useful
-defense-in-depth, but they are not guarantees against memory recovery, screen
-capture, clipboard scraping, or filesystem forensics.
+Paracci implements OS-specific security integrations and platform shields as defense-in-depth measures to reduce data exposure. These shields are best-effort controls; they do not guarantee absolute protection against physical memory acquisition, hardware-level capture, compromised system clipboards, or advanced filesystem forensics.
 
-## Common Limits
+## Common Limitations
 
-- Python `bytes` and `str` objects are immutable. Paracci can drop references
-  it owns, but it cannot overwrite every runtime, Flask response, DOM string,
-  base64, or library copy.
-- Clipboard auto-clear reduces residual exposure after the configured delay.
-  Local processes may still read clipboard contents before the clear runs.
-- Secure-delete helpers attempt overwrite and removal, but SSD wear leveling,
-  journaling filesystems, snapshots, backups, and cloud-synced directories can
-  retain data outside Paracci's control.
-- Recent-document cleanup only targets known OS locations and cannot remove all
-  traces that other tools, shells, indexes, or sync providers may create.
+- **Burn Semantics**: Once a message envelope is opened, its unique ID is permanently recorded in the local SQLite database registry. An opened envelope cannot be opened again on this device. Copies on other devices or storage locations are not affected by this local registry.
+- **Memory Retention**: Python strings, Python `bytes`, and bytearrays are immutable in memory. Paracci clears its own direct references upon closing or locking, but copies may temporarily persist in the Python runtime garbage collector, Flask response buffers, webview engine cache, or operating system swap space.
+- **Clipboard Exposure**: The clipboard auto-clear feature erases copied data after a user-defined delay. However, malicious processes or clipboard managers running on the host system can read clipboard contents before the clear command runs.
+- **Secure File Deletion**: Paracci uses secure-delete logic to overwrite file blocks and deletes them from the filesystem. Journaling filesystems, SSD wear-leveling algorithms, system snapshots, cloud-sync daemons, and system backups may still retain copies of the data on physical storage.
+- **System Logs & Recent Items**: Paracci attempts to clean up references from system recent-documents queues, but system shell indexes or search providers may index filenames and access metadata.
 
-## Platform Matrix
+---
 
-| Platform | Capture reduction | Secure delete | Clipboard clear |
+## Device Key Protection
+
+To mitigate offline storage decryption attacks, Paracci binds its local database encryption key to both the user's passphrase and the platform's secure credential store. Unlocking the database requires both the passphrase and the active platform-native user session (a two-factor model):
+
+- **Windows DPAPI**: Binds the device key using the Windows Data Protection API (DPAPI). Keys are protected by Windows credentials tied to the active user account session. See [dpapi_win.py](paracci/desktop/dpapi_win.py).
+- **macOS Keychain**: Stores key factors in the macOS system Keychain via the Security.framework, restricting access to the logged-in macOS user. See [keychain_mac.py](paracci/desktop/keychain_mac.py).
+- **Linux Secret Service**: Integrates with the `org.freedesktop.secrets` D-Bus API to store key factors in the active keyring daemon (e.g., GNOME Keyring, KWallet). Falls back to passphrase-only security if no keyring is running. See [secret_service_linux.py](paracci/desktop/secret_service_linux.py).
+
+Platform routing and fallbacks are coordinated by [device_key_binding.py](paracci/desktop/device_key_binding.py).
+
+---
+
+## Key Hardening (Argon2id)
+
+Passphrases are processed using Argon2id key derivation. Users can select from standard, paranoid, high, and maximum workload profiles. These configurations increase the CPU and RAM cost of offline key-derivation computations, significantly slowing down offline brute-force attempts.
+- **Post-Quantum Security**: Key hardening does not provide post-quantum security. While it makes brute-force attacks more resource-intensive, the underlying session key exchange (X25519) remains vulnerable to future quantum computers. Post-quantum hybrid KEM integration is planned for a future release.
+
+---
+
+## Local Loopback Threat Model
+
+Paracci runs a local Flask server wrapped by a `pywebview` shell. This loopback architecture is not a native IPC channel, and its security relies on several strict boundaries:
+- **Port Isolation**: Flask binds strictly to `127.0.0.1` on a randomly assigned port.
+- **Access Authentication**: All privileged backend routes require a unique, cryptographically random bearer token generated at launch.
+- **Header & CSRF Validation**: The server validates Host, Origin, Referer, and Fetch Metadata headers to block cross-origin requests. CSRF tokens are enforced on all unsafe methods.
+- **Sandboxed WebView**: The `pywebview` window blocks all navigation to external domains and disables developer inspector tools (unless debug mode is enabled).
+
+---
+
+## Platform Shield Matrix
+
+| Platform | Capture Reduction | Secure File Delete | Clipboard Clear |
 | --- | --- | --- | --- |
-| Windows | Attempts `SetWindowDisplayAffinity`; does not cover external cameras, privileged capture, every screen-share tool, or unsupported windows. | Best-effort overwrite/delete only. | Auto-clear after delay; readable before clearing. |
-| macOS | Attempts `NSWindowSharingNone`; does not block every screenshot, recording, or privileged capture path. | Best-effort overwrite/delete only. | Auto-clear after delay; readable before clearing. |
-| Linux | Unimplemented because X11/Wayland support is compositor-specific. | Best-effort `shred`/overwrite/delete only. | Auto-clear with `xclip` or `wl-copy` when available; readable before clearing. |
+| **Windows** | Attempts `SetWindowDisplayAffinity` to hide the window from capture software. Does not block physical cameras, remote desktop software, or administrator-level capture tools. | Best-effort overwrite/delete via Windows filesystem calls. | Auto-clear after delay; contents remain readable before clearing. |
+| **macOS** | Attempts `NSWindowSharingNone` to restrict window sharing. Does not block native screenshots, screen recordings, or hardware capture. | Best-effort overwrite/delete via Unix filesystem commands. | Auto-clear after delay; contents remain readable before clearing. |
+| **Linux** | Unimplemented. Screenshot blocking is compositor-specific and not supported across X11 and Wayland environments. | Best-effort `shred` or overwrite/delete. | Auto-clear using `xclip` or `wl-copy` if installed; contents remain readable before clearing. |
 
-## Contributor Wording Rules
+---
 
-Use: "best-effort", "attempts", "reduces exposure", "drops Paracci-owned
-references", and "auto-clears after a delay".
+## Contributor Copywriting Rules
 
-Avoid: "prevents screenshots", "guarantees deletion", "wipes instantly",
-"securely deletes", "erases RAM", and "cannot be recovered".
+- **Recommended Terms**: Use "best-effort", "attempts", "reduces exposure", "drops references", and "auto-clears after a delay".
+- **Prohibited Terms**: Avoid "prevents screenshots", "guarantees deletion", "wipes instantly", "securely deletes", "erases RAM", and "cannot be recovered".
