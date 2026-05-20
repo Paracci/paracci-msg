@@ -42,6 +42,27 @@ jobs:
           choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
           choco install ninja -y
 
+      - name: Build liboqs native library
+        shell: bash
+        run: |
+          git clone --branch 0.15.0 --depth 1 https://github.com/open-quantum-safe/liboqs.git
+          cmake_extra_flags=""
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cmake_extra_flags="-DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=TRUE"
+          fi
+          cmake -S liboqs -B liboqs/build \
+            -DBUILD_SHARED_LIBS=ON \
+            -DOQS_BUILD_ONLY_LIB=ON \
+            -DCMAKE_INSTALL_PREFIX="${{ runner.temp }}/_oqs" \
+            $cmake_extra_flags
+          cmake --build liboqs/build --parallel 4
+          cmake --build liboqs/build --target install
+          rm -rf liboqs
+
+      - name: Set OQS_INSTALL_PATH
+        shell: bash
+        run: echo "OQS_INSTALL_PATH=${{ runner.temp }}/_oqs" >> "$GITHUB_ENV"
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
