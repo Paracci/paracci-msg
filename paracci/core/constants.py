@@ -12,6 +12,8 @@ LEGACY_V3_LABEL_SUFFIX = b"\na octyyghb ePED"
 
 DOMAIN_SESSION_MASTER_V3 = b"paracci.session.master.v3"
 SESSION_MASTER_HKDF_LENGTH_V3 = 131
+KEM_ALGORITHM = "ML-KEM-768"
+HYBRID_KEM_DOMAIN = b"paracci.hybrid.kem.v1"
 
 LABEL_MSG_XY_V3 = b"paracci.msg.x2y.v3" + LEGACY_V3_LABEL_SUFFIX
 LABEL_MSG_YX_V3 = b"paracci.msg.y2x.v3" + LEGACY_V3_LABEL_SUFFIX

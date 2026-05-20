@@ -3,18 +3,22 @@ Paracci core/session.py
 Session setup flow and authenticated handshake management.
 """
 
+import base64
 import json
 import random
 import string
 import time
+from binascii import Error as BinasciiError
 from typing import NamedTuple, Optional
 
+from .constants import KEM_ALGORITHM
 from .crypto import (
     DerivedKeys,
     EncryptedBlob,
     KEY_LEN,
     NONCE_LEN,
     decrypt,
+    derive_hybrid_shared_secret,
     derive_session_keys,
     ecdh,
     encrypt,
@@ -37,9 +41,19 @@ from .evolution import (
     validate_argon2_params,
     validate_evo_config,
 )
+from .hybrid_kem import (
+    HYBRID_HANDSHAKE_VERSION,
+    OLDER_VERSION_ERROR,
+    HybridKEMError,
+    initiator_kem_complete,
+    initiator_kem_setup,
+    responder_kem_respond,
+    validate_hybrid_handshake_payload,
+)
 
 MAGIC_BYTES = b"PARC"
 FILE_VERSION = 0x01
+HANDSHAKE_FILE_VERSION = 0x03
 TYPE_INITIATOR = 0x10
 TYPE_RESPONDER = 0x11
 TYPE_MESSAGE = 0x20
@@ -49,12 +63,13 @@ SESSION_STATE_UNVERIFIED = "unverified"
 SESSION_STATE_ACTIVE = "active"
 SESSION_STATE_EXPIRED = "expired"
 
-HANDSHAKE_VERSION = 2
+HANDSHAKE_VERSION = HYBRID_HANDSHAKE_VERSION
+SIGNED_X25519_HANDSHAKE_VERSION = 2
 LEGACY_HANDSHAKE_VERSION = 1
 
 APP_DOMAIN = b"paracci.app.session.file.v1"
-SIGN_INITIATOR_LABEL = b"paracci.handshake.initiator.v2"
-SIGN_RESPONDER_LABEL = b"paracci.handshake.responder.v2"
+SIGN_INITIATOR_LABEL = b"paracci.handshake.initiator.v3"
+SIGN_RESPONDER_LABEL = b"paracci.handshake.responder.v3"
 
 X25519_KEY_LEN = 32
 ED25519_PUBLIC_LEN = 32
@@ -100,6 +115,9 @@ class SessionMeta(NamedTuple):
     handshake_version: int
     safety_confirmed: bool
     safety_confirmed_at: Optional[int]
+    ml_kem_public_key: Optional[bytes] = None
+    ml_kem_secret_key: Optional[bytes] = None
+    ml_kem_ciphertext: Optional[bytes] = None
 
     @property
     def is_bonded(self) -> bool:
@@ -135,8 +153,8 @@ def _file_encryption_key(session_id: bytes, purpose: bytes) -> bytes:
     return hkdf_derive(APP_DOMAIN + session_id, KEY_LEN, b"paracci.file.enc." + purpose)
 
 
-def _build_file_header(file_type: int, session_id: bytes) -> bytes:
-    return MAGIC_BYTES + bytes([FILE_VERSION, file_type]) + session_id
+def _build_file_header(file_type: int, session_id: bytes, file_version: int = HANDSHAKE_FILE_VERSION) -> bytes:
+    return MAGIC_BYTES + bytes([file_version, file_type]) + session_id
 
 
 def _verify_magic(data: bytes) -> bool:
@@ -173,15 +191,40 @@ def _hex_qseed(value) -> Optional[bytes]:
     return _hex_to_bytes(value, QSEED_LEN, "quantum seed", optional=True)
 
 
+def _b64_to_bytes(value, label: str, i18n_key: str) -> bytes:
+    if not isinstance(value, str) or not value:
+        raise HybridKEMError(f"Invalid {label}.", i18n_key)
+    try:
+        raw = base64.b64decode(value.encode("ascii"), validate=True)
+    except (BinasciiError, UnicodeEncodeError, ValueError) as exc:
+        raise HybridKEMError(f"Invalid {label}.", i18n_key) from exc
+    if not raw:
+        raise HybridKEMError(f"Invalid {label}.", i18n_key)
+    return raw
+
+
+def _b64_from_bytes(value: bytes) -> str:
+    return base64.b64encode(value).decode("ascii")
+
+
+def _is_handshake_type(file_type: int) -> bool:
+    return file_type in (TYPE_INITIATOR, TYPE_RESPONDER)
+
+
 def _decode_file_payload(data: bytes, expected_type: int, purpose: bytes) -> tuple[bytes, dict]:
     if not _verify_magic(data):
         raise SessionFileError("Invalid file format.")
     if len(data) < 22 + NONCE_LEN:
         raise SessionFileError("File is too short.")
-    if data[4] != FILE_VERSION:
-        raise SessionFileError("Unsupported version.")
     if data[5] != expected_type:
         raise SessionFileError("Unexpected session file type.")
+    if _is_handshake_type(expected_type):
+        if data[4] != HANDSHAKE_FILE_VERSION:
+            if data[4] < HANDSHAKE_FILE_VERSION:
+                raise HybridKEMError(OLDER_VERSION_ERROR, "hybrid_kem_legacy_session")
+            raise SessionFileError("Unsupported version.")
+    elif data[4] != FILE_VERSION:
+        raise SessionFileError("Unsupported version.")
 
     session_id = _expect_len(data[6:22], SESSION_ID_LEN, "session id")
     hdr = data[:22]
@@ -200,8 +243,8 @@ def _decode_file_payload(data: bytes, expected_type: int, purpose: bytes) -> tup
 
 
 def _verify_signed_payload(kind: bytes, payload: dict, signature_field: str, identity_pub_field: str) -> bytes:
-    if payload.get("handshake_version") != HANDSHAKE_VERSION:
-        raise SessionFileError("Unsupported or unsigned handshake file.")
+    expected_kind = "initiator" if kind == SIGN_INITIATOR_LABEL else "responder"
+    validate_hybrid_handshake_payload(payload, expected_kind=expected_kind)
     signature = _hex_to_bytes(payload.get(signature_field), ED25519_SIGNATURE_LEN, "signature")
     identity_pub = _hex_to_bytes(payload.get(identity_pub_field), ED25519_PUBLIC_LEN, "identity public key")
     signed = dict(payload)
@@ -235,6 +278,8 @@ def serialize_initiator_file(
     """Creates the signed session initiator file."""
     if not meta.my_identity_pub:
         raise SessionFileError("Missing local identity key.")
+    if not meta.ml_kem_public_key:
+        raise HybridKEMError("Missing ML-KEM public key.", "hybrid_kem_init_failed")
 
     payload = {
         "handshake_version": HANDSHAKE_VERSION,
@@ -242,6 +287,8 @@ def serialize_initiator_file(
         "x_pub": meta.my_pub.hex(),
         "x_identity_pub": meta.my_identity_pub.hex(),
         "x_qseed": meta.my_qseed.hex() if meta.my_qseed else None,
+        "ml_kem_algorithm": KEM_ALGORITHM,
+        "ml_kem_public_key": _b64_from_bytes(meta.ml_kem_public_key),
         "evo_config": serialize_evo_config(meta.evo_config).hex(),
         "label": meta.label,
         "username": my_username,
@@ -266,6 +313,11 @@ def parse_initiator_file(data: bytes) -> dict:
     session_id = _validate_payload_session_id(p, header_session_id)
     x_pub = _hex_to_bytes(p.get("x_pub"), X25519_KEY_LEN, "X25519 public key")
     x_qseed = _hex_qseed(p.get("x_qseed"))
+    ml_kem_public_key = _b64_to_bytes(
+        p.get("ml_kem_public_key"),
+        "ML-KEM public key",
+        "hybrid_kem_respond_failed",
+    )
     try:
         evo_config = deserialize_evo_config(bytes.fromhex(p["evo_config"]))
     except Exception as exc:
@@ -276,6 +328,7 @@ def parse_initiator_file(data: bytes) -> dict:
         "x_pub": x_pub,
         "x_identity_pub": x_identity_pub,
         "x_qseed": x_qseed,
+        "ml_kem_public_key": ml_kem_public_key,
         "evo_config": evo_config,
         "label": p["label"],
         "username": p.get("username"),
@@ -295,6 +348,7 @@ def serialize_responder_file(
     x_identity_pub: bytes,
     y_identity_pub: bytes,
     identity_priv: bytes,
+    ml_kem_ciphertext: bytes,
 ) -> bytes:
     """Creates the signed session responder file."""
     _expect_len(session_id, SESSION_ID_LEN, "session id")
@@ -302,6 +356,8 @@ def serialize_responder_file(
     _expect_len(y_pub, X25519_KEY_LEN, "X25519 public key")
     _expect_len(x_identity_pub, ED25519_PUBLIC_LEN, "identity public key")
     _expect_len(y_identity_pub, ED25519_PUBLIC_LEN, "identity public key")
+    if not isinstance(ml_kem_ciphertext, bytes) or not ml_kem_ciphertext:
+        raise HybridKEMError("Missing ML-KEM ciphertext.", "hybrid_kem_respond_failed")
     if y_qseed is not None:
         _expect_len(y_qseed, QSEED_LEN, "quantum seed")
 
@@ -313,6 +369,8 @@ def serialize_responder_file(
         "y_pub": y_pub.hex(),
         "y_identity_pub": y_identity_pub.hex(),
         "y_qseed": y_qseed.hex() if y_qseed else None,
+        "ml_kem_algorithm": KEM_ALGORITHM,
+        "ml_kem_ciphertext": _b64_from_bytes(ml_kem_ciphertext),
         "evo_config": serialize_evo_config(evo_config).hex(),
         "label": label,
         "username": username,
@@ -338,6 +396,11 @@ def parse_responder_file(data: bytes) -> dict:
     x_identity_pub = _hex_to_bytes(p.get("x_identity_pub"), ED25519_PUBLIC_LEN, "identity public key")
     y_pub = _hex_to_bytes(p.get("y_pub"), X25519_KEY_LEN, "X25519 public key")
     y_qseed = _hex_qseed(p.get("y_qseed"))
+    ml_kem_ciphertext = _b64_to_bytes(
+        p.get("ml_kem_ciphertext"),
+        "ML-KEM ciphertext",
+        "hybrid_kem_complete_failed",
+    )
     try:
         evo_config = deserialize_evo_config(bytes.fromhex(p["evo_config"]))
     except Exception as exc:
@@ -350,6 +413,7 @@ def parse_responder_file(data: bytes) -> dict:
         "y_pub": y_pub,
         "y_identity_pub": y_identity_pub,
         "y_qseed": y_qseed,
+        "ml_kem_ciphertext": ml_kem_ciphertext,
         "evo_config": evo_config,
         "label": p["label"],
         "username": p.get("username"),
@@ -372,6 +436,7 @@ def create_initiator_session(
     session_id = new_message_id()
     priv, pub = generate_keypair()
     qseed = random_bytes(QSEED_LEN)
+    kem_setup = initiator_kem_setup()
     created_at = int(time.time())
 
     if profile == "custom":
@@ -424,6 +489,9 @@ def create_initiator_session(
         handshake_version=HANDSHAKE_VERSION,
         safety_confirmed=False,
         safety_confirmed_at=None,
+        ml_kem_public_key=kem_setup["ml_kem_public_key"],
+        ml_kem_secret_key=kem_setup["ml_kem_secret_key"],
+        ml_kem_ciphertext=None,
     )
     return meta, serialize_initiator_file(meta, my_username=my_username, identity_priv=identity_priv)
 
@@ -444,11 +512,18 @@ def accept_initiator_and_create_responder(
     x_pub = info["x_pub"]
     x_identity_pub = info["x_identity_pub"]
     x_qseed = info["x_qseed"]
+    ml_kem_public_key = info["ml_kem_public_key"]
     evo_config = validate_evo_config(info["evo_config"])
 
     y_priv, y_pub = generate_keypair()
     y_qseed = random_bytes(QSEED_LEN)
-    shared_secret = ecdh(y_priv, x_pub)
+    kem_response = responder_kem_respond(ml_kem_public_key)
+    x25519_shared = ecdh(y_priv, x_pub)
+    shared_secret = derive_hybrid_shared_secret(
+        x25519_shared,
+        kem_response["ml_kem_shared_secret"],
+        session_id,
+    )
     q_salt = (x_qseed or b"") + (y_qseed or b"")
     keys = derive_session_keys(
         shared_secret,
@@ -487,6 +562,9 @@ def accept_initiator_and_create_responder(
         handshake_version=HANDSHAKE_VERSION,
         safety_confirmed=False,
         safety_confirmed_at=None,
+        ml_kem_public_key=ml_kem_public_key,
+        ml_kem_secret_key=None,
+        ml_kem_ciphertext=kem_response["ml_kem_ciphertext"],
     )
     resp_bytes = serialize_responder_file(
         session_id,
@@ -499,6 +577,7 @@ def accept_initiator_and_create_responder(
         x_identity_pub=x_identity_pub,
         y_identity_pub=identity_pub,
         identity_priv=identity_priv,
+        ml_kem_ciphertext=kem_response["ml_kem_ciphertext"],
     )
     return meta, resp_bytes
 
@@ -515,8 +594,17 @@ def finalize_initiator_session(meta: SessionMeta, responder_file_bytes: bytes) -
 
     y_pub = info["y_pub"]
     y_qseed = info["y_qseed"]
+    ml_kem_ciphertext = info["ml_kem_ciphertext"]
+    if not meta.ml_kem_secret_key:
+        raise HybridKEMError("Missing ML-KEM secret key.", "hybrid_kem_complete_failed")
     evo_config = validate_evo_config(meta.evo_config)
-    shared_secret = ecdh(meta.my_priv, y_pub)
+    ml_kem_shared = initiator_kem_complete(meta.ml_kem_secret_key, ml_kem_ciphertext)
+    x25519_shared = ecdh(meta.my_priv, y_pub)
+    shared_secret = derive_hybrid_shared_secret(
+        x25519_shared,
+        ml_kem_shared,
+        meta.session_id,
+    )
     q_salt = (meta.my_qseed or b"") + (y_qseed or b"")
     keys = derive_session_keys(
         shared_secret,
@@ -549,6 +637,9 @@ def finalize_initiator_session(meta: SessionMeta, responder_file_bytes: bytes) -
         handshake_version=HANDSHAKE_VERSION,
         safety_confirmed=False,
         safety_confirmed_at=None,
+        ml_kem_public_key=None,
+        ml_kem_secret_key=None,
+        ml_kem_ciphertext=ml_kem_ciphertext,
     )
 
 
@@ -568,7 +659,7 @@ def apply_bond_nonce_to_y(meta: SessionMeta, bond_nonce: bytes) -> SessionMeta:
 
 
 def get_session_safety_code(meta: SessionMeta) -> str:
-    """Returns the deterministic human safety code for a v2 session."""
+    """Returns the deterministic human safety code for a v3 session."""
     if meta.handshake_version != HANDSHAKE_VERSION:
         raise SessionError("Legacy handshakes do not have a safety code.")
     if not meta.my_identity_pub or not meta.peer_identity_pub or not meta.peer_pub:
@@ -601,7 +692,7 @@ def normalize_safety_code(value: str) -> str:
 
 
 def confirm_safety_code(meta: SessionMeta, user_code: str) -> SessionMeta:
-    """Marks a v2 session active only after the local user confirms the SAS."""
+    """Marks a v3 session active only after the local user confirms the SAS."""
     expected = normalize_safety_code(get_session_safety_code(meta))
     provided = normalize_safety_code(user_code)
     if provided != expected:
@@ -650,6 +741,12 @@ def serialize_session_meta(meta: SessionMeta, device_key: bytes) -> bytes:
         "safety_confirmed": meta.safety_confirmed,
         "safety_confirmed_at": meta.safety_confirmed_at,
     }
+    if meta.ml_kem_public_key is not None:
+        data["ml_kem_public_key"] = meta.ml_kem_public_key.hex()
+    if meta.ml_kem_secret_key is not None:
+        data["ml_kem_secret_key"] = meta.ml_kem_secret_key.hex()
+    if meta.ml_kem_ciphertext is not None:
+        data["ml_kem_ciphertext"] = meta.ml_kem_ciphertext.hex()
     raw = json.dumps(data, separators=(",", ":")).encode("utf-8")
     blob = encrypt(device_key, raw, aad=b"paracci.db.session.v2")
     return blob.nonce + blob.ciphertext
@@ -711,6 +808,9 @@ def deserialize_session_meta(encrypted_data: bytes, device_key: bytes) -> Sessio
         handshake_version=handshake_version,
         safety_confirmed=safety_confirmed,
         safety_confirmed_at=data.get("safety_confirmed_at"),
+        ml_kem_public_key=bytes.fromhex(data["ml_kem_public_key"]) if data.get("ml_kem_public_key") else None,
+        ml_kem_secret_key=bytes.fromhex(data["ml_kem_secret_key"]) if data.get("ml_kem_secret_key") else None,
+        ml_kem_ciphertext=bytes.fromhex(data["ml_kem_ciphertext"]) if data.get("ml_kem_ciphertext") else None,
     )
 
 
