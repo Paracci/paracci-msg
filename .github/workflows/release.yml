@@ -64,6 +64,18 @@ jobs:
             pkg-config python3-dev libglib2.0-dev \
             libegl1 libxcb-cursor0 libxcb-xinerama0
 
+      - name: Install liboqs build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y cmake ninja-build libssl-dev
+
+      - name: Install liboqs build dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja openssl
+
+      - name: Install liboqs build dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: choco install cmake ninja
+
       # ── 4. Install runtime + build dependencies ────────────────────────────
       - name: Install Python dependencies
         run: |
