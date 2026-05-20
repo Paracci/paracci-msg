@@ -23,6 +23,10 @@
     "nav_aria": "Primary navigation",
     "argon_work_active": "Maximales Argon2id aktiv..."
   },
+  "hybrid_kem_legacy_session": "Diese Sitzung wurde mit einer älteren Version von Paracci erstellt und bietet keinen Post-Quanten-Schutz. Bitte bitten Sie Ihren Kontakt, eine neue Sitzung zu starten.",
+  "hybrid_kem_init_failed": "Post-Quanten-Schlüsselerzeugung fehlgeschlagen. Bitte versuchen Sie es erneut.",
+  "hybrid_kem_respond_failed": "Post-Quanten-Schlüsselkapselung fehlgeschlagen. Bitte versuchen Sie es erneut.",
+  "hybrid_kem_complete_failed": "Post-Quanten-Schlüsselentkapselung fehlgeschlagen. Bitte versuchen Sie es erneut.",
   "nav": {
     "sessions": "Sitzungen",
     "new": "Neu",

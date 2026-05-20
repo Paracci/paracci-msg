@@ -23,6 +23,10 @@
     "nav_aria": "Primary navigation",
     "argon_work_active": "Argon2id máximo activo..."
   },
+  "hybrid_kem_legacy_session": "Esta sesión se creó con una versión anterior de Paracci y no tiene protección poscuántica. Pide a tu contacto que inicie una sesión nueva.",
+  "hybrid_kem_init_failed": "La generación de claves poscuánticas falló. Inténtalo de nuevo.",
+  "hybrid_kem_respond_failed": "La encapsulación de claves poscuánticas falló. Inténtalo de nuevo.",
+  "hybrid_kem_complete_failed": "La desencapsulación de claves poscuánticas falló. Inténtalo de nuevo.",
   "nav": {
     "sessions": "Sesiones",
     "new": "Nuevo",

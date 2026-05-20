@@ -54,8 +54,10 @@ from core.session import (
     finalize_initiator_session, apply_bond_nonce_to_y,
     serialize_initiator_file, serialize_responder_file,
     confirm_safety_code, get_session_safety_code,
+    FILE_VERSION, HANDSHAKE_FILE_VERSION,
     SESSION_COLORS, SESSION_STATE_UNVERIFIED, SessionError
 )
+from core.hybrid_kem import HybridKEMError
 from core.evolution import (
     MAX_EVO_STEP,
     SECURITY_PROFILES,
@@ -75,6 +77,10 @@ def _flash_device_binding_warning():
     if warning is not None:
         flash(_(warning.i18n_key), "warning")
 _ = i18n.translate
+
+
+def _hybrid_error_message(exc: HybridKEMError) -> str:
+    return _(getattr(exc, "i18n_key", "hybrid_kem_respond_failed"))
 
 bp = Blueprint("main", __name__)
 
@@ -961,14 +967,17 @@ def _parse_file_header_raw(file_bytes: bytes) -> dict | None:
     if file_bytes[:4] != b"PARC":
         return None
     
-    # 3. Protocol Version (Currently only 0x01 supported)
+    # 3. Protocol Version
     version = file_bytes[4]
-    if version != 0x01:
-        return None
-    
+
     # 4. File Type (0x10: Init, 0x11: Resp, 0x20: Msg)
     file_type = file_bytes[5]
     if file_type not in [0x10, 0x11, 0x20]:
+        return None
+    if file_type == 0x20:
+        if version != FILE_VERSION:
+            return None
+    elif version not in (FILE_VERSION, HANDSHAKE_FILE_VERSION):
         return None
         
     try:
@@ -1138,6 +1147,9 @@ def session_new():
             identity_pub=identity.public_key,
             identity_priv=identity.private_key,
         )
+    except HybridKEMError as e:
+        flash(_hybrid_error_message(e), "error")
+        return render_template("setup.html", mode="new", is_import=False)
     except Exception as e:
         flash(_('session.create_error', error=str(e)), "error")
         return render_template("setup.html", mode="new", is_import=False)
@@ -1221,6 +1233,16 @@ def _process_initiator_import(file_bytes, local_label, native_file_id="", native
         flash(_('session.y_init_success'), "success")
         flash(_('session.safety_unverified'), "warning")
         return redirect(url_for("main.session_detail", sid=meta.session_id.hex(), auto_download="1"))
+    except HybridKEMError as e:
+        logger.error("Initiator hybrid KEM processing error: %s", e.__class__.__name__)
+        flash(_hybrid_error_message(e), "error")
+        return render_template(
+            "setup.html",
+            mode="import",
+            is_import=True,
+            init_native_file_id=native_file_id,
+            init_path=native_filename,
+        )
     except Exception as e:
         logger.error(f"Initiator processing error: {e}")
         flash(_('session.import_error', error=str(e)), "error")
@@ -1249,6 +1271,9 @@ def _process_responder_import(file_bytes, session_id):
         flash(_('session.x_finalize_success'), "success")
         flash(_('session.safety_unverified'), "warning")
         return redirect(url_for("main.session_detail", sid=updated_meta.session_id.hex()))
+    except HybridKEMError as e:
+        flash(_hybrid_error_message(e), "error")
+        return render_template("setup.html", mode="import", is_import=True)
     except Exception as e:
         flash(_('session.import_error', error=str(e)), "error")
         return render_template("setup.html", mode="import", is_import=True)
@@ -1701,6 +1726,9 @@ def session_export(sid: str):
         try:
             file_bytes = serialize_initiator_file(meta, identity_priv=identity.private_key)
             filename   = f"session_init_{sid[:8]}.paracci"
+        except HybridKEMError as e:
+            flash(_hybrid_error_message(e), "error")
+            return redirect(url_for("main.session_detail", sid=sid))
         except Exception as e:
             flash(_('session.create_error', error=str(e)), "error")
             return redirect(url_for("main.session_detail", sid=sid))
@@ -1717,8 +1745,12 @@ def session_export(sid: str):
                 x_identity_pub=meta.peer_identity_pub,
                 y_identity_pub=meta.my_identity_pub,
                 identity_priv=identity.private_key,
+                ml_kem_ciphertext=meta.ml_kem_ciphertext,
             )
             filename = f"session_resp_{sid[:8]}.paracci"
+        except HybridKEMError as e:
+            flash(_hybrid_error_message(e), "error")
+            return redirect(url_for("main.session_detail", sid=sid))
         except Exception as e:
             flash(_('session.create_error', error=str(e)), "error")
             return redirect(url_for("main.session_detail", sid=sid))

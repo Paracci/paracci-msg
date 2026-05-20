@@ -23,6 +23,10 @@
     "nav_aria": "Primary navigation",
     "argon_work_active": "Argon2id maximum actif..."
   },
+  "hybrid_kem_legacy_session": "Cette session a été créée avec une ancienne version de Paracci et ne bénéficie pas de la protection post-quantique. Demandez à votre contact de démarrer une nouvelle session.",
+  "hybrid_kem_init_failed": "La génération de clé post-quantique a échoué. Veuillez réessayer.",
+  "hybrid_kem_respond_failed": "L'encapsulation de clé post-quantique a échoué. Veuillez réessayer.",
+  "hybrid_kem_complete_failed": "La décapsulation de clé post-quantique a échoué. Veuillez réessayer.",
   "nav": {
     "sessions": "Sessions",
     "new": "Nouveau",

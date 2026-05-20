@@ -23,6 +23,10 @@
     "home_aria": "Paracci home",
     "argon_work_active": "Maximum Argon2id Active..."
   },
+  "hybrid_kem_legacy_session": "This session was created with an older version of Paracci and does not have post-quantum protection. Please ask your contact to start a new session.",
+  "hybrid_kem_init_failed": "Post-quantum key generation failed. Please try again.",
+  "hybrid_kem_respond_failed": "Post-quantum key encapsulation failed. Please try again.",
+  "hybrid_kem_complete_failed": "Post-quantum key decapsulation failed. Please try again.",
   "nav": {
     "sessions": "Sessions",
     "new": "New",
