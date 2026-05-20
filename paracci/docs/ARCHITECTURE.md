@@ -38,9 +38,11 @@ Coordinates platform-native system utilities:
 ### 5. Core Engine ([core/](paracci/core/))
 
 The cryptographic and logic core:
-- [crypto.py](paracci/core/crypto.py): Implements primitives including X25519 key exchange, HKDF-SHA512, ChaCha20-Poly1305 AEAD, and Argon2id.
+- [crypto.py](paracci/core/crypto.py): Implements primitives including X25519 key exchange, HKDF-SHA512, ChaCha20-Poly1305 AEAD, Argon2id, and the hybrid shared-secret combiner.
+- [quantum_kem.py](paracci/core/quantum_kem.py): Wraps ML-KEM-768 operations through `liboqs-python`.
+- [hybrid_kem.py](paracci/core/hybrid_kem.py): Coordinates ML-KEM setup, encapsulation, decapsulation, and validation for hybrid session handshakes.
 - [constants.py](paracci/core/constants.py): Frozen protocol-stable constants and identifiers used throughout the application to ensure backwards compatibility.
-- [session.py](paracci/core/session.py): Coordinates Handshake V2 steps, generates initiator/responder files containing authenticated public metadata, and derives session key seeds.
+- [session.py](paracci/core/session.py): Coordinates Handshake V3 hybrid X25519 + ML-KEM setup, generates initiator/responder files containing authenticated public metadata, and derives session key seeds.
 - [envelope.py](paracci/core/envelope.py): Packages encrypted message payloads and attachment ZIP archives.
 - [package.py](paracci/core/package.py): Manages in-memory ZIP extraction and safety limits (uncompressed size, entry count, compression ratio).
 - [burn.py](paracci/core/burn.py): Enforces database transaction-bound message burn registries and device key storage.

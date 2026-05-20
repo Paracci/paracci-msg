@@ -10,14 +10,32 @@ Contains frozen protocol-stable byte constants, labels, and HMAC keys. This laye
 
 Provides cryptographic primitives:
 - X25519 key pair generation and ECDH key exchange.
+- Hybrid X25519 + ML-KEM shared-secret combination through `derive_hybrid_shared_secret`.
 - HKDF-SHA512 and HKDF-SHA256 derivation.
 - ChaCha20-Poly1305 AEAD symmetric encryption.
 - Argon2id key-hardening implementation for user passphrases.
 - Message ID generation, cryptographic hashing, and process memory wipe/hygiene helpers.
 
+## [quantum_kem.py](paracci/core/quantum_kem.py)
+
+Wraps ML-KEM-768 operations behind a small API:
+- `kem_generate_keypair()`
+- `kem_encapsulate(public_key)`
+- `kem_decapsulate(secret_key, ciphertext)`
+
+This is the only core module that imports `liboqs-python`.
+
+## [hybrid_kem.py](paracci/core/hybrid_kem.py)
+
+Coordinates the post-quantum side of the session handshake:
+- Initiator ML-KEM key generation.
+- Responder encapsulation.
+- Initiator decapsulation.
+- Validation of v3 hybrid setup metadata and legacy-session rejection.
+
 ## [session.py](paracci/core/session.py)
 
-Coordinates the two-party session setup. Handshake files (initiator and responder setup files) carry authenticated public metadata. They are integrity-protected but **not confidential**, since the wrapping key is derivable from the public session ID in the file header. Session keys are derived and evolved deterministically.
+Coordinates the two-party v3 hybrid session setup. Handshake files (initiator and responder setup files) carry authenticated public metadata, including ML-KEM public data and ciphertext. They are integrity-protected but **not confidential**, since the wrapping key is derivable from the public session ID in the file header. Session keys are derived from the hybrid X25519 + ML-KEM shared secret and evolved deterministically.
 
 - Initiator and responder setup file creation.
 - Session bonding ceremonies.

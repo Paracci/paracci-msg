@@ -39,6 +39,7 @@ Think of it as a **locked envelope** that only the intended recipient can open, 
 ### Cryptographic Design
 
 - **Authenticated Key Exchange**: Session setup uses signed identity keypairs with safety-code confirmation. The setup files (initiator/responder) authenticate public metadata; they are integrity-protected but not confidential. Both parties must verify the safety code out-of-band before the session is active.
+- **Hybrid Post-Quantum Key Exchange**: Paracci uses a hybrid X25519 + ML-KEM-768 key exchange. Both classical and post-quantum secrets must be compromised to break the session key.
 - **Envelope Encryption**: Every message envelope is sealed with AEAD (ChaCha20-Poly1305) using session-derived keys. Message envelopes are fully encrypted and decryptable only by the intended recipient, protecting them against replay and tampering.
 - **Forward-Advancing Key Chain**: Session send/receive keys advance with each message step using an HKDF-based ratchet. Replaying an old envelope is rejected by the local registry and step counter.
 - **Single-Use Burn Tracking**: Every envelope carries a unique ID. Paracci atomically registers opens in a local SQLite database (`BurnDB`). An opened envelope cannot be opened again on this device. Copies on other devices or storage locations are not affected by this local registry.
@@ -58,7 +59,7 @@ Platform dispatching is handled dynamically by [device_key_binding.py](paracci/d
 
 Paracci does **not** implement a Double Ratchet or post-compromise recovery protocol. If a session's key material is compromised, past and future messages in that session may be at risk until the users establish a new session. For most offline file-exchange use cases this is an acceptable trade-off; users who require post-compromise recovery should establish new sessions periodically.
 
-Paracci does **not** claim post-quantum security. The higher-cost Argon2id profiles increase the cost of offline key-derivation attacks; they do not make the underlying X25519 key exchange quantum-resistant. Post-quantum hybrid KEM integration is planned for a future release.
+Paracci uses a hybrid X25519 + ML-KEM-768 key exchange. Both classical and post-quantum secrets must be compromised to break the session key. The higher-cost Argon2id profiles still serve as local key-hardening controls and should not be interpreted as a replacement for the hybrid exchange.
 
 ### Platform-Native Shields
 
@@ -74,6 +75,36 @@ These controls are best-effort and platform-dependent. See [SECURITY_SHIELDS.md]
 Paracci uses a Flask + pywebview architecture. The Flask server binds strictly to `127.0.0.1` on a randomly assigned loopback port and is protected by a per-launch bearer token, Origin/Host validation, CSRF protection, and strict session cookie flags. All privileged routes require the token. The pywebview window blocks all navigation to external URLs.
 
 This is a loopback web backend, not a native IPC channel. The threat model and its limitations are documented in [SECURITY_SHIELDS.md](paracci/docs/SECURITY_SHIELDS.md).
+
+---
+
+## Build Dependencies
+
+Paracci uses `liboqs-python` for the post-quantum KEM foundation. The Python wheel installs through the locked requirements file, but loading the wrapper may build or load the native `liboqs` shared library.
+
+Install these tools before running KEM tests or packaging builds:
+
+- Python 3.10 or newer.
+- Git.
+- CMake.
+- A C compiler. On Windows, use Visual Studio Build Tools/MSVC from a Developer PowerShell so CMake can discover the compiler.
+
+For a manual Windows `liboqs` install, build a shared library and export symbols:
+
+```powershell
+git clone --depth=1 https://github.com/open-quantum-safe/liboqs
+cmake -S liboqs -B liboqs\build -DCMAKE_INSTALL_PREFIX="<liboqs-install-prefix>" -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=TRUE -DBUILD_SHARED_LIBS=ON
+cmake --build liboqs\build --parallel 8
+cmake --build liboqs\build --target install
+```
+
+Then make the native library visible by adding the install prefix's `bin` directory to `PATH`, or set:
+
+```powershell
+$env:OQS_INSTALL_PATH = "<liboqs-install-prefix>"
+```
+
+If CMake cannot auto-detect MSVC, add `-G "Visual Studio 17 2022" -A x64` to the configure command.
 
 ---
 
