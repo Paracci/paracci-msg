@@ -20,6 +20,7 @@ CRITICAL_DEPS = {
     "Flask": "3.1.1",
     "argon2-cffi": "23.1.0",
     "cryptography": "44.0.1",
+    "liboqs-python": "0.15.0",
     "Pillow": "10.3.0",
     "pyotp": "2.9.0",
     "pywebview": "5.0.0",
