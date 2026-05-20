@@ -23,6 +23,10 @@
     "home_aria": "Paracci ana sayfa",
     "argon_work_active": "Maksimum Argon2id Devrede..."
   },
+  "hybrid_kem_legacy_session": "Bu oturum Paracci'nin daha eski bir sürümüyle oluşturulmuş ve kuantum sonrası korumaya sahip değil. Lütfen kişinizden yeni bir oturum başlatmasını isteyin.",
+  "hybrid_kem_init_failed": "Kuantum sonrası anahtar oluşturma başarısız oldu. Lütfen tekrar deneyin.",
+  "hybrid_kem_respond_failed": "Kuantum sonrası anahtar kapsülleme başarısız oldu. Lütfen tekrar deneyin.",
+  "hybrid_kem_complete_failed": "Kuantum sonrası anahtar kapsül açma başarısız oldu. Lütfen tekrar deneyin.",
   "nav": {
     "sessions": "Oturumlar",
     "new": "Yeni",

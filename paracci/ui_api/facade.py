@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from desktop.device_key_binding import DeviceBindingError
-from desktop.services import AttachmentPayload, NativeServices, OpenedMessage
+from desktop.services import AttachmentPayload, NativeServices, OpenedMessage, SessionServiceError
 
 
 OPEN_CACHE_TTL_SECONDS = 600
@@ -65,6 +65,11 @@ class UIApi:
         except DeviceBindingError as exc:
             message = self.services.i18n.translate(exc.i18n_key)
             raise UIApiError(exc.code, message) from exc
+        except SessionServiceError as exc:
+            message = str(exc)
+            if message.startswith("hybrid_kem_"):
+                raise UIApiError(message, self.services.i18n.translate(message)) from exc
+            raise UIApiError(exc.__class__.__name__, message) from exc
         except Exception as exc:
             raise UIApiError(exc.__class__.__name__, str(exc)) from exc
 

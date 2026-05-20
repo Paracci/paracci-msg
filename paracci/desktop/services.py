@@ -36,6 +36,8 @@ from core.package import Attachment, PackageLimitError, create_package, extract_
 from core.sanitizer import sanitize_image
 from core.security_utils import scan_text_for_security
 from core.session import (
+    FILE_VERSION,
+    HANDSHAKE_FILE_VERSION,
     TYPE_INITIATOR,
     TYPE_MESSAGE,
     TYPE_RESPONDER,
@@ -51,6 +53,7 @@ from core.session import (
     serialize_responder_file,
     serialize_session_meta,
 )
+from core.hybrid_kem import HybridKEMError
 from desktop.device_key_binding import (
     DeviceBindingWarning,
     consume_device_binding_warning,
@@ -281,11 +284,17 @@ def _validate_migrated_data(data_dir: Path) -> dict:
 
 def parse_file_header(file_bytes: bytes) -> dict | None:
     """Fast protocol header check used before expensive cryptographic work."""
-    if len(file_bytes) < 23 or file_bytes[:4] != b"PARC" or file_bytes[4] != 0x01:
+    if len(file_bytes) < 23 or file_bytes[:4] != b"PARC":
         return None
 
+    file_version = file_bytes[4]
     file_type = file_bytes[5]
     if file_type not in (TYPE_INITIATOR, TYPE_RESPONDER, TYPE_MESSAGE):
+        return None
+    if file_type == TYPE_MESSAGE:
+        if file_version != FILE_VERSION:
+            return None
+    elif file_version not in (FILE_VERSION, HANDSHAKE_FILE_VERSION):
         return None
 
     session_id = file_bytes[6:22]
@@ -490,14 +499,17 @@ class SessionService:
         custom_params: Optional[dict] = None,
     ) -> ImportResult:
         identity = self.device.identity()
-        meta, init_bytes = create_initiator_session(
-            label=label.strip(),
-            session_ttl_sec=session_ttl_sec,
-            profile=profile,
-            custom_params=custom_params,
-            identity_pub=identity.public_key,
-            identity_priv=identity.private_key,
-        )
+        try:
+            meta, init_bytes = create_initiator_session(
+                label=label.strip(),
+                session_ttl_sec=session_ttl_sec,
+                profile=profile,
+                custom_params=custom_params,
+                identity_pub=identity.public_key,
+                identity_priv=identity.private_key,
+            )
+        except HybridKEMError as exc:
+            raise SessionServiceError(exc.i18n_key) from exc
         self.save(meta)
         return self._import_result(
             meta,
@@ -516,12 +528,15 @@ class SessionService:
 
         if file_type == TYPE_INITIATOR:
             identity = self.device.identity()
-            meta, responder_bytes = accept_initiator_and_create_responder(
-                file_bytes,
-                local_label.strip(),
-                identity_pub=identity.public_key,
-                identity_priv=identity.private_key,
-            )
+            try:
+                meta, responder_bytes = accept_initiator_and_create_responder(
+                    file_bytes,
+                    local_label.strip(),
+                    identity_pub=identity.public_key,
+                    identity_priv=identity.private_key,
+                )
+            except HybridKEMError as exc:
+                raise SessionServiceError(exc.i18n_key) from exc
             self.save(meta)
             return self._import_result(
                 meta,
@@ -534,7 +549,10 @@ class SessionService:
             meta = self.load(session_id_hex)
             if meta.role != "X":
                 raise SessionServiceError("Responder files can only finalize X sessions.")
-            updated = finalize_initiator_session(meta, file_bytes)
+            try:
+                updated = finalize_initiator_session(meta, file_bytes)
+            except HybridKEMError as exc:
+                raise SessionServiceError(exc.i18n_key) from exc
             self.save(updated)
             return self._import_result(updated, "Initiator session finalized.")
 
@@ -544,25 +562,32 @@ class SessionService:
         meta = self.load(session_id_hex)
         identity = self.device.identity()
         if meta.role == "X" and meta.state == "pending":
-            return (
-                serialize_initiator_file(meta, identity_priv=identity.private_key),
-                f"session_init_{session_id_hex[:8]}.paracci",
-            )
+            try:
+                return (
+                    serialize_initiator_file(meta, identity_priv=identity.private_key),
+                    f"session_init_{session_id_hex[:8]}.paracci",
+                )
+            except HybridKEMError as exc:
+                raise SessionServiceError(exc.i18n_key) from exc
         if meta.role == "Y":
-            return (
-                serialize_responder_file(
-                    session_id=meta.session_id,
-                    y_pub=meta.my_pub,
-                    evo_config=meta.evo_config,
-                    label=meta.label,
-                    y_qseed=meta.my_qseed,
-                    x_pub=meta.peer_pub,
-                    x_identity_pub=meta.peer_identity_pub,
-                    y_identity_pub=meta.my_identity_pub,
-                    identity_priv=identity.private_key,
-                ),
-                f"session_resp_{session_id_hex[:8]}.paracci",
-            )
+            try:
+                return (
+                    serialize_responder_file(
+                        session_id=meta.session_id,
+                        y_pub=meta.my_pub,
+                        evo_config=meta.evo_config,
+                        label=meta.label,
+                        y_qseed=meta.my_qseed,
+                        x_pub=meta.peer_pub,
+                        x_identity_pub=meta.peer_identity_pub,
+                        y_identity_pub=meta.my_identity_pub,
+                        identity_priv=identity.private_key,
+                        ml_kem_ciphertext=meta.ml_kem_ciphertext,
+                    ),
+                    f"session_resp_{session_id_hex[:8]}.paracci",
+                )
+            except HybridKEMError as exc:
+                raise SessionServiceError(exc.i18n_key) from exc
         raise SessionServiceError("No handshake export is available for this session.")
 
     def safety_code(self, meta: SessionMeta) -> str | None:
