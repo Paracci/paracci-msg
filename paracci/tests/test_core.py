@@ -10,6 +10,10 @@ import time
 import tempfile
 from pathlib import Path
 
+import pytest
+
+from conftest import oqs_required
+
 # Add project root to sys.path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -253,6 +257,7 @@ run_test("Expired session must not produce evolution step", test_evo_expired)
 print("\n-- session.py --------------------------------------")
 
 
+@oqs_required
 def test_full_session_handshake():
     """X -> Y -> X full handshake."""
     # X creates session
@@ -287,6 +292,7 @@ def test_full_session_handshake():
 run_test("Full session handshake (X -> Y -> X)", test_full_session_handshake)
 
 
+@oqs_required
 def test_session_serialize():
     meta_x, init_file = create_initiator_session("Test")
     meta_y, resp_file = accept_initiator_and_create_responder(init_file, "Test")
@@ -316,6 +322,7 @@ def _make_sessions():
     return confirm_pair(meta_x2, meta_y)
 
 
+@oqs_required
 def test_x_sends_y_receives():
     meta_x, meta_y = _make_sessions()
     text = "Hello Y, this is a secret message."
@@ -341,6 +348,7 @@ def test_x_sends_y_receives():
 run_test("X -> Y message send and open", test_x_sends_y_receives)
 
 
+@oqs_required
 def test_y_sends_x_receives():
     meta_x, meta_y = _make_sessions()
     
@@ -376,6 +384,7 @@ def test_y_sends_x_receives():
 run_test("Y -> X message send and open", test_y_sends_x_receives)
 
 
+@oqs_required
 def test_x_cannot_open_own_message():
     meta_x, meta_y = _make_sessions()
     sealed = seal_envelope("my own message", meta_x)
@@ -388,6 +397,7 @@ def test_x_cannot_open_own_message():
 run_test("X must not open its own message", test_x_cannot_open_own_message)
 
 
+@oqs_required
 def test_y_cannot_open_own_message():
     meta_x, meta_y = _make_sessions()
     # X sends first msg so Y bonds
@@ -406,6 +416,7 @@ def test_y_cannot_open_own_message():
 run_test("Y must not open its own message", test_y_cannot_open_own_message)
 
 
+@oqs_required
 def test_tampered_file_rejected():
     meta_x, meta_y = _make_sessions()
     sealed = seal_envelope("message", meta_x)
@@ -420,6 +431,7 @@ def test_tampered_file_rejected():
 run_test("Tampered file must be rejected", test_tampered_file_rejected)
 
 
+@oqs_required
 def test_tampered_authenticity_seal_rejected():
     meta_x, meta_y = _make_sessions()
     sealed = seal_envelope("message", meta_x)
@@ -434,6 +446,7 @@ def test_tampered_authenticity_seal_rejected():
 run_test("Tampered authenticity seal must be rejected", test_tampered_authenticity_seal_rejected)
 
 
+@oqs_required
 def test_ttl_expired_message():
     meta_x, meta_y = _make_sessions()
     # TTL: 1 sec, simulate expired
@@ -455,6 +468,7 @@ def test_ttl_expired_message():
 run_test("Expired message must not be opened", test_ttl_expired_message)
 
 
+@oqs_required
 def test_wrong_session_rejected():
     meta_x1, meta_y1 = _make_sessions()
     meta_x2, meta_y2 = _make_sessions()
@@ -557,6 +571,7 @@ def test_device_key_persistence():
 run_test("Device key persistence (PIN init -> unlock)", test_device_key_persistence)
 
 
+@oqs_required
 def test_session_db_roundtrip():
     with tempfile.TemporaryDirectory() as tmpdir:
         db = BurnDB(os.path.join(tmpdir, "test.db"))
@@ -591,6 +606,7 @@ run_test("Session DB save / load", test_session_db_roundtrip)
 print("\n-- Full Integration ---------------------------------")
 
 
+@oqs_required
 def test_full_conversation():
     """Two sides full conversation scenario."""
     meta_x, init_file = create_initiator_session(

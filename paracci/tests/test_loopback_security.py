@@ -4,6 +4,9 @@ import time
 from pathlib import Path
 
 import pyotp
+import pytest
+
+from conftest import oqs_required
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -406,6 +409,7 @@ def _make_unverified_handshake():
     return meta_x, meta_y, get_session_safety_code(meta_x)
 
 
+@oqs_required
 def test_flask_seal_rejects_unconfirmed_safety_code(tmp_path, monkeypatch):
     ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
     client = flask_app.test_client()
@@ -427,6 +431,7 @@ def test_flask_seal_rejects_unconfirmed_safety_code(tmp_path, monkeypatch):
     assert restored.state == "unverified"
 
 
+@oqs_required
 def test_flask_safety_confirmation_route_rejects_wrong_and_accepts_correct_code(tmp_path, monkeypatch):
     ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
     client = flask_app.test_client()

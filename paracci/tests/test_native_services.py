@@ -2,6 +2,9 @@ import json
 import os
 import sys
 from pathlib import Path
+import pytest
+
+from conftest import oqs_required
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -18,6 +21,7 @@ def make_services(path: Path) -> NativeServices:
     return svc
 
 
+@oqs_required
 def test_native_services_full_message_roundtrip(tmp_path):
     x = make_services(tmp_path / "x")
     y = make_services(tmp_path / "y")

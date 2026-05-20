@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from conftest import oqs_required
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core import session as session_module
@@ -78,6 +80,7 @@ def _tamper_and_reencrypt(file_bytes: bytes, purpose: bytes, mutator) -> bytes:
     return header + sealed.nonce + sealed.ciphertext
 
 
+@oqs_required
 def test_signed_handshake_requires_safety_confirmation_before_messages():
     meta_x, meta_y, _init_file, _resp_file = _handshake()
 
@@ -104,6 +107,7 @@ def test_signed_handshake_requires_safety_confirmation_before_messages():
     assert opened.payload == b"hello"
 
 
+@oqs_required
 def test_modified_initiator_payload_is_rejected_after_reencrypt():
     _meta_x, _meta_y, init_file, _resp_file = _handshake()
     y_identity_priv, y_identity_pub = _identity()
@@ -122,6 +126,7 @@ def test_modified_initiator_payload_is_rejected_after_reencrypt():
         )
 
 
+@oqs_required
 def test_modified_responder_payload_is_rejected_after_reencrypt():
     meta_x, _meta_y, _init_file, resp_file = _handshake()
     tampered = _tamper_and_reencrypt(
@@ -149,7 +154,11 @@ def test_unsigned_legacy_initiator_file_is_rejected():
         "username": "legacy",
         "created_at": 1,
     }
-    header = session_module._build_file_header(session_module.TYPE_INITIATOR, session_id)
+    header = session_module._build_file_header(
+        session_module.TYPE_INITIATOR,
+        session_id,
+        file_version=session_module.FILE_VERSION,
+    )
     fkey = session_module._file_encryption_key(session_id, b"initiator")
     blob = encrypt(fkey, json.dumps(payload, separators=(",", ":")).encode("utf-8"), aad=header)
     legacy_file = header + blob.nonce + blob.ciphertext
@@ -164,6 +173,7 @@ def test_unsigned_legacy_initiator_file_is_rejected():
         )
 
 
+@oqs_required
 def test_safety_confirmation_rejects_wrong_code():
     meta_x, _meta_y, _init_file, _resp_file = _handshake()
 
@@ -183,6 +193,7 @@ def test_identity_keypair_persists_encrypted_in_device_metadata(tmp_path):
     assert first.private_key not in db.get_device_meta("identity_ed25519_v1")
 
 
+@oqs_required
 def test_legacy_session_metadata_deserializes_as_unverified():
     meta_x, _meta_y, _init_file, _resp_file = _confirmed_handshake()
     device_key = random_bytes(32)

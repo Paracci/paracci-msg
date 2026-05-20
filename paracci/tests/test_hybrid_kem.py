@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pytest
 
+from conftest import oqs_required
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core import constants, hybrid_kem
@@ -28,6 +30,7 @@ def test_hybrid_domain_constant_is_frozen():
     assert constants.HYBRID_KEM_DOMAIN == b"paracci.hybrid.kem.v1"
 
 
+@oqs_required
 def test_derive_hybrid_shared_secret_both_parties_match():
     x_private, x_public = generate_keypair()
     y_private, y_public = generate_keypair()
@@ -85,6 +88,7 @@ def test_derive_hybrid_shared_secret_changes_when_inputs_change():
     assert changed_session_id != baseline
 
 
+@oqs_required
 def test_hybrid_kem_round_trip():
     setup = initiator_kem_setup()
 
