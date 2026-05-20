@@ -27,7 +27,7 @@ Platform routing and fallbacks are coordinated by [device_key_binding.py](paracc
 ## Key Hardening (Argon2id)
 
 Passphrases are processed using Argon2id key derivation. Users can select from standard, paranoid, high, and maximum workload profiles. These configurations increase the CPU and RAM cost of offline key-derivation computations, significantly slowing down offline brute-force attempts.
-- **Post-Quantum Security**: Key hardening does not provide post-quantum security. While it makes brute-force attacks more resource-intensive, the underlying session key exchange (X25519) remains vulnerable to future quantum computers. Post-quantum hybrid KEM integration is planned for a future release.
+- **Post-Quantum Security**: Paracci uses a hybrid X25519 + ML-KEM-768 key exchange. Both classical and post-quantum secrets must be compromised to break the session key. Argon2id key hardening remains a separate local storage protection layer.
 
 ---
 
