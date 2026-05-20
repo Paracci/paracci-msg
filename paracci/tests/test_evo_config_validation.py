@@ -1,9 +1,12 @@
+import base64
 import json
 import struct
 import sys
 from pathlib import Path
 
 import pytest
+
+from conftest import oqs_required
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -70,6 +73,8 @@ def _signed_initiator_file(evo_config_hex: str) -> bytes:
         "x_pub": x_pub.hex(),
         "x_identity_pub": identity_pub.hex(),
         "x_qseed": random_bytes(128).hex(),
+        "ml_kem_algorithm": session_module.KEM_ALGORITHM,
+        "ml_kem_public_key": base64.b64encode(random_bytes(1184)).decode("ascii"),
         "evo_config": evo_config_hex,
         "label": "malicious",
         "username": "attacker",
@@ -156,6 +161,7 @@ def test_evolution_steps_are_bounded():
         compute_keys_at_step(random_bytes(32), MAX_EVO_STEP + 1)
 
 
+@oqs_required
 def test_signed_malicious_initiator_rejects_evo_config_before_argon2(monkeypatch):
     malicious_file = _signed_initiator_file(_malicious_evo_config_hex())
     y_identity_priv, y_identity_pub = _identity()
@@ -174,6 +180,7 @@ def test_signed_malicious_initiator_rejects_evo_config_before_argon2(monkeypatch
         )
 
 
+@oqs_required
 def test_persisted_session_metadata_rejects_malicious_evo_config():
     identity_priv, identity_pub = _identity()
     meta, _init_file = create_initiator_session(

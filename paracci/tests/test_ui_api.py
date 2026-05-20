@@ -4,6 +4,9 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+import pytest
+
+from conftest import oqs_required
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -43,6 +46,7 @@ def test_ui_api_device_settings_and_profile(tmp_path):
     assert profile["settings"]["username"] == "Paracci Operator"
 
 
+@oqs_required
 def test_ui_api_session_roundtrip_and_attachment_cache(tmp_path):
     x = make_api(tmp_path / "x")
     y = make_api(tmp_path / "y")

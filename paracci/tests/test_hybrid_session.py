@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from conftest import oqs_required
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core import session as session_module
@@ -116,6 +118,7 @@ def _decrypt_session_row(db: BurnDB, device_key: bytes, session_id: bytes) -> di
     return json.loads(decrypt(device_key, blob, aad=b"paracci.db.session.v2").decode("utf-8"))
 
 
+@oqs_required
 def test_full_v3_hybrid_handshake_roundtrip():
     _pending_x, meta_x, meta_y, init_file, resp_file = _handshake()
 
@@ -146,6 +149,7 @@ def test_v1_and_v2_initiator_files_are_rejected_with_legacy_i18n_key():
         assert exc_info.value.i18n_key == "hybrid_kem_legacy_session"
 
 
+@oqs_required
 def test_v3_initiator_missing_ml_kem_public_key_raises_hybrid_error():
     x_identity_priv, x_identity_pub = _identity()
     y_identity_priv, y_identity_pub = _identity()
@@ -171,6 +175,7 @@ def test_v3_initiator_missing_ml_kem_public_key_raises_hybrid_error():
     assert exc_info.value.i18n_key == "hybrid_kem_respond_failed"
 
 
+@oqs_required
 def test_ml_kem_secret_key_is_absent_from_database_after_bond_completes(tmp_path):
     db = BurnDB(tmp_path / "sessions.db")
     device_key = random_bytes(32)
