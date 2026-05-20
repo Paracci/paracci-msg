@@ -632,14 +632,16 @@ total   = len(results)
 passed  = sum(1 for _, ok, _ in results if ok)
 failed  = total - passed
 
-print(f"\n{'='*50}")
-print(f"  Total: {total}  |  Passed: {passed}  |  Failed: {failed}")
-if failed:
-    print("\n  Failed tests:")
-    for name, ok, err in results:
-        if not ok:
-            print(f"    {FAIL} {name}: {err}")
-print(f"{'='*50}\n")
+if __name__ == "__main__":
+    print(f"\n{'='*50}")
+    print(f"  Total: {total}  |  Passed: {passed}  |  Failed: {failed}")
+    if failed:
+        print("\n  Failed tests:")
+        for name, ok, err in results:
+            if not ok:
+                print(f"    {FAIL} {name}: {err}")
+    print(f"{'='*50}\n")
 
-if failed:
-    sys.exit(1)
+    if failed:
+        sys.exit(1)
+
