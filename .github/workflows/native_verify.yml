@@ -28,21 +28,18 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install liboqs build dependencies (Linux)
+      - name: Install cmake and ninja
+        uses: lukka/get-cmake@latest
+
+      - name: Install OpenSSL headers (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build libssl-dev gcc
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev gcc
 
-      - name: Install liboqs build dependencies (macOS)
+      - name: Install OpenSSL headers (macOS)
         if: runner.os == 'macOS'
-        run: brew install cmake ninja openssl
+        run: brew install openssl
 
-      - name: Install liboqs build dependencies (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
-          choco install ninja -y
-
-      - name: Build liboqs native library
+      - name: Build and install liboqs C library
         shell: bash
         run: |
           git clone --branch 0.15.0 --depth 1 https://github.com/open-quantum-safe/liboqs.git
@@ -52,7 +49,9 @@ jobs:
           fi
           cmake -S liboqs -B liboqs/build \
             -DBUILD_SHARED_LIBS=ON \
+            -DCMAKE_BUILD_TYPE=Release \
             -DOQS_BUILD_ONLY_LIB=ON \
+            -DOQS_DIST_BUILD=ON \
             -DCMAKE_INSTALL_PREFIX="${{ runner.temp }}/_oqs" \
             $cmake_extra_flags
           cmake --build liboqs/build --parallel 4
