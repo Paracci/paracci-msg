@@ -22,6 +22,7 @@ from argon2.low_level import hash_secret_raw, Type as LowLevelArgon2Type
 
 from .constants import (
     DOMAIN_SESSION_MASTER_V3,
+    HYBRID_KEM_DOMAIN,
     LABEL_EVO_SEED_V3,
     LABEL_EVO_STEP_V3,
     LABEL_MSG_XY_V3,
@@ -282,6 +283,38 @@ def hkdf_derive(
         info=info,
     )
     return hkdf.derive(input_key_material)
+
+
+def derive_hybrid_shared_secret(
+    x25519_shared: bytes,
+    ml_kem_shared: bytes,
+    session_id: bytes,
+) -> bytes:
+    """
+    Combines X25519 and ML-KEM shared secrets into one 64-byte hybrid secret.
+
+    HKDF-SHA512 uses session_id as a public per-session salt and
+    HYBRID_KEM_DOMAIN as the protocol domain label.
+    """
+    if not isinstance(x25519_shared, bytes):
+        raise ValueError("X25519 shared secret must be bytes.")
+    if len(x25519_shared) != 32:
+        raise ValueError("X25519 shared secret must be 32 bytes.")
+    if not isinstance(ml_kem_shared, bytes):
+        raise ValueError("ML-KEM shared secret must be bytes.")
+    if len(ml_kem_shared) != 32:
+        raise ValueError("ML-KEM shared secret must be 32 bytes.")
+    if not isinstance(session_id, bytes):
+        raise ValueError("Session ID must be bytes.")
+    if len(session_id) != 16:
+        raise ValueError("Session ID must be 16 bytes.")
+
+    return hkdf_derive(
+        x25519_shared + ml_kem_shared,
+        length=64,
+        info=HYBRID_KEM_DOMAIN,
+        salt=session_id,
+    )
 
 
 def derive_session_keys(
