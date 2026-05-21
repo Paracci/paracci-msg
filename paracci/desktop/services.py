@@ -29,15 +29,23 @@ from core.burn import (
 )
 from core.config import ParacciConfig
 from core.crypto import EncryptedBlob, decrypt, encrypt, wipe
-from core.envelope import EnvelopeError, EnvelopeTTLError, open_envelope, seal_envelope
+from core.envelope import (
+    FILE_VERSION as ENVELOPE_FILE_VERSION,
+    LEGACY_FILE_VERSION as LEGACY_ENVELOPE_FILE_VERSION,
+    EnvelopeError,
+    EnvelopeTTLError,
+    open_envelope,
+    seal_envelope,
+)
 from core.evolution import EVO_UNLIMITED, seconds_until_expiry, session_expires_at
 from core.identity import get_or_create_device_identity
 from core.package import Attachment, PackageLimitError, create_package, extract_package
-from core.sanitizer import sanitize_image
+from core.sanitizer import SanitizationError, sanitize_image
 from core.security_utils import scan_text_for_security
 from core.session import (
     FILE_VERSION,
     HANDSHAKE_FILE_VERSION,
+    LEGACY_WRAPPED_HANDSHAKE_FILE_VERSION,
     TYPE_INITIATOR,
     TYPE_MESSAGE,
     TYPE_RESPONDER,
@@ -292,9 +300,9 @@ def parse_file_header(file_bytes: bytes) -> dict | None:
     if file_type not in (TYPE_INITIATOR, TYPE_RESPONDER, TYPE_MESSAGE):
         return None
     if file_type == TYPE_MESSAGE:
-        if file_version != FILE_VERSION:
+        if file_version not in (LEGACY_ENVELOPE_FILE_VERSION, ENVELOPE_FILE_VERSION):
             return None
-    elif file_version not in (FILE_VERSION, HANDSHAKE_FILE_VERSION):
+    elif file_version not in (FILE_VERSION, LEGACY_WRAPPED_HANDSHAKE_FILE_VERSION, HANDSHAKE_FILE_VERSION):
         return None
 
     session_id = file_bytes[6:22]
@@ -732,7 +740,11 @@ class MessageService:
                 raise MessageServiceError(
                     f"Total attachment size exceeds {MAX_ATTACHMENT_SIZE // (1024 * 1024)}MB."
                 )
-            files.append((p.name, sanitize_image(content, p.name)))
+            try:
+                content = sanitize_image(content, p.name)
+            except SanitizationError as exc:
+                raise MessageServiceError(SanitizationError.user_message) from exc
+            files.append((p.name, content))
         return files
 
 

@@ -397,3 +397,32 @@
     gap: var(--space-2);
   }
 }
+
+/* ─── :user-invalid deferred validation ─────────────────────────────────────
+   :user-invalid only fires AFTER the user has interacted with the field and
+   moved away — never on the first keystroke. This is the standard CSS layer
+   that mirrors the JS __hasTouched blur-gate in auth.js.
+─────────────────────────────────────────────────────────────────────────── */
+
+/* Revealed passphrase input: red border on :user-invalid */
+.hidden-input.revealed-input:user-invalid {
+  border-color: var(--state-error-border);
+  box-shadow: 0 0 0 3px var(--state-error-soft);
+}
+
+/* Strength container shakes when the hidden input is :user-invalid
+   (selector walks up to the containing .form-group) */
+.form-group:has(#pinInput:user-invalid) .pin-strength-container {
+  animation: shake 180ms var(--ease) both;
+}
+
+/* Checklist items: mark remaining unmet requirements red after blur */
+.form-group:has(#pinInput:user-invalid) .strength-checklist li:not(.valid) {
+  color: var(--state-error);
+  opacity: 1;
+}
+
+/* Progress bar: immediately show error colour on :user-invalid */
+.form-group:has(#pinInput:user-invalid) .progress-fill:not(.strength-medium):not(.strength-strong) {
+  background: var(--state-error) !important;
+}

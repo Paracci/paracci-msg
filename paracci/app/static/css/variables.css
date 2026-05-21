@@ -117,3 +117,53 @@
   --text-success: var(--text-primary);
   --text-warning: var(--text-primary);
 }
+
+/* ─── View Transitions API ──────────────────────────────────────────────────
+   Activates the W3C View Transitions on same-origin navigations.
+   The sidebar and toolbar carry named transition slots so the browser can
+   morph them independently; everything else cross-fades through the default
+   ::view-transition pseudo-element pair.
+─────────────────────────────────────────────────────────────────────────── */
+@view-transition {
+  navigation: auto;
+}
+
+/* Default cross-fade for the workspace main content (old → new) */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 120ms;
+  animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Sidebar stays in place — only animate opacity so it appears persistent */
+::view-transition-old(app-sidebar),
+::view-transition-new(app-sidebar) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+/* Workspace content slides in subtly from below */
+::view-transition-old(app-workspace) {
+  animation: vt-workspace-out 120ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+::view-transition-new(app-workspace) {
+  animation: vt-workspace-in 120ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes vt-workspace-out {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(-4px); }
+}
+
+@keyframes vt-workspace-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Toolbar stays put — suppress its animation */
+::view-transition-old(workspace-toolbar),
+::view-transition-new(workspace-toolbar) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+

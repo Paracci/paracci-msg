@@ -25,6 +25,9 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css', v=range(1, 99999) | random) }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/components.css', v=range(1, 99999) | random) }}">
 
+  <!-- View Transitions API: smooth same-origin page navigation (no flash) -->
+  <meta name="view-transition" content="same-origin">
+  <script src="{{ url_for('static', filename='js/early.js') }}"></script>
 
   {% block extra_head %}{% endblock %}
 
@@ -116,8 +119,12 @@
 
   <div id="argonWorkOverlay" class="argon-overlay" aria-live="polite" aria-hidden="true">
     <div class="argon-panel">
-      <div class="spinner spinner-lg" aria-hidden="true"></div>
-      <div class="argon-text">{{ _('base.argon_work_active') }}</div>
+      <h3 id="argonWorkText" class="argon-text">{{ _('base.argon_work_active') }}</h3>
+      <div class="progress-bar-container">
+        <div id="argonWorkProgress" class="progress-bar-fill" style="width: 0%;"></div>
+      </div>
+      <div id="argonWorkPercent" class="progress-percent">0%</div>
+      <p id="argonWorkSubtext" class="argon-subtext"></p>
     </div>
   </div>
 
@@ -154,7 +161,7 @@
 
   {% if not auth_shell %}
   <div class="desktop-shell">
-    <aside class="app-sidebar" aria-label="{{ _('base.nav_aria') }}">
+    <aside class="app-sidebar" aria-label="{{ _('base.nav_aria') }}" style="view-transition-name: app-sidebar">
       <div class="sidebar-brand">
         <a href="{{ url_for('main.index') }}" class="brand-lockup" aria-label="{{ _('base.home_aria') }}">
           <span class="brand-mark" aria-hidden="true">P</span>
@@ -214,7 +221,7 @@
 
       <div class="sidebar-footer">
         <a href="{{ url_for('main.profile') }}" class="sidebar-profile">
-          <span class="profile-avatar" style="--avatar-bg: {{ user_profile.avatar_color }};">
+          <span class="profile-avatar" data-avatar-color="{{ user_profile.avatar_color }}">
             {{ user_profile.username[0] | upper }}
           </span>
           <span class="sidebar-profile-text">
@@ -227,8 +234,8 @@
         <div class="sidebar-utility-row">
           <a href="{{ url_for('main.armor_report') }}" class="footer-link">{{ _('nav.armor_report') }}</a>
           <div class="lang-switcher">
-            <button type="button" class="lang-btn">{{ g.locale | upper }}</button>
-            <div class="lang-dropdown">
+            <button type="button" class="lang-btn" popovertarget="lang-switcher-dropdown">{{ g.locale | upper }}</button>
+            <div class="lang-dropdown" id="lang-switcher-dropdown" popover="auto">
               <form method="POST" action="{{ url_for('main.set_locale', lang='tr') }}" class="lang-form">
                 <input type="hidden" name="next" value="{{ locale_next }}">
                 <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
@@ -266,8 +273,8 @@
       </div>
     </aside>
 
-    <section class="workspace">
-      <header class="workspace-toolbar">
+    <section class="workspace" style="view-transition-name: app-workspace">
+      <header class="workspace-toolbar" style="view-transition-name: workspace-toolbar">
         <div class="toolbar-title">
           <span class="toolbar-kicker">{{ _('base.brand') }}</span>
           <strong>{{ _('base.title_bar') }}</strong>

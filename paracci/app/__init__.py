@@ -5,6 +5,7 @@ Flask application factory.
 
 import os
 import sys
+import datetime
 from pathlib import Path
 from flask import Flask
 from .i18n_manager import i18n
@@ -89,9 +90,11 @@ def create_app() -> Flask:
         TRUSTED_HOSTS=[f"{loopback_host}:{loopback_port}"],
         SESSION_COOKIE_NAME="paracci_session",
         SESSION_COOKIE_HTTPONLY=True,
-        SESSION_COOKIE_SAMESITE="Strict",
+        SESSION_COOKIE_SAMESITE="Lax",
         SESSION_COOKIE_SECURE=False,
         SESSION_REFRESH_EACH_REQUEST=False,
+        SESSION_PERMANENT=True,
+        PERMANENT_SESSION_LIFETIME=datetime.timedelta(days=1),
     )
 
     # Persistent secret key for Flask session
@@ -113,5 +116,16 @@ def create_app() -> Flask:
 
     # Initialize i18n
     i18n.init_app(app)
+
+    # Prevent session cookie from being saved/updated on preview routes
+    original_save_session = app.session_interface.save_session
+
+    def custom_save_session(*args, **kwargs):
+        from flask import request
+        if request.endpoint in {"main.preview", "main.preview_content", "main.preview_download"}:
+            return
+        return original_save_session(*args, **kwargs)
+
+    app.session_interface.save_session = custom_save_session
 
     return app

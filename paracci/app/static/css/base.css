@@ -83,11 +83,7 @@ textarea {
   min-height: 0;
   padding: var(--space-5) var(--space-4);
   border-right: 1px solid var(--border-subtle);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.01)),
-    var(--material-sidebar);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
+  background: #0d0e12; /* Solid opaque color to prevent rendering flashes on page load */
   transition: padding var(--duration-md) var(--ease);
 }
 
@@ -690,12 +686,10 @@ textarea {
   background: var(--interactive-hover);
 }
 
-.lang-dropdown {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 10px);
+.lang-dropdown[popover] {
+  position: fixed;
   min-width: 160px;
-  display: flex;
+  display: none;
   flex-direction: column;
   gap: 2px;
   padding: var(--space-2);
@@ -705,17 +699,24 @@ textarea {
   box-shadow: var(--shadow-lg);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
+  margin: 0;
+  overflow: visible;
   opacity: 0;
-  pointer-events: none;
   transform: translateY(6px);
-  transition: opacity var(--duration-sm) var(--ease), transform var(--duration-sm) var(--ease);
-  z-index: 30;
+  transition: opacity var(--duration-sm) var(--ease), transform var(--duration-sm) var(--ease), display var(--duration-sm) var(--ease) allow-discrete;
 }
 
-.lang-switcher.open .lang-dropdown {
+.lang-dropdown:popover-open {
+  display: flex;
   opacity: 1;
-  pointer-events: auto;
   transform: translateY(0);
+}
+
+@starting-style {
+  .lang-dropdown:popover-open {
+    opacity: 0;
+    transform: translateY(6px);
+  }
 }
 
 .lang-link {
@@ -857,11 +858,56 @@ textarea {
 }
 
 .argon-text {
-  margin-top: var(--space-4);
+  margin: 0;
   color: var(--text-primary);
   font-family: var(--font-mono);
   font-size: var(--text-body-sm);
   text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.progress-bar-container {
+  width: 100%;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-full, 9999px);
+  overflow: hidden;
+  margin: var(--space-5) 0 var(--space-3);
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #30d158, #0a84ff, #5e5ce6);
+  background-size: 200% auto;
+  border-radius: var(--radius-full, 9999px);
+  width: 0%;
+  transition: width 0.2s cubic-bezier(0.1, 0.8, 0.3, 1);
+  animation: gradientShift 3s linear infinite;
+  box-shadow: 0 0 12px rgba(10, 132, 255, 0.5);
+}
+
+@keyframes gradientShift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.progress-percent {
+  font-family: var(--font-mono);
+  font-size: var(--text-body-lg, 1.1rem);
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: var(--space-2);
+}
+
+.argon-subtext {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  margin: 0;
+  min-height: 32px;
 }
 
 .mono,
@@ -1014,10 +1060,12 @@ textarea {
 @media (max-width: 900px) {
   .desktop-shell {
     grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
   }
 
   body.sidebar-collapsed .desktop-shell {
     grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
   }
 
   .app-sidebar {
@@ -1121,4 +1169,25 @@ textarea {
   .page-header-main {
     align-items: flex-start;
   }
+}
+
+/* ─── Predefined Avatar CSS Color Mappings ──────────────────────────────────
+   Prevents CSP violations by avoiding inline style="--avatar-bg: ..." rules.
+─────────────────────────────────────────────────────────────────────────── */
+[data-avatar-color="#0a84ff"] { --avatar-bg: #0a84ff; color: #ffffff !important; }
+[data-avatar-color="#5e9cff"] { --avatar-bg: #5e9cff; color: var(--bg-base) !important; }
+[data-avatar-color="#f5f5f7"] { --avatar-bg: #f5f5f7; color: var(--bg-base) !important; }
+[data-avatar-color="#8e8e93"] { --avatar-bg: #8e8e93; color: #ffffff !important; }
+[data-avatar-color="#636366"] { --avatar-bg: #636366; color: #ffffff !important; }
+[data-avatar-color="#3a3a3c"] { --avatar-bg: #3a3a3c; color: #ffffff !important; }
+[data-avatar-color="#1c1c1e"] { --avatar-bg: #1c1c1e; color: #ffffff !important; }
+[data-avatar-color="#000000"] { --avatar-bg: #000000; color: #ffffff !important; }
+
+.profile-avatar {
+  background-color: var(--avatar-bg, var(--accent-primary)) !important;
+}
+
+.avatar-huge {
+  background-color: var(--avatar-bg);
+  border-color: var(--avatar-bg) !important;
 }

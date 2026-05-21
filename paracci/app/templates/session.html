@@ -145,8 +145,13 @@
       <p class="text-dim leading-relaxed font-sm">{{ _('session.safety_code_desc') }}</p>
       <div class="safety-code-value my-5">{{ safety_code }}</div>
       <form action="{{ url_for('main.session_confirm_safety', sid=sid) }}" method="POST" class="safety-confirm-form">
-        <label for="safety_code">{{ _('session.safety_code_input_label') }}</label>
-        <input type="text" id="safety_code" name="safety_code" autocomplete="off" required placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX">
+        <input type="hidden" name="safety_code" value="{{ safety_code }}">
+        <div class="form-group mb-4">
+          <label class="checkbox-label">
+            <input type="checkbox" id="safety_confirm_check" required>
+            <span>{{ _('session.safety_code_input_label') }}</span>
+          </label>
+        </div>
         <button type="submit" class="btn btn-primary">{{ _('session.safety_code_confirm_btn') }}</button>
       </form>
       {% if meta.role == 'Y' %}
@@ -172,8 +177,8 @@
 
 <!-- ── SECURITY CHECKLIST ────────────────────────────────── -->
 {% if meta.is_bonded %}
-<div class="collapsible-card mb-5">
-  <button type="button" class="collapsible-trigger" id="checklist-toggle">
+<details class="collapsible-card mb-5">
+  <summary class="collapsible-trigger">
     <span class="flex items-center gap-2">
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="18" height="18">
         <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -183,7 +188,7 @@
     <svg id="checklist-chevron" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="16" height="16" class="chevron">
       <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
     </svg>
-  </button>
+  </summary>
   <div id="checklist-content" class="collapsible-content">
     <div class="p-4 pt-0">
       <ul class="checklist">
@@ -199,7 +204,7 @@
       <p class="mt-3 font-xs text-muted italic">{{ _('session.checklist_hint') }}</p>
     </div>
   </div>
-</div>
+</details>
 {% endif %}
 
 <!-- ── DYNAMIC ERROR CONTAINER ───────────────────────────── -->
@@ -239,6 +244,17 @@
       </div>
     </div>
     <div class="card-body">
+      {% if meta.role == 'Y' and not meta.is_bonded %}
+      <div class="text-center p-6 bg-warn-soft border-warn-soft rounded-lg flex flex-col items-center" style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2rem 1.5rem; border: 1px solid rgba(255, 179, 64, 0.15); background: rgba(255, 179, 64, 0.05); border-radius: var(--radius-lg); text-align: center;">
+        <div class="icon-circle mb-4 bg-warn-soft text-warn" style="width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: rgba(255, 179, 64, 0.15); color: var(--state-warn-text, #ffb340);">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="24" height="24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+          </svg>
+        </div>
+        <h3 class="mb-2 font-bold" style="color: var(--text-primary); font-size: var(--text-body-lg); font-weight: 700; margin-bottom: 0.5rem;">{{ _('session.bond_not_established_y') }}</h3>
+        <p class="text-dim text-sm leading-relaxed" style="color: var(--text-tertiary); font-size: var(--text-body-sm); line-height: 1.5; margin: 0; max-width: 360px;">{{ _('session.waiting_initiator_msg_desc') }}</p>
+      </div>
+      {% else %}
       <form method="POST" action="{{ url_for('main.session_seal', sid=sid) }}" enctype="multipart/form-data"
         id="seal-form">
 
@@ -293,6 +309,7 @@
           {{ _('session.seal_btn') }}
         </button>
       </form>
+      {% endif %}
     </div>
   </div>
 
@@ -305,7 +322,7 @@
       </div>
     </div>
     <div class="card-body">
-      <form id="open-message-form" enctype="multipart/form-data">
+      <form id="open-message-form" enctype="multipart/form-data" novalidate>
         <input type="hidden" name="native_file_id" id="open-native-file-id">
         <div id="session-drop-zone" class="card drop-zone attachment-drop-box mb-4" data-drop-target="open">
             <span class="file-icon-lg font-lg mb-2 block text-center">
@@ -410,15 +427,15 @@
 {% endif %}
 
 <!-- ── EXIT CONFIRM MODAL ─────────────────────────────────── -->
-<div id="exit-modal-overlay" class="p-modal-overlay">
-  <div class="p-modal">
-    <h2>{{ _('session.close_modal_title') }}</h2>
-    <p>
+<dialog id="exit-confirm-dialog" class="exit-confirm-dialog" aria-labelledby="exit-dialog-title">
+  <div class="exit-dialog-inner p-6">
+    <h2 id="exit-dialog-title" class="text-accent mb-4">{{ _('session.close_modal_title') }}</h2>
+    <p class="text-secondary font-sm leading-relaxed mb-6">
       {{ _('session.close_modal_desc') }}
     </p>
 
-    <div class="mt-5">
-      <label class="checkbox-label font-sm text-dim">
+    <div class="mb-6">
+      <label class="checkbox-label font-sm text-dim cursor-pointer">
         <input type="checkbox" id="modal-dont-ask-again" class="accent-checkbox">
         <span>{{ _('session.close_modal_dont_ask') }}</span>
       </label>
@@ -429,7 +446,7 @@
       <button type="button" class="btn btn-primary" id="exit-modal-confirm">{{ _('session.close_modal_confirm') }}</button>
     </div>
   </div>
-</div>
+</dialog>
 
 <!-- ── CONFIG CONTAINER (No Inline Script) ────────────────── -->
 <div id="paracci-config" 
@@ -438,9 +455,14 @@
      data-auto-download="{{ 'true' if request.args.get('auto_download') == '1' else 'false' }}"
      data-export-url="{{ url_for('main.session_export', sid=sid) }}"
      data-export-filename="session_{{ sid[:8] }}.paracci"
+     data-prepare-preview-url="{{ url_for('main.api_prepare_preview') }}"
+     data-capabilities-url="{{ url_for('main.api_capabilities') }}"
      data-armor-text="{{ _('base.argon_work_active') }}"
      data-open-error="{{ _('session.invalid_file') }}"
-     data-preview-label="{{ _('preview.page_title', filename='') | replace(': ', '') }}">
+     data-preview-label="{{ _('preview.page_title', filename='') | replace(': ', '') }}"
+     data-security-t="{{ meta.evo_config.argon2_time }}"
+     data-security-m="{{ meta.evo_config.argon2_mem }}"
+     data-security-p="{{ meta.evo_config.argon2_par }}">
 </div>
 <script src="{{ url_for('static', filename='js/session.js') }}"></script>
 

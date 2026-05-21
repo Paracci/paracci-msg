@@ -21,7 +21,8 @@ from core.crypto import (
     generate_keypair, ecdh, derive_session_keys,
     encrypt, decrypt, EncryptedBlob,
     new_message_id, message_id_fingerprint,
-    constant_time_compare, random_bytes, generate_identity_keypair,
+    random_bytes, generate_identity_keypair,
+    pack_uint32, pack_uint64,
 )
 from core.evolution import (
     make_evo_config, serialize_evo_config, deserialize_evo_config,
@@ -40,6 +41,7 @@ from core.session import (
     SESSION_STATE_ACTIVE,
     SESSION_STATE_UNVERIFIED,
 )
+from core import envelope as envelope_module
 from core.envelope import seal_envelope, open_envelope, EnvelopeError, EnvelopeTTLError
 from core.burn import (
     BURN_STATUS_BURNED,
@@ -322,6 +324,47 @@ def _make_sessions():
     return confirm_pair(meta_x2, meta_y)
 
 
+def _legacy_v1_envelope(payload_bytes, session):
+    if isinstance(payload_bytes, str):
+        payload_bytes = payload_bytes.encode("utf-8")
+    direction, msg_key, _next_seed, step = envelope_module._prepare_seal_keys(session)
+    msg_id = new_message_id()
+    expire_at = 0
+    flags = 0
+    header = (
+        envelope_module.MAGIC_BYTES
+        + bytes([envelope_module.LEGACY_FILE_VERSION, envelope_module.TYPE_MESSAGE])
+        + session.session_id
+        + msg_id
+        + bytes([direction, flags])
+        + pack_uint32(step)
+        + pack_uint64(expire_at)
+    )
+    work_key = envelope_module._compute_work_key(
+        msg_key,
+        header,
+        session.my_qseed,
+        session.evo_config,
+    )
+    payload_blob = encrypt(work_key, payload_bytes, aad=header)
+    sync_raw = envelope_module._build_sync_payload(
+        session.role,
+        step,
+        msg_id,
+        session.bond_nonce if session.role == "X" and step == 0 else None,
+    )
+    sync_blob = encrypt(session.keys.sync_key, sync_raw, aad=header + b"sync")
+    content = (
+        header
+        + pack_uint32(len(payload_blob.ciphertext))
+        + payload_blob.nonce
+        + payload_blob.ciphertext
+        + sync_blob.nonce
+        + sync_blob.ciphertext
+    )
+    return content + (b"\xff" * envelope_module.LEGACY_SEAL_SIZE)
+
+
 @oqs_required
 def test_x_sends_y_receives():
     meta_x, meta_y = _make_sessions()
@@ -432,18 +475,13 @@ run_test("Tampered file must be rejected", test_tampered_file_rejected)
 
 
 @oqs_required
-def test_tampered_authenticity_seal_rejected():
+def test_legacy_v1_outer_seal_is_ignored_for_compatibility():
     meta_x, meta_y = _make_sessions()
-    sealed = seal_envelope("message", meta_x)
-    tampered = bytearray(sealed.file_bytes)
-    tampered[-1] ^= 0xFF
-    try:
-        open_envelope(bytes(tampered), meta_y)
-        assert False, "Tampered authenticity seal accepted!"
-    except EnvelopeError:
-        pass
+    legacy_file = _legacy_v1_envelope("legacy message", meta_x)
+    opened = open_envelope(legacy_file, meta_y)
+    assert opened.text == "legacy message"
 
-run_test("Tampered authenticity seal must be rejected", test_tampered_authenticity_seal_rejected)
+run_test("Legacy v1 outer seal is ignored for compatibility", test_legacy_v1_outer_seal_is_ignored_for_compatibility)
 
 
 @oqs_required

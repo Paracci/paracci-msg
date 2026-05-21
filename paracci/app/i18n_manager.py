@@ -43,7 +43,9 @@ class I18nManager:
             locale = session.get('locale')
             if not locale:
                 locale = request.accept_languages.best_match(['tr', 'en', 'de', 'fr', 'ru', 'es']) or self.default_locale
-                session['locale'] = locale
+                preview_only = request.endpoint in {'main.preview', 'main.preview_content'}
+                if not preview_only:
+                    session['locale'] = locale
             g.locale = locale
 
         @app.context_processor

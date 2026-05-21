@@ -1,17 +1,13 @@
 """
 Paracci - core/integrity.py
-Diagnostic integrity helpers and legacy envelope seal compatibility.
+Diagnostic integrity helpers.
 
 This module must not influence key derivation, AEAD additional data, nonces, or
-protocol labels. The file seal key is frozen in core.constants for compatibility.
+protocol labels.
 """
 
 import hashlib
-import hmac
 import logging
-
-from .constants import ENVELOPE_FILE_SEAL_HMAC_KEY_V1
-
 
 logger = logging.getLogger(__name__)
 
@@ -53,18 +49,6 @@ def set_tampered_state(state: bool):
 def get_tamper_factor() -> int:
     """Return 1 if diagnostics detected tampering, 0 otherwise."""
     return int(is_tampered())
-
-
-def generate_file_seal(content: bytes) -> bytes:
-    """Generate the legacy envelope file seal with a frozen compatibility key."""
-    h = hmac.new(ENVELOPE_FILE_SEAL_HMAC_KEY_V1, content, hashlib.sha256).digest()
-    return h[:16]
-
-
-def verify_file_seal(content: bytes, seal: bytes) -> bool:
-    """Verify the legacy envelope file seal."""
-    expected = generate_file_seal(content)
-    return hmac.compare_digest(expected, seal)
 
 
 def get_integrity_report() -> dict:

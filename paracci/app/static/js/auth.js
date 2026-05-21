@@ -171,21 +171,39 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (strengthFill && strengthStatus) {
             const result = checkPinStrength(value);
-            strengthFill.className = 'progress-fill';
-            strengthStatus.className = 'strength-status';
 
+            // Always update the progress bar width/colour — useful live feedback.
+            strengthFill.className = 'progress-fill';
             if (value.length > 0) {
                 strengthFill.classList.add('strength-' + result.class);
-                strengthStatus.classList.add('status-' + result.class);
+            }
+
+            // Defer error colour on the status label until after the first blur
+            // (mirrors CSS :user-invalid semantics — no red on the very first keystroke).
+            strengthStatus.className = 'strength-status';
+            if (value.length > 0) {
+                const applyError = pinInput.__hasTouched || false;
+                if (applyError || result.class !== 'weak') {
+                    strengthStatus.classList.add('status-' + result.class);
+                }
                 strengthStatus.textContent = result.label;
             } else {
                 strengthStatus.textContent = '---';
             }
 
+            // Checklist items: also defer red/invalid state until touched
             if (strengthChecklist) {
                 Object.keys(result.reqs).forEach(reqKey => {
                     const li = strengthChecklist.querySelector(`[data-req="${reqKey}"]`);
-                    if (li) li.classList.toggle('valid', result.reqs[reqKey]);
+                    if (li) {
+                        const isValid = result.reqs[reqKey];
+                        // Always mark valid items; only mark invalid after blur
+                        if (isValid) {
+                            li.classList.add('valid');
+                        } else if (pinInput.__hasTouched) {
+                            li.classList.remove('valid');
+                        }
+                    }
                 });
             }
         }
@@ -224,6 +242,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (pinInput) {
+        // __hasTouched gates error coloring — mirrors CSS :user-invalid semantics.
+        // Set to true after the first blur so red states never fire on first keystroke.
+        pinInput.__hasTouched = false;
+        pinInput.addEventListener('blur', () => {
+            if (pinInput.value.length > 0) {
+                pinInput.__hasTouched = true;
+                updatePinDisplay(); // re-render with error colours now permitted
+            }
+        });
+
         pinInput.addEventListener('input', updatePinDisplay);
         pinInput.focus();
         document.addEventListener('keydown', (e) => {

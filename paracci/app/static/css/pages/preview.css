@@ -74,9 +74,35 @@
 .preview-video {
   width: min(100%, 900px);
   max-height: 70vh;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
   border-radius: var(--radius-md);
   background: #000000;
   box-shadow: var(--shadow-lg);
+}
+
+/* ─── Client-Side Clipboard/Copy Protection ──────────────────────────────
+   Uses data-allow-download attributes to selectively block or permit
+   text/media copies at the browser layout level.
+─────────────────────────────────────────────────────────────────────────── */
+
+/* Block selection and drag events when download is false */
+#preview-body-container[data-allow-download="false"] .preview-text,
+#preview-body-container[data-allow-download="false"] pre {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+#preview-body-container[data-allow-download="false"] img,
+#preview-body-container[data-allow-download="false"] video {
+  pointer-events: none !important;
+}
+
+/* Allow selection when download is explicitly permitted (overriding global body lock) */
+#preview-body-container[data-allow-download="true"] .preview-text,
+#preview-body-container[data-allow-download="true"] pre {
+  user-select: text !important;
+  -webkit-user-select: text !important;
 }
 
 .preview-text,

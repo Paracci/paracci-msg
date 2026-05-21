@@ -88,9 +88,7 @@ def _signed_initiator_file(evo_config_hex: str) -> bytes:
         ),
     ).hex()
     header = session_module._build_file_header(session_module.TYPE_INITIATOR, session_id)
-    file_key = session_module._file_encryption_key(session_id, b"initiator")
-    blob = encrypt(file_key, session_module._canonical_payload(payload), aad=header)
-    return header + blob.nonce + blob.ciphertext
+    return header + session_module._canonical_payload(payload)
 
 
 def _valid_active_meta_with_config(evo_config: EvoConfig) -> session_module.SessionMeta:

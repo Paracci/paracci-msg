@@ -416,11 +416,18 @@ textarea,
 }
 
 textarea {
-  min-height: 138px;
+  /* Phase 3: field-sizing: content lets the textarea grow with its content.
+     Supported in Chrome 123+/Edge 123+; min/max-height provide safe bounds.
+     resize: vertical retained as a progressive-enhancement fallback. */
+  field-sizing: content;
+  min-height: 120px;
+  max-height: 420px;
   resize: vertical;
   font-family: var(--font-mono);
   line-height: 1.6;
+  overflow-y: auto;
 }
+
 
 select {
   appearance: none;
@@ -782,32 +789,45 @@ input[type="checkbox"] {
   transition: transform var(--duration-sm) var(--ease);
 }
 
-.apple-custom-select-wrapper.open .apple-custom-select-trigger svg {
+.apple-custom-select-wrapper.open .apple-custom-select-trigger svg,
+.apple-custom-select-wrapper:has(:popover-open) .apple-custom-select-trigger svg {
   transform: rotate(180deg);
 }
 
-.apple-custom-select-dropdown {
-  position: absolute;
+.apple-custom-select-dropdown[popover] {
+  position: fixed;
+  top: 0;
+  right: auto;
+  bottom: auto;
   left: 0;
-  right: 0;
-  top: calc(100% + 8px);
   min-width: 180px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
+  display: none;
   padding: var(--space-2);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   background: var(--material-popover);
   box-shadow: var(--shadow-lg);
+  margin: 0;
+  overflow: auto;
   opacity: 0;
-  visibility: hidden;
-  transform: translateY(-4px);
-  transition: opacity var(--duration-sm) var(--ease), transform var(--duration-sm) var(--ease), visibility var(--duration-sm) var(--ease);
-  z-index: 1000;
+  transform-origin: top center;
+  transform: scaleY(0.96) translateY(-4px);
+  transition: opacity var(--duration-sm) var(--ease), transform var(--duration-sm) var(--ease), display var(--duration-sm) var(--ease) allow-discrete;
 }
 
-.apple-custom-select-wrapper.open .apple-custom-select-dropdown {
+.apple-custom-select-dropdown:popover-open {
+  display: block;
   opacity: 1;
-  visibility: visible;
-  transform: translateY(0);
+  transform: scaleY(1) translateY(0);
+}
+
+@starting-style {
+  .apple-custom-select-dropdown:popover-open {
+    opacity: 0;
+    transform: scaleY(0.96) translateY(-4px);
+  }
 }
 
 .apple-custom-option {
