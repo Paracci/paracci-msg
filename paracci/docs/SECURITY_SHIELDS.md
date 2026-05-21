@@ -26,8 +26,8 @@ Platform routing and fallbacks are coordinated by [device_key_binding.py](paracc
 
 ## Key Hardening (Argon2id)
 
-Passphrases are processed using Argon2id key derivation. Users can select from standard, paranoid, high, and maximum workload profiles. These configurations increase the CPU and RAM cost of offline key-derivation computations, significantly slowing down offline brute-force attempts.
-- **Post-Quantum Security**: Paracci uses a hybrid X25519 + ML-KEM-768 key exchange. Both classical and post-quantum secrets must be compromised to break the session key. Argon2id key hardening remains a separate local storage protection layer.
+The local device key is derived from the user's passphrase using Argon2id with fixed parameters (t=2, m=64MB, p=4), which meet OWASP minimum recommendations. Configurable cost profiles (standard, paranoid, and quantum/Maximum) are applied to session and envelope key hardening, not to device key derivation.
+- **Post-Quantum Security**: Paracci uses a hybrid X25519 + ML-KEM-768 key exchange. Both classical and post-quantum secrets must be compromised to break the session key. Argon2id hardening is a separate key-hardening layer, not a replacement for the hybrid exchange.
 
 ---
 

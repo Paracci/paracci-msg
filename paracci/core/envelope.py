@@ -7,13 +7,15 @@ the native desktop layer depend on this module:
     seal_envelope(payload_bytes, session, single_use=True, ttl_seconds=0)
     open_envelope(file_bytes, session)
 
-The on-disk format is preserved:
+The active v2 on-disk format is:
 HEADER(52) + payload_len(4) + payload_nonce(12) + payload_ciphertext
-+ sync_nonce(12) + sync_ciphertext + authenticity_seal(16).
++ sync_nonce(12) + sync_ciphertext.
+
+Legacy v1 envelopes appended a 16-byte public-HMAC trailer. New files do not
+write it; old files remain readable by stripping that trailer before AEAD parse.
 """
 
 import json
-import logging
 import time
 from typing import NamedTuple, Optional
 
@@ -40,13 +42,11 @@ from .evolution import (
     validate_evo_config,
     validate_evo_step,
 )
-from .integrity import generate_file_seal, verify_file_seal
 from .session import SessionMeta
 
-logger = logging.getLogger(__name__)
-
 MAGIC_BYTES = b"PARC"
-FILE_VERSION = 0x01
+LEGACY_FILE_VERSION = 0x01
+FILE_VERSION = 0x02
 TYPE_MESSAGE = 0x20
 
 DIR_X_TO_Y = 0x01
@@ -55,7 +55,7 @@ FLAG_SINGLE_USE = 0x01
 FLAG_HAS_TTL = 0x02
 
 HEADER_SIZE = 52
-SEAL_SIZE = 16
+LEGACY_SEAL_SIZE = 16
 
 
 class EnvelopeHeader(NamedTuple):
@@ -133,7 +133,7 @@ def _parse_header(data: bytes) -> EnvelopeHeader:
         raise EnvelopeError("File too short.")
     if data[:4] != MAGIC_BYTES:
         raise EnvelopeError("Invalid file signature.")
-    if data[4] != FILE_VERSION:
+    if data[4] not in (LEGACY_FILE_VERSION, FILE_VERSION):
         raise EnvelopeError("Unsupported version.")
     if data[5] != TYPE_MESSAGE:
         raise EnvelopeError("Not a message file.")
@@ -160,7 +160,7 @@ def _parse_header(data: bytes) -> EnvelopeHeader:
 
     return EnvelopeHeader(
         magic=MAGIC_BYTES,
-        version=FILE_VERSION,
+        version=data[4],
         msg_type=TYPE_MESSAGE,
         session_id=session_id,
         msg_id=msg_id,
@@ -295,7 +295,7 @@ def seal_envelope(
         + sync_blob.nonce
         + sync_blob.ciphertext
     )
-    file_bytes = content + generate_file_seal(content)
+    file_bytes = content
 
     return SealedEnvelope(
         file_bytes=file_bytes,
@@ -308,17 +308,18 @@ def seal_envelope(
 
 def open_envelope(file_bytes: bytes, session: SessionMeta) -> OpenedEnvelope:
     """Parses and decrypts a .paracci message envelope."""
-    if len(file_bytes) < HEADER_SIZE + 4 + (NONCE_LEN * 2) + SEAL_SIZE:
+    if len(file_bytes) < HEADER_SIZE + 4 + (NONCE_LEN * 2) + 16:
         raise EnvelopeError("File too small.")
 
-    seal = file_bytes[-SEAL_SIZE:]
-    content = file_bytes[:-SEAL_SIZE]
-    if not verify_file_seal(content, seal):
-        logger.warning("Envelope authenticity seal did not verify.")
-        raise EnvelopeError("Envelope authenticity seal did not verify.")
-
-    header_bytes = content[:HEADER_SIZE]
+    header_bytes = file_bytes[:HEADER_SIZE]
     header = _parse_header(header_bytes)
+    if header.version == LEGACY_FILE_VERSION:
+        if len(file_bytes) < HEADER_SIZE + 4 + (NONCE_LEN * 2) + 16 + LEGACY_SEAL_SIZE:
+            raise EnvelopeError("File too small.")
+        content = file_bytes[:-LEGACY_SEAL_SIZE]
+        header_bytes = content[:HEADER_SIZE]
+    else:
+        content = file_bytes
     _validate_envelope_context(header, session)
 
     payload_blob, sync_blob = _split_body(content[HEADER_SIZE:])
