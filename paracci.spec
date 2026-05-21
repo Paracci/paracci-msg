@@ -17,6 +17,106 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules, collect_dat
 # ── Determine icon path ────────────────────────────────────────────────────────
 ROOT = Path(SPECPATH)
 
+
+def _dedupe_paths(paths):
+    seen = set()
+    unique = []
+    for path in paths:
+        path = Path(path).expanduser()
+        key = os.path.normcase(str(path))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique
+
+
+def _liboqs_names():
+    if sys.platform == "win32":
+        return ("oqs.dll", "liboqs.dll")
+    if sys.platform == "darwin":
+        return ("liboqs.dylib",)
+    return ("liboqs.so",)
+
+
+def _liboqs_dest_dir():
+    return "bin" if sys.platform == "win32" else "lib"
+
+
+def _candidate_liboqs_dirs():
+    dirs = []
+    for env_name in ("LIBOQS_LIB_DIR", "OQS_INSTALL_PATH"):
+        env_value = os.environ.get(env_name)
+        if not env_value:
+            continue
+        base = Path(env_value)
+        dirs.extend([base, base / "bin", base / "lib", base / "lib64"])
+
+    if sys.platform == "win32":
+        dirs.extend(
+            [
+                Path("C:/liboqs/bin"),
+                Path("C:/liboqs/lib"),
+                Path("C:/Program Files/liboqs/bin"),
+                Path("C:/Program Files/liboqs/lib"),
+                ROOT / "_oqs" / "bin",
+                ROOT / "_oqs" / "lib",
+            ]
+        )
+    elif sys.platform == "darwin":
+        dirs.extend(
+            [
+                Path("/opt/homebrew/lib"),
+                Path("/usr/local/lib"),
+                Path("/usr/lib"),
+                ROOT / "_oqs" / "lib",
+                ROOT / "_oqs" / "lib64",
+            ]
+        )
+    else:
+        dirs.extend(
+            [
+                Path("/usr/local/lib"),
+                Path("/usr/local/lib64"),
+                Path("/usr/lib"),
+                Path("/usr/lib64"),
+                ROOT / "_oqs" / "lib",
+                ROOT / "_oqs" / "lib64",
+            ]
+        )
+
+    return _dedupe_paths(dirs)
+
+
+def _find_liboqs():
+    for directory in _candidate_liboqs_dirs():
+        for name in _liboqs_names():
+            candidate = directory / name
+            if candidate.exists():
+                return candidate
+    return None
+
+
+def _write_liboqs_runtime_hook():
+    hook_dir = ROOT / "build_cache" / "runtime_hooks"
+    hook_dir.mkdir(parents=True, exist_ok=True)
+    hook_path = hook_dir / "pyi_rth_paracci_liboqs.py"
+    hook_path.write_text(
+        """\
+import os
+import sys
+from pathlib import Path
+
+bundle_root = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+os.environ["OQS_INSTALL_PATH"] = str(bundle_root)
+""",
+        encoding="utf-8",
+    )
+    return str(hook_path)
+
+
+liboqs_runtime_hook = _write_liboqs_runtime_hook()
+
 if sys.platform == "win32":
     app_icon = str(ROOT / "paracci_icon.ico")
 elif sys.platform == "darwin":
@@ -35,6 +135,19 @@ datas = [
 
 binaries = []
 hiddenimports = []
+
+# ── liboqs-python / native liboqs (lazy ctypes import) ─────────────────────────
+hiddenimports += ["oqs", "oqs.oqs", "oqs.rand", "oqs.serialize"]
+liboqs_path = _find_liboqs()
+if liboqs_path:
+    liboqs_dest = _liboqs_dest_dir()
+    binaries.append((str(liboqs_path), liboqs_dest))
+    print(f"[INFO] Bundling liboqs shared library: {liboqs_path} -> {liboqs_dest}")
+else:
+    print(
+        "[WARN] liboqs shared library was not found; ML-KEM will fail in the packaged app.",
+        file=sys.stderr,
+    )
 
 # ── Collect all submodules for pywebview ──────────────────────────────────────
 tmp_ret = collect_all("webview")
@@ -118,7 +231,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[liboqs_runtime_hook],
     excludes=["paracci.audits", "paracci.scratch", "tkinter", "_tkinter", "matplotlib"],
     noarchive=False,
     optimize=1,
@@ -160,8 +273,8 @@ if sys.platform == "darwin":
         bundle_identifier="com.paracci.desktop",
         info_plist={
             "CFBundleDisplayName": "Paracci",
-            "CFBundleVersion": "1.2.0",
-            "CFBundleShortVersionString": "1.2.0",
+            "CFBundleVersion": "1.3.0",
+            "CFBundleShortVersionString": "1.3.0",
             "NSHighResolutionCapable": True,
             "NSRequiresAquaSystemAppearance": False,  # Dark mode support
             "LSMinimumSystemVersion": "11.0",

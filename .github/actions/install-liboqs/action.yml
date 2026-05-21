@@ -1,0 +1,126 @@
+name: Install liboqs
+description: Build and install the native liboqs shared library for Paracci CI.
+
+inputs:
+  version:
+    description: liboqs release tag to build.
+    required: false
+    default: "0.15.0"
+  install-prefix:
+    description: Directory where liboqs will be installed.
+    required: true
+
+outputs:
+  install-path:
+    description: Installed liboqs prefix.
+    value: ${{ steps.export.outputs.install-path }}
+  lib-dir:
+    description: Directory containing the installed liboqs shared library.
+    value: ${{ steps.export.outputs.lib-dir }}
+  library-path:
+    description: Full path to the installed liboqs shared library.
+    value: ${{ steps.export.outputs.library-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install cmake and ninja
+      uses: lukka/get-cmake@latest
+
+    - name: Install OpenSSL headers (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update -qq
+        sudo apt-get install -y libssl-dev gcc
+
+    - name: Install OpenSSL headers (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: brew install openssl
+
+    - name: Build and install liboqs C library
+      shell: bash
+      env:
+        LIBOQS_VERSION: ${{ inputs.version }}
+        LIBOQS_INSTALL_PREFIX: ${{ inputs.install-prefix }}
+      run: |
+        set -euo pipefail
+
+        rm -rf liboqs
+        trap 'rm -rf liboqs' EXIT
+        git clone --branch "$LIBOQS_VERSION" --depth 1 https://github.com/open-quantum-safe/liboqs.git
+
+        cmake_extra_flags=""
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          cmake_extra_flags="-DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=TRUE"
+        fi
+
+        cmake -S liboqs -B liboqs/build \
+          -DBUILD_SHARED_LIBS=ON \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DOQS_BUILD_ONLY_LIB=ON \
+          -DOQS_DIST_BUILD=ON \
+          -DCMAKE_INSTALL_PREFIX="$LIBOQS_INSTALL_PREFIX" \
+          $cmake_extra_flags
+        cmake --build liboqs/build --parallel 4
+        cmake --build liboqs/build --target install
+        rm -rf liboqs
+        trap - EXIT
+
+    - name: Export liboqs paths
+      id: export
+      shell: bash
+      env:
+        LIBOQS_INSTALL_PREFIX: ${{ inputs.install-prefix }}
+      run: |
+        set -euo pipefail
+        python - <<'PY'
+        import os
+        import sys
+        from pathlib import Path
+
+        install_prefix = Path(os.environ["LIBOQS_INSTALL_PREFIX"])
+        runner_os = os.environ["RUNNER_OS"]
+
+        if runner_os == "Windows":
+            candidates = [
+                install_prefix / "bin" / "oqs.dll",
+                install_prefix / "bin" / "liboqs.dll",
+                install_prefix / "lib" / "oqs.dll",
+                install_prefix / "lib" / "liboqs.dll",
+            ]
+        elif runner_os == "macOS":
+            candidates = [
+                install_prefix / "lib" / "liboqs.dylib",
+                install_prefix / "lib64" / "liboqs.dylib",
+            ]
+        else:
+            candidates = [
+                install_prefix / "lib" / "liboqs.so",
+                install_prefix / "lib64" / "liboqs.so",
+            ]
+
+        library_path = next((path for path in candidates if path.exists()), None)
+        if library_path is None:
+            print(f"liboqs shared library was not found under {install_prefix}", file=sys.stderr)
+            if install_prefix.exists():
+                for path in sorted(install_prefix.rglob("*")):
+                    if path.is_file() or path.is_symlink():
+                        print(path, file=sys.stderr)
+            raise SystemExit(1)
+
+        lib_dir = library_path.parent
+        with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as env_file:
+            env_file.write(f"OQS_INSTALL_PATH={install_prefix}\n")
+            env_file.write(f"LIBOQS_LIB_DIR={lib_dir}\n")
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output_file:
+            output_file.write(f"install-path={install_prefix}\n")
+            output_file.write(f"lib-dir={lib_dir}\n")
+            output_file.write(f"library-path={library_path}\n")
+
+        print(f"OQS_INSTALL_PATH={install_prefix}")
+        print(f"LIBOQS_LIB_DIR={lib_dir}")
+        print(f"liboqs shared library: {library_path}")
+        PY

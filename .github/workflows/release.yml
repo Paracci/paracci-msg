@@ -21,10 +21,59 @@ permissions:
 
 jobs:
   # ═══════════════════════════════════════════════════════════════════════════
-  # JOB 1 — Build on all three platforms in parallel
+  # JOB 1 — Test gate on all three platforms
+  # ═══════════════════════════════════════════════════════════════════════════
+  verify:
+    name: Verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-2025]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Linux test dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libegl1 libxcb-cursor0 libxcb-xinerama0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-shape0
+
+      - name: Install liboqs C library
+        uses: ./.github/actions/install-liboqs
+        with:
+          version: "0.15.0"
+          install-prefix: ${{ runner.temp }}/_oqs
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --require-hashes -r requirements.lock
+          python -m pip install --require-hashes -r requirements-dev.lock
+
+      - name: Audit locked dependencies
+        run: python -m pip_audit -r requirements.lock -r requirements-dev.lock
+
+      - name: Run tests
+        run: python -m pytest paracci/tests -q
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 2 — Build on all three platforms in parallel
   # ═══════════════════════════════════════════════════════════════════════════
   build:
     name: Build (${{ matrix.platform_id }})
+    needs: [verify]
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -67,39 +116,12 @@ jobs:
             pkg-config python3-dev libglib2.0-dev \
             libegl1 libxcb-cursor0 libxcb-xinerama0
 
-      - name: Install cmake and ninja
-        uses: lukka/get-cmake@latest
-
-      - name: Install OpenSSL headers (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get install -y libssl-dev
-
-      - name: Install OpenSSL headers (macOS)
-        if: runner.os == 'macOS'
-        run: brew install openssl
-
-      - name: Build and install liboqs C library
-        shell: bash
-        run: |
-          git clone --branch 0.15.0 --depth 1 https://github.com/open-quantum-safe/liboqs.git
-          cmake_extra_flags=""
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            cmake_extra_flags="-DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=TRUE"
-          fi
-          cmake -S liboqs -B liboqs/build \
-            -DBUILD_SHARED_LIBS=ON \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DOQS_BUILD_ONLY_LIB=ON \
-            -DOQS_DIST_BUILD=ON \
-            -DCMAKE_INSTALL_PREFIX="${{ runner.temp }}/_oqs" \
-            $cmake_extra_flags
-          cmake --build liboqs/build --parallel 4
-          cmake --build liboqs/build --target install
-          rm -rf liboqs
-
-      - name: Set OQS_INSTALL_PATH
-        shell: bash
-        run: echo "OQS_INSTALL_PATH=${{ runner.temp }}/_oqs" >> "$GITHUB_ENV"
+      - name: Install liboqs C library
+        id: liboqs
+        uses: ./.github/actions/install-liboqs
+        with:
+          version: "0.15.0"
+          install-prefix: ${{ runner.temp }}/_oqs
 
       # ── 4. Install runtime + build dependencies ────────────────────────────
       - name: Install Python dependencies
@@ -120,11 +142,238 @@ jobs:
       - name: Audit locked dependencies
         run: python -m pip_audit -r requirements.lock -r requirements-dev.lock
 
+      - name: Inject release version metadata
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os, re
+          from pathlib import Path
+
+          tag = os.environ["RELEASE_TAG"]
+          version = tag[1:] if tag.startswith("v") else tag
+          match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version)
+          if not match:
+              raise SystemExit(f"Release tag must be vMAJOR.MINOR.PATCH, got {tag!r}")
+
+          major, minor, patch = map(int, match.groups())
+          version_tuple = f"({major}, {minor}, {patch}, 0)"
+
+          def replace_once(text, pattern, replacement, label):
+              updated, count = re.subn(pattern, replacement, text, count=1)
+              if count != 1:
+                  raise SystemExit(f"Expected exactly one {label} replacement, found {count}")
+              return updated
+
+          fv = Path("file_version_info.txt")
+          text = fv.read_text(encoding="utf-8")
+          text = replace_once(text, r"filevers=\(\d+,\s*\d+,\s*\d+,\s*\d+\)", f"filevers={version_tuple}", "filevers")
+          text = replace_once(text, r"prodvers=\(\d+,\s*\d+,\s*\d+,\s*\d+\)", f"prodvers={version_tuple}", "prodvers")
+          text = replace_once(text, r"StringStruct\('FileVersion',\s*'[^']*'\)", f"StringStruct('FileVersion', '{version}')", "FileVersion")
+          text = replace_once(text, r"StringStruct\('ProductVersion',\s*'[^']*'\)", f"StringStruct('ProductVersion', '{version}')", "ProductVersion")
+          fv.write_text(text, encoding="utf-8")
+
+          spec = Path("paracci.spec")
+          text = spec.read_text(encoding="utf-8")
+          text = replace_once(text, r'"CFBundleVersion":\s*"[^"]*"', f'"CFBundleVersion": "{version}"', "CFBundleVersion")
+          text = replace_once(text, r'"CFBundleShortVersionString":\s*"[^"]*"', f'"CFBundleShortVersionString": "{version}"', "CFBundleShortVersionString")
+          spec.write_text(text, encoding="utf-8")
+
+          print(f"Injected Paracci version {version}")
+          PY
+
+      - name: Verify release version metadata
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          tag = os.environ["RELEASE_TAG"]
+          version = tag[1:] if tag.startswith("v") else tag
+          major, minor, patch = map(int, version.split("."))
+          version_tuple = f"({major}, {minor}, {patch}, 0)"
+
+          checks = {
+              "file_version_info.txt": [
+                  f"filevers={version_tuple}",
+                  f"prodvers={version_tuple}",
+                  f"StringStruct('FileVersion', '{version}')",
+                  f"StringStruct('ProductVersion', '{version}')",
+              ],
+              "paracci.spec": [
+                  f'"CFBundleVersion": "{version}"',
+                  f'"CFBundleShortVersionString": "{version}"',
+              ],
+          }
+
+          missing = []
+          for path, needles in checks.items():
+              text = Path(path).read_text(encoding="utf-8")
+              missing.extend(f"{path}: {needle}" for needle in needles if needle not in text)
+
+          if missing:
+              raise SystemExit("Version injection verification failed:\n" + "\n".join(missing))
+          print(f"Verified injected version {version}")
+          PY
+
       # ── 5. Build executable ────────────────────────────────────────────────
       - name: Build executable
         run: python build.py --clean
         env:
           QT_QPA_PLATFORM: offscreen   # suppress headless Qt warnings on Linux CI
+
+      - name: Smoke test packaged ML-KEM
+        shell: bash
+        run: |
+          python - <<'PY'
+          import http.cookiejar
+          import os
+          import re
+          import shutil
+          import socket
+          import subprocess
+          import sys
+          import tempfile
+          import time
+          import urllib.parse
+          import urllib.request
+          from pathlib import Path
+
+          runner_os = os.environ["RUNNER_OS"]
+          if runner_os == "Windows":
+              executable = Path("builds/windows/Paracci.exe")
+          elif runner_os == "macOS":
+              app_executable = Path("builds/macos/Paracci.app/Contents/MacOS/Paracci")
+              executable = app_executable if app_executable.exists() else Path("builds/macos/Paracci")
+          else:
+              executable = Path("builds/linux/Paracci")
+
+          if not executable.exists():
+              raise SystemExit(f"Packaged executable not found: {executable}")
+
+          with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+              probe.bind(("127.0.0.1", 0))
+              port = probe.getsockname()[1]
+          token = "paracci-release-smoke-token"
+          origin = f"http://127.0.0.1:{port}"
+          data_root = Path(tempfile.mkdtemp(prefix="paracci-smoke-")).resolve()
+
+          env = os.environ.copy()
+          for name in (
+              "OQS_INSTALL_PATH",
+              "LIBOQS_LIB_DIR",
+              "LD_LIBRARY_PATH",
+              "DYLD_LIBRARY_PATH",
+          ):
+              env.pop(name, None)
+          env["PATH"] = os.pathsep.join(
+              part
+              for part in env.get("PATH", "").split(os.pathsep)
+              if "_oqs" not in part.lower() and "liboqs" not in part.lower()
+          )
+          env["DATA_DIR"] = str(data_root / "data")
+          env["PARACCI_LOOPBACK_TOKEN"] = token
+          env["PYOQS_VERSION"] = "paracci-smoke-no-autoinstall"
+          env["QT_QPA_PLATFORM"] = "offscreen"
+
+          proc = subprocess.Popen(
+              [str(executable), "--no-gui", "--port", str(port)],
+              env=env,
+              stdout=subprocess.PIPE,
+              stderr=subprocess.STDOUT,
+              text=True,
+              errors="replace",
+          )
+
+          def stop_process():
+              if proc.poll() is None:
+                  proc.terminate()
+                  try:
+                      proc.wait(timeout=10)
+                  except subprocess.TimeoutExpired:
+                      proc.kill()
+                      proc.wait(timeout=10)
+
+          def output_tail():
+              if not proc.stdout:
+                  return ""
+              try:
+                  return proc.stdout.read()[-4000:]
+              except Exception:
+                  return ""
+
+          def fail(message):
+              stop_process()
+              raise SystemExit(f"{message}\n--- packaged app output ---\n{output_tail()}")
+
+          try:
+              deadline = time.time() + 90
+              while time.time() < deadline:
+                  if proc.poll() is not None:
+                      fail(f"Packaged app exited early with code {proc.returncode}")
+                  try:
+                      with socket.create_connection(("127.0.0.1", port), timeout=1):
+                          break
+                  except OSError:
+                      time.sleep(1)
+              else:
+                  fail("Timed out waiting for packaged app to listen")
+
+              jar = http.cookiejar.CookieJar()
+              opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+
+              def request(path, form=None, csrf=None):
+                  headers = {"Host": f"127.0.0.1:{port}", "Origin": origin}
+                  data = None
+                  if form is not None:
+                      data = urllib.parse.urlencode(form).encode("utf-8")
+                      headers["Content-Type"] = "application/x-www-form-urlencoded"
+                      headers["X-Paracci-Token"] = token
+                      if csrf:
+                          headers["X-CSRF-Token"] = csrf
+                  req = urllib.request.Request(origin + path, data=data, headers=headers)
+                  return opener.open(req, timeout=45)
+
+              response = request(f"/__paracci_bootstrap?token={urllib.parse.quote(token)}&next=/")
+              html = response.read().decode("utf-8", "replace")
+              csrf_match = re.search(r'name="paracci-csrf-token"\s+content="([^"]+)"', html)
+              if not csrf_match:
+                  response = request("/unlock")
+                  html = response.read().decode("utf-8", "replace")
+                  csrf_match = re.search(r'name="paracci-csrf-token"\s+content="([^"]+)"', html)
+              if not csrf_match:
+                  fail("Could not extract CSRF token from packaged app")
+
+              csrf = csrf_match.group(1)
+              request("/unlock", {"pin": "Correct-Horse-95175328"}, csrf).read()
+              request("/unlock/2fa/setup", {"action": "skip"}, csrf).read()
+              response = request(
+                  "/session/new",
+                  {
+                      "label": "Release smoke",
+                      "session_ttl": "0",
+                      "security_profile": "standard",
+                  },
+                  csrf,
+              )
+              body = response.read().decode("utf-8", "replace")
+              final_url = response.geturl()
+
+              if "/session/" not in final_url:
+                  snippet = re.sub(r"\s+", " ", body)[:1000]
+                  fail(f"ML-KEM session creation did not complete. Final URL: {final_url}. Body: {snippet}")
+
+              print(f"Packaged ML-KEM smoke test passed: {final_url}")
+          finally:
+              stop_process()
+              shutil.rmtree(data_root, ignore_errors=True)
+          PY
 
       # ── 6. Normalize output path and compute SHA-256 ───────────────────────
       - name: Prepare asset (Windows)
@@ -207,7 +456,7 @@ jobs:
           retention-days: 7
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # JOB 2 — Create GitHub Release
+  # JOB 3 — Create GitHub Release
   # Runs only on version tags, after all builds succeed.
   # ═══════════════════════════════════════════════════════════════════════════
   release:
@@ -329,7 +578,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # JOB 3 — VirusTotal Scan
+  # JOB 4 — VirusTotal Scan
   # Runs after the Release is published. Submits all 3 binaries to VT and
   # appends the scan report URLs to the release body automatically.
   #
