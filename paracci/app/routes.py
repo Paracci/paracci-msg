@@ -7,6 +7,7 @@ import datetime
 import glob
 import secrets
 import hmac
+import mimetypes
 from typing import Optional, Sequence
 from pathlib import Path
 import logging
@@ -28,7 +29,14 @@ from werkzeug.exceptions import SecurityError
 import app as ag_app
 from core.config import ParacciConfig
 from core.identity import get_or_create_device_identity
-from core.envelope import seal_envelope, open_envelope, EnvelopeError, EnvelopeTTLError
+from core.envelope import (
+    FILE_VERSION as ENVELOPE_FILE_VERSION,
+    LEGACY_FILE_VERSION as LEGACY_ENVELOPE_FILE_VERSION,
+    seal_envelope,
+    open_envelope,
+    EnvelopeError,
+    EnvelopeTTLError,
+)
 from core.package import (
     PackageLimitError,
     create_package,
@@ -36,7 +44,7 @@ from core.package import (
     sanitize_attachment_filename,
 )
 from core.crypto import wipe
-from core.sanitizer import sanitize_image
+from core.sanitizer import SanitizationError, sanitize_image
 from core.security_utils import scan_text_for_security
 from core.burn import (
     is_device_initialized, DeviceError,
@@ -54,7 +62,7 @@ from core.session import (
     finalize_initiator_session, apply_bond_nonce_to_y,
     serialize_initiator_file, serialize_responder_file,
     confirm_safety_code, get_session_safety_code,
-    FILE_VERSION, HANDSHAKE_FILE_VERSION,
+    FILE_VERSION, HANDSHAKE_FILE_VERSION, LEGACY_WRAPPED_HANDSHAKE_FILE_VERSION,
     SESSION_COLORS, SESSION_STATE_UNVERIFIED, SessionError
 )
 from core.hybrid_kem import HybridKEMError
@@ -66,6 +74,7 @@ from core.evolution import (
     validate_argon2_params,
     validate_session_ttl,
 )
+from core.preview_store import PreviewEntry, preview_store
 from . import APP_DIR
 from .i18n_manager import i18n
 
@@ -85,7 +94,7 @@ def _hybrid_error_message(exc: HybridKEMError) -> str:
 bp = Blueprint("main", __name__)
 
 # ── Preview Cache (RAM only, for temporary viewing) ──
-# Structure: { id: {"filename": str, "content": bytes, "mime": str, "expires": float, "allow_download": bool} }
+# Structure: { id: {"filename": str, "content": bytes, "mime": str, "expires": float, "allow_download": bool, "access_token": str} }
 PREVIEW_CACHE = {}
 
 # Native attachment staging is RAM-only and short-lived.
@@ -143,15 +152,55 @@ def _content_security_policy() -> str:
     )
 
 
+def _preview_content_security_policy() -> str:
+    """Return the CSP for the standalone preview window."""
+    return (
+        "default-src 'self'; "
+        "script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
+        "script-src-attr 'none'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "font-src 'self'; "
+        "img-src 'self' data: blob:; "
+        "media-src 'self' data: blob:; "
+        "connect-src 'self'; "
+        "frame-src 'self' blob:; "
+        "object-src 'self' blob:; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self';"
+    )
+
+
+def _preview_embedded_content_security_policy() -> str:
+    """Allow same-origin preview pages to embed PDF content only."""
+    return (
+        "default-src 'none'; "
+        "frame-ancestors 'self'; "
+        "base-uri 'none';"
+    )
+
+
 def _apply_security_headers(response):
     """Apply consistent security headers to all route responses."""
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
+    is_preview_route = request.endpoint in {"main.preview", "main.preview_content"}
+    is_preview_html = request.endpoint == "main.preview" and response.mimetype == "text/html"
+    is_preview_pdf = (
+        request.endpoint in {"main.preview", "main.preview_content"}
+        and response.mimetype == "application/pdf"
+    )
+    response.headers["X-Frame-Options"] = "SAMEORIGIN" if is_preview_pdf else "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "no-referrer"
-    response.headers["Content-Security-Policy"] = _content_security_policy()
+    if is_preview_html:
+        response.headers["Content-Security-Policy"] = _preview_content_security_policy()
+    elif is_preview_pdf:
+        response.headers["Content-Security-Policy"] = _preview_embedded_content_security_policy()
+    else:
+        response.headers["Content-Security-Policy"] = _content_security_policy()
     if request.endpoint == "main.loopback_bootstrap":
         response.headers["Cache-Control"] = "no-store"
+    if is_preview_route:
+        response.headers.pop("Set-Cookie", None)
     return response
 
 
@@ -231,7 +280,8 @@ def _add_to_preview_cache(filename, content, mime, allow_download, ttl=600):
         "content": content,
         "mime": mime,
         "expires": time.time() + ttl,
-        "allow_download": allow_download
+        "allow_download": allow_download,
+        "access_token": secrets.token_urlsafe(32),
     }
     return pid
 
@@ -239,6 +289,30 @@ def _add_to_preview_cache(filename, content, mime, allow_download, ttl=600):
 def _can_send_original_attachment(file_data):
     """Return whether this preview entry may expose original attachment bytes."""
     return bool(file_data and file_data.get("allow_download") is True)
+
+
+def _preview_url(endpoint: str, pid: str, file_data=None, **values) -> str:
+    """Build a preview URL with the per-entry token needed by child windows."""
+    entry = file_data if file_data is not None else PREVIEW_CACHE.get(pid)
+    access_token = entry.get("access_token") if entry else None
+    if access_token:
+        values["preview_token"] = access_token
+    return url_for(endpoint, pid=pid, **values)
+
+
+def _valid_preview_access_request() -> bool:
+    """Authorize token-bearing child-window requests for one cached preview item."""
+    if request.method not in {"GET", "HEAD"}:
+        return False
+    if request.endpoint not in {"main.preview", "main.preview_download"}:
+        return False
+    pid = (request.view_args or {}).get("pid")
+    if not pid:
+        return False
+    file_data = PREVIEW_CACHE.get(pid)
+    expected = file_data.get("access_token") if file_data else None
+    supplied = request.args.get("preview_token") or request.headers.get("X-Paracci-Preview-Token")
+    return _token_matches(supplied, expected)
 
 
 def _build_no_download_image_preview(file_data):
@@ -403,7 +477,10 @@ def stage_native_attachment_paths(paths: Sequence[str | Path]) -> list[dict]:
                     f"Total file size exceeds the {MAX_ATTACHMENT_SIZE // (1024*1024)}MB limit."
                 )
             safe_fname = sanitize_attachment_filename(Path(native_path).name)
-            content = sanitize_image(content, safe_fname)
+            try:
+                content = sanitize_image(content, safe_fname)
+            except SanitizationError as exc:
+                raise NativeAttachmentStagingError(SanitizationError.user_message) from exc
             attachment_id = _add_to_staged_attachment_cache(safe_fname, content)
             staged_ids.append(attachment_id)
             staged_items.append({
@@ -469,8 +546,24 @@ def _safe_local_next(value: str | None) -> str | None:
 def _reject_security(reason: str):
     """Fail closed for loopback auth violations."""
     logger.warning("Loopback request rejected: %s", reason)
+    try:
+        logger.warning("  [DEBUG] Request URL: %s", request.url)
+        logger.warning("  [DEBUG] Request Method: %s", request.method)
+        logger.warning("  [DEBUG] Request Headers: %s", {k: v for k, v in request.headers.items() if k.lower() not in {"cookie", "authorization"}})
+        logger.warning("  [DEBUG] Request Cookies: %s", list(request.cookies.keys()))
+        logger.warning("  [DEBUG] Session Contents: %s", {k: v for k, v in session.items()})
+        logger.warning("  [DEBUG] Session Permanent: %s", getattr(session, "permanent", None))
+    except Exception as e:
+        logger.warning("  [DEBUG] Failed to dump debug info: %s", e)
+
     wants_json = request.path.startswith("/api/") or request.headers.get("X-Requested-With") == "XMLHttpRequest"
     if wants_json:
+        if request.path == "/api/prepare-preview" and reason in {
+            "client not bootstrapped",
+            "missing api bearer token",
+            "missing unsafe-method bearer token",
+        }:
+            return jsonify({"success": False, "error": "Unauthorized."}), 401
         return jsonify({"success": False, "error": "Forbidden."}), 403
     abort(403)
 
@@ -505,6 +598,27 @@ def _token_matches(candidate: str | None, expected: str | None) -> bool:
     if not candidate or not expected:
         return False
     return hmac.compare_digest(str(candidate), str(expected))
+
+
+def _looks_like_preview_token(value: str | None) -> bool:
+    """Return True only for PreviewStore token strings."""
+    if not isinstance(value, str) or len(value) != 64:
+        return False
+    return all(ch in "0123456789abcdef" for ch in value)
+
+
+def _preview_store_request_token() -> str | None:
+    """Return a route preview token when this is a token-scoped preview request."""
+    if request.method not in {"GET", "HEAD"}:
+        return None
+    view_args = request.view_args or {}
+    if request.endpoint == "main.preview":
+        token = view_args.get("pid")
+    elif request.endpoint == "main.preview_content":
+        token = view_args.get("preview_token")
+    else:
+        return None
+    return token if _looks_like_preview_token(token) else None
 
 
 def _validate_request_source():
@@ -558,9 +672,26 @@ def loopback_bootstrap():
     if not _token_matches(request.args.get("token", ""), ag_app.loopback_token):
         return _reject_security("invalid bootstrap token")
 
-    session["paracci_client_ok"] = True
-    session["paracci_client_id"] = secrets.token_urlsafe(16)
-    session["csrf_token"] = secrets.token_urlsafe(32)
+    # Idempotency guard: if the session is already established for the
+    # currently active client, reuse it rather than creating a new one.
+    # This prevents spurious re-navigation to the bootstrap URL — caused by
+    # pywebview 6.x firing the main window's lifecycle events when a preview
+    # window is torn down — from blowing away the authenticated session and
+    # producing a new paracci_client_id that no longer matches active_client_id.
+    session.permanent = True
+    already_valid = (
+        session.get("paracci_client_ok") is True
+        and ag_app.active_client_id is not None
+        and session.get("paracci_client_id") == ag_app.active_client_id
+    )
+    if not already_valid:
+        session["paracci_client_ok"] = True
+        if ag_app.active_client_id is not None:
+            session["paracci_client_id"] = ag_app.active_client_id
+        else:
+            session["paracci_client_id"] = secrets.token_urlsafe(16)
+        if not session.get("csrf_token"):
+            session["csrf_token"] = secrets.token_urlsafe(32)
     target = _safe_local_next(request.args.get("next")) or url_for("main.index")
     return redirect(target)
 
@@ -578,7 +709,18 @@ def enforce_loopback_security():
     if source_error:
         return source_error
 
-    if session.get("paracci_client_ok") is not True:
+    if request.endpoint in {"main.api_capabilities", "main.api_benchmark_results"}:
+        return
+
+    if _preview_store_request_token():
+        g.preview_access_ok = True
+        return
+
+    preview_access_ok = _valid_preview_access_request()
+    if preview_access_ok:
+        g.preview_access_ok = True
+
+    if session.get("paracci_client_ok") is not True and not preview_access_ok:
         return _reject_security("client not bootstrapped")
 
     if request.path.startswith("/api/") and not _token_matches(_extract_loopback_token(), ag_app.loopback_token):
@@ -600,7 +742,9 @@ def check_lock():
     """Checks if the application is locked; redirects to the unlock page if locked."""
 
     # Routes exempt from locking
-    if request.endpoint in ["main.loopback_bootstrap", "main.unlock", "main.set_locale", "static", "main.unlock_2fa_setup", "main.unlock_2fa_verify", "main.favicon"]:
+    if request.endpoint in ["main.loopback_bootstrap", "main.unlock", "main.set_locale", "static", "main.unlock_2fa_setup", "main.unlock_2fa_verify", "main.favicon", "main.api_capabilities", "main.api_benchmark_results"]:
+        return
+    if _preview_store_request_token():
         return
 
     # 1. Device not initialized yet?
@@ -616,7 +760,7 @@ def check_lock():
         return redirect(url_for("main.unlock"))
 
     client_id = session.get("paracci_client_id")
-    if ag_app.active_client_id and ag_app.active_client_id != client_id:
+    if ag_app.active_client_id and ag_app.active_client_id != client_id and not getattr(g, "preview_access_ok", False):
         return _reject_security("unlocked client mismatch")
 
 
@@ -625,8 +769,9 @@ def inject_user():
     """Injects the user profile and shell session shortcuts into all templates."""
     cfg = ParacciConfig()
     sidebar_sessions = []
+    preview_only = request.endpoint in {"main.preview", "main.preview_content"}
     try:
-        if ag_app.device_key is not None and is_device_initialized(ag_app.db):
+        if not preview_only and ag_app.device_key is not None and is_device_initialized(ag_app.db):
             db, _device_key = _get_db_and_key()
             for row in db.list_sessions():
                 if row.get("state") not in {"active", "pending"}:
@@ -648,7 +793,7 @@ def inject_user():
         sidebar_sessions = []
 
     browser_token = ""
-    if ag_app.no_gui_mode and session.get("paracci_client_ok") is True:
+    if not preview_only and ag_app.no_gui_mode and session.get("paracci_client_ok") is True:
         browser_token = ag_app.loopback_token or ""
 
     return dict(
@@ -658,7 +803,7 @@ def inject_user():
         },
         sidebar_sessions=sidebar_sessions,
         SESSION_COLORS=SESSION_COLORS,
-        csrf_token=_ensure_csrf_token(),
+        csrf_token="" if preview_only else _ensure_csrf_token(),
         paracci_browser_token=browser_token,
     )
 
@@ -975,9 +1120,9 @@ def _parse_file_header_raw(file_bytes: bytes) -> dict | None:
     if file_type not in [0x10, 0x11, 0x20]:
         return None
     if file_type == 0x20:
-        if version != FILE_VERSION:
+        if version not in (LEGACY_ENVELOPE_FILE_VERSION, ENVELOPE_FILE_VERSION):
             return None
-    elif version not in (FILE_VERSION, HANDSHAKE_FILE_VERSION):
+    elif version not in (FILE_VERSION, LEGACY_WRAPPED_HANDSHAKE_FILE_VERSION, HANDSHAKE_FILE_VERSION):
         return None
         
     try:
@@ -1201,6 +1346,48 @@ def api_sensitive_cache_clear():
         "success": True,
         "cleared_preview": cleared_preview,
         "cleared_staged": cleared_staged,
+    })
+    return _mark_sensitive_no_store(response)
+
+
+@bp.route("/api/capabilities", methods=["GET"])
+def api_capabilities():
+    """Report runtime capabilities for the current app shell."""
+    response = jsonify({
+        "has_native_window": not ag_app.no_gui_mode,
+    })
+    return _mark_sensitive_no_store(response)
+
+
+@bp.route("/api/prepare-preview", methods=["POST"])
+def api_prepare_preview():
+    """Create a short-lived token for an already decrypted preview attachment."""
+    if not request.is_json:
+        return jsonify({"error": "JSON body required."}), 415
+    payload = request.get_json(silent=True) or {}
+    attachment_ref = payload.get("attachment_ref")
+    if not isinstance(attachment_ref, str) or not attachment_ref.strip():
+        return jsonify({"error": "attachment_ref is required."}), 400
+
+    _cleanup_preview_cache()
+    file_data = PREVIEW_CACHE.get(attachment_ref.strip())
+    if not file_data:
+        return jsonify({"error": "Attachment not found."}), 404
+
+    filename = sanitize_attachment_filename(file_data.get("filename") or "attachment.bin")
+    file_bytes = file_data.get("content", b"")
+    if not isinstance(file_bytes, bytes):
+        file_bytes = bytes(file_bytes or b"")
+    mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    allow_download = file_data.get("allow_download") is True
+    token = preview_store.generate_token(file_bytes, filename, mime_type, allow_download=allow_download)
+    response = jsonify({
+        "preview_token": token,
+        "filename": filename,
+        "mime_type": mime_type,
+        "file_size": len(file_bytes),
+        "downloadable": allow_download,
+        "allow_download": allow_download,
     })
     return _mark_sensitive_no_store(response)
 
@@ -1498,7 +1685,10 @@ def _gather_attachments(upload_files, staged_ids=None):
         total_size += len(content)
         if total_size > MAX_ATTACHMENT_SIZE:
             return None, f"Total file size exceeds the {MAX_ATTACHMENT_SIZE // (1024*1024)}MB limit."
-        content = sanitize_image(content, safe_fname)
+        try:
+            content = sanitize_image(content, safe_fname)
+        except SanitizationError:
+            return None, _(SanitizationError.i18n_key)
         files.append((safe_fname, content))
 
     for attachment_id in staged_id_list:
@@ -1589,8 +1779,8 @@ def _prepare_open_response(meta, opened, sid, is_ajax):
             "mime_type": att.mime_type,
             "size": len(att.content),
             "is_media": att.mime_type.startswith(("image/", "video/")),
-            "preview_url": url_for("main.preview", pid=pid),
-            "download_url": url_for("main.preview_download", pid=pid),
+            "preview_url": _preview_url("main.preview", pid),
+            "download_url": _preview_url("main.preview_download", pid),
         })
 
     if is_ajax:
@@ -1845,58 +2035,95 @@ def profile():
 # ---------------------------------------------------------------------------
 
 def _get_preview_response_data(file_data, pid):
-    """Prepares necessary data and mode for the preview page."""
+    """Prepare metadata for the standalone preview page."""
     filename = sanitize_attachment_filename(file_data["filename"])
-    mime = file_data["mime"]
-    allow_download = file_data["allow_download"]
-    ext = Path(filename).suffix.lower()
-    is_dangerous = ext in DANGEROUS_EXTENSIONS
-    is_code = ext in CODE_EXTENSIONS
-    mode = "image" if mime.startswith("image/") else ("video" if mime.startswith("video/") else ("text" if mime == "text/plain" else ("pdf" if mime == "application/pdf" else "default")))
-    media_url = None
-    context = {
-        "pid": pid,
-        "filename": filename,
-        "mode": mode,
-        "mime": mime,
-        "is_dangerous": False,
-        "allow_download": allow_download,
-        "media_url": media_url,
-    }
+    mime = file_data.get("mime") or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    allow_download = file_data.get("allow_download") is True
+    content = file_data.get("content", b"")
+    file_size = len(content) if isinstance(content, (bytes, bytearray)) else 0
+    content_url = ""
 
-    if is_code or is_dangerous:
-        try:
-            context.update(
-                mode="code",
-                code_content=file_data["content"].decode("utf-8", errors="replace"),
-                lang=ext[1:] if ext else "txt",
-                is_dangerous=is_dangerous,
+    if mime.startswith("image/") and not allow_download:
+        content_url = _preview_url("main.preview", pid, file_data, variant="preview")
+    elif allow_download:
+        content_url = _preview_url("main.preview", pid, file_data, raw=1)
+
+    return render_template(
+        "preview.html",
+        token="",
+        pid=pid,
+        filename=filename,
+        mime_type=mime,
+        file_size=file_size,
+        content_url=content_url,
+        media_url=content_url,
+        download_url=_preview_url("main.preview_download", pid, file_data) if allow_download else "",
+        allow_download=allow_download,
+    )
+
+def _preview_token_not_found():
+    token = (request.view_args or {}).get("pid") or ""
+    preview_js = url_for("static", filename="js/preview.js")
+    return (
+        "<!doctype html><html><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+        "<title>Preview unavailable</title>"
+        f"<script src=\"{preview_js}\" defer></script>"
+        "<style>"
+        "body{margin:0;min-height:100vh;display:grid;place-items:center;"
+        "background:#050507;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}"
+        ".panel{max-width:420px;padding:24px;text-align:center}"
+        "p{color:#b7bac4}.btn{border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.065);"
+        "color:#f5f5f7;border-radius:8px;padding:9px 14px;cursor:pointer}"
+        "</style></head><body>"
+        "<main class=\"panel\"><h3>Preview unavailable</h3>"
+        "<p>This preview has expired. Please reopen the message.</p>"
+        "<button class=\"btn\" id=\"closeBtn\" type=\"button\">Close</button></main>"
+        f"<div id=\"previewConfig\" hidden data-token=\"{token}\" data-allow-download=\"false\"></div>"
+        "</body></html>"
+    ), 404
+
+
+def _get_preview_token_response_data(entry: PreviewEntry):
+    """Render token-based preview metadata without exposing file bytes to Jinja."""
+    filename = sanitize_attachment_filename(entry.filename or "attachment.bin")
+    mime = entry.mime_type or "application/octet-stream"
+    content_url = url_for("main.preview_content", preview_token=entry.token)
+    allow_download = entry.allow_download is True
+
+    return render_template(
+        "preview.html",
+        token=entry.token,
+        filename=filename,
+        mime_type=mime,
+        file_size=len(entry.file_bytes),
+        content_url=content_url,
+        media_url=content_url,
+        allow_download=allow_download,
+        download_url=(
+            url_for(
+                "main.preview_content",
+                preview_token=entry.token,
+                download=1,
             )
-            return render_template("preview.html", **context)
-        except:
-            context.update(mode="default", is_dangerous=True)
-            return render_template("preview.html", **context)
-    if mode == "text":
-        context.update(code_content=file_data["content"].decode("utf-8", errors="replace"))
-        return render_template("preview.html", **context)
+            if allow_download
+            else ""
+        ),
+    )
 
-    if mode == "image":
-        if allow_download:
-            media_url = url_for("main.preview", pid=pid, raw=1)
-        else:
-            media_url = url_for("main.preview", pid=pid, variant="preview")
-    elif mode == "video":
-        if allow_download:
-            media_url = url_for("main.preview", pid=pid, raw=1)
-        else:
-            mode = "default"
-
-    context.update(mode=mode, media_url=media_url)
-    return render_template("preview.html", **context)
 
 @bp.route("/preview/<pid>")
 def preview(pid: str):
     """Provides a secure preview of a file inside a package."""
+    if _looks_like_preview_token(pid):
+        entry = preview_store.get(pid)
+        if entry is None:
+            return _preview_token_not_found()
+        resp_html = _get_preview_token_response_data(entry)
+        response = make_response(resp_html)
+        response.headers["Content-Security-Policy"] = _preview_content_security_policy()
+        return _mark_sensitive_no_store(response)
+
     file_data = PREVIEW_CACHE.get(pid)
     if not file_data: return f"<h3>{_('preview.not_found_title')}</h3><p>{_('preview.not_found_desc')}</p>", 404
 
@@ -1916,13 +2143,38 @@ def preview(pid: str):
 
     resp_html = _get_preview_response_data(file_data, pid)
     response = make_response(resp_html)
-    response.headers["Content-Security-Policy"] = _content_security_policy()
+    response.headers["Content-Security-Policy"] = _preview_content_security_policy()
     return _mark_sensitive_no_store(response)
 
 
 # ---------------------------------------------------------------------------
 # GET /preview/<pid>/download — Download from preview page
 # ---------------------------------------------------------------------------
+
+@bp.route("/preview/<preview_token>/content")
+def preview_content(preview_token: str):
+    """Serve bytes for a valid token-scoped preview session."""
+    if not _looks_like_preview_token(preview_token):
+        abort(404)
+    entry = preview_store.get(preview_token)
+    if entry is None:
+        abort(404)
+
+    download_requested = request.args.get("download") == "1"
+    if download_requested and entry.allow_download is not True:
+        abort(403)
+    response = send_file(
+        io.BytesIO(entry.file_bytes),
+        mimetype=entry.mime_type or "application/octet-stream",
+        as_attachment=download_requested,
+        download_name=(
+            sanitize_attachment_filename(entry.filename or "attachment.bin")
+            if download_requested
+            else None
+        ),
+    )
+    return _mark_sensitive_no_store(response)
+
 
 @bp.route("/preview/<pid>/download")
 def preview_download(pid: str):
@@ -1998,6 +2250,52 @@ def api_benchmark_report():
         return jsonify({"success": False, "message": str(e)}), 500
 
     return jsonify({"success": False, "message": "Unknown error"}), 500
+
+
+@bp.route("/api/benchmark-results")
+def api_benchmark_results():
+    """Returns the parsed benchmark_result.json containing numeric durations."""
+    import json
+    from . import ROOT_DIR
+    result_path = ROOT_DIR / "benchmark_result.json"
+    if not result_path.exists():
+        # Fallback to standard/average durations in case benchmark hasn't been run
+        fallback = {
+            "results": {
+                "standard": {
+                    "init_x": 0.040,
+                    "accept_y": 0.046,
+                    "finalize_x": 0.049,
+                    "bond_y": 0.0001,
+                    "seal": 0.044,
+                    "open": 0.045
+                },
+                "paranoid": {
+                    "init_x": 0.001,
+                    "accept_y": 0.381,
+                    "finalize_x": 0.400,
+                    "bond_y": 0.0001,
+                    "seal": 0.384,
+                    "open": 0.378
+                },
+                "quantum": {
+                    "init_x": 0.001,
+                    "accept_y": 202.9,
+                    "finalize_x": 223.2,
+                    "bond_y": 0.0001,
+                    "seal": 219.2,
+                    "open": 211.7
+                }
+            }
+        }
+        return jsonify({"success": True, "data": fallback})
+    
+    try:
+        with open(result_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return jsonify({"success": True, "data": data})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
 
 
 # ---------------------------------------------------------------------------

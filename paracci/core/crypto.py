@@ -12,7 +12,6 @@ Algorithms used:
 
 import os
 import hashlib
-import hmac
 import struct
 import time
 import gc
@@ -45,6 +44,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from cryptography.hazmat.primitives.hashes import SHA512
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
     PublicFormat,
@@ -169,7 +169,7 @@ def verify_identity_signature(
         public_key = Ed25519PublicKey.from_public_bytes(public_key_bytes)
         public_key.verify(signature, message)
         return True
-    except Exception:
+    except (InvalidSignature, ValueError, TypeError):
         return False
 
 
@@ -422,11 +422,6 @@ def message_id_fingerprint(msg_id: bytes) -> bytes:
     The hash is stored instead of the raw ID — original ID remains unknown even if DB is compromised.
     """
     return hashlib.sha3_256(b"paracci.msgid." + msg_id).digest()
-
-
-def constant_time_compare(a: bytes, b: bytes) -> bool:
-    """Constant-time byte comparison against timing attacks."""
-    return hmac.compare_digest(a, b)
 
 
 def secure_hash(data: bytes, label: bytes = b"") -> bytes:

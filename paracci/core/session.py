@@ -11,7 +11,9 @@ import time
 from binascii import Error as BinasciiError
 from typing import NamedTuple, Optional
 
-from .constants import KEM_ALGORITHM
+from cryptography.exceptions import InvalidTag
+
+from .constants import KEM_ALGORITHM, LEGACY_HANDSHAKE_FILE_WRAPPER_DOMAIN_V3
 from .crypto import (
     DerivedKeys,
     EncryptedBlob,
@@ -53,7 +55,8 @@ from .hybrid_kem import (
 
 MAGIC_BYTES = b"PARC"
 FILE_VERSION = 0x01
-HANDSHAKE_FILE_VERSION = 0x03
+LEGACY_WRAPPED_HANDSHAKE_FILE_VERSION = 0x03
+HANDSHAKE_FILE_VERSION = 0x04
 TYPE_INITIATOR = 0x10
 TYPE_RESPONDER = 0x11
 TYPE_MESSAGE = 0x20
@@ -67,7 +70,9 @@ HANDSHAKE_VERSION = HYBRID_HANDSHAKE_VERSION
 SIGNED_X25519_HANDSHAKE_VERSION = 2
 LEGACY_HANDSHAKE_VERSION = 1
 
-APP_DOMAIN = b"paracci.app.session.file.v1"
+# Handshake file-header versions:
+# v3: signed metadata wrapped in AEAD with a key derived from public session_id.
+# v4: signed public metadata stored directly as canonical JSON.
 SIGN_INITIATOR_LABEL = b"paracci.handshake.initiator.v3"
 SIGN_RESPONDER_LABEL = b"paracci.handshake.responder.v3"
 
@@ -148,9 +153,13 @@ class SessionMeta(NamedTuple):
         return self.send_seed or self.recv_seed or self.bond_seed
 
 
-def _file_encryption_key(session_id: bytes, purpose: bytes) -> bytes:
-    """Derives the wrapper key used for session file AEAD."""
-    return hkdf_derive(APP_DOMAIN + session_id, KEY_LEN, b"paracci.file.enc." + purpose)
+def _legacy_file_encryption_key(session_id: bytes, purpose: bytes) -> bytes:
+    """Derives the legacy v3 wrapper key used only for old setup-file imports."""
+    return hkdf_derive(
+        LEGACY_HANDSHAKE_FILE_WRAPPER_DOMAIN_V3 + session_id,
+        KEY_LEN,
+        b"paracci.file.enc." + purpose,
+    )
 
 
 def _build_file_header(file_type: int, session_id: bytes, file_version: int = HANDSHAKE_FILE_VERSION) -> bytes:
@@ -211,35 +220,48 @@ def _is_handshake_type(file_type: int) -> bool:
     return file_type in (TYPE_INITIATOR, TYPE_RESPONDER)
 
 
+def _load_session_payload(raw: bytes) -> dict:
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        raise SessionFileError("Session payload could not be parsed.") from exc
+    if not isinstance(payload, dict):
+        raise SessionFileError("Invalid session payload.")
+    return payload
+
+
 def _decode_file_payload(data: bytes, expected_type: int, purpose: bytes) -> tuple[bytes, dict]:
     if not _verify_magic(data):
         raise SessionFileError("Invalid file format.")
-    if len(data) < 22 + NONCE_LEN:
+    if len(data) < 22:
         raise SessionFileError("File is too short.")
     if data[5] != expected_type:
         raise SessionFileError("Unexpected session file type.")
+    file_version = data[4]
     if _is_handshake_type(expected_type):
-        if data[4] != HANDSHAKE_FILE_VERSION:
-            if data[4] < HANDSHAKE_FILE_VERSION:
+        if file_version not in (LEGACY_WRAPPED_HANDSHAKE_FILE_VERSION, HANDSHAKE_FILE_VERSION):
+            if file_version < LEGACY_WRAPPED_HANDSHAKE_FILE_VERSION:
                 raise HybridKEMError(OLDER_VERSION_ERROR, "hybrid_kem_legacy_session")
             raise SessionFileError("Unsupported version.")
-    elif data[4] != FILE_VERSION:
+    elif file_version != FILE_VERSION:
         raise SessionFileError("Unsupported version.")
 
     session_id = _expect_len(data[6:22], SESSION_ID_LEN, "session id")
     hdr = data[:22]
+    if _is_handshake_type(expected_type) and file_version == HANDSHAKE_FILE_VERSION:
+        if len(data) <= 22:
+            raise SessionFileError("File is too short.")
+        return session_id, _load_session_payload(data[22:])
+
+    if len(data) < 22 + NONCE_LEN + 16:
+        raise SessionFileError("File is too short.")
     blob = EncryptedBlob(nonce=data[22:22 + NONCE_LEN], ciphertext=data[22 + NONCE_LEN:])
-    fkey = _file_encryption_key(session_id, purpose)
+    fkey = _legacy_file_encryption_key(session_id, purpose)
     try:
         raw = decrypt(fkey, blob, aad=hdr)
-        payload = json.loads(raw.decode("utf-8"))
-    except SessionFileError:
-        raise
     except Exception as exc:
         raise SessionFileError("File integrity could not be verified.") from exc
-    if not isinstance(payload, dict):
-        raise SessionFileError("Invalid session payload.")
-    return session_id, payload
+    return session_id, _load_session_payload(raw)
 
 
 def _verify_signed_payload(kind: bytes, payload: dict, signature_field: str, identity_pub_field: str) -> bytes:
@@ -261,12 +283,10 @@ def _validate_payload_session_id(payload: dict, header_session_id: bytes) -> byt
     return payload_session_id
 
 
-def _encrypt_handshake_payload(file_type: int, session_id: bytes, purpose: bytes, payload: dict) -> bytes:
+def _serialize_handshake_payload(file_type: int, session_id: bytes, payload: dict) -> bytes:
     raw = _canonical_payload(payload)
-    fkey = _file_encryption_key(session_id, purpose)
     hdr = _build_file_header(file_type, session_id)
-    blob = encrypt(fkey, raw, aad=hdr)
-    return hdr + blob.nonce + blob.ciphertext
+    return hdr + raw
 
 
 def serialize_initiator_file(
@@ -298,7 +318,7 @@ def serialize_initiator_file(
         identity_priv,
         _handshake_signing_bytes(SIGN_INITIATOR_LABEL, payload),
     ).hex()
-    return _encrypt_handshake_payload(TYPE_INITIATOR, meta.session_id, b"initiator", payload)
+    return _serialize_handshake_payload(TYPE_INITIATOR, meta.session_id, payload)
 
 
 def parse_initiator_file(data: bytes) -> dict:
@@ -379,7 +399,7 @@ def serialize_responder_file(
         identity_priv,
         _handshake_signing_bytes(SIGN_RESPONDER_LABEL, payload),
     ).hex()
-    return _encrypt_handshake_payload(TYPE_RESPONDER, session_id, b"responder", payload)
+    return _serialize_handshake_payload(TYPE_RESPONDER, session_id, payload)
 
 
 def parse_responder_file(data: bytes) -> dict:
@@ -758,10 +778,10 @@ def deserialize_session_meta(encrypted_data: bytes, device_key: bytes) -> Sessio
     blob = EncryptedBlob(nonce=nonce, ciphertext=encrypted_data[NONCE_LEN:])
     try:
         raw = decrypt(device_key, blob, aad=b"paracci.db.session.v2")
-    except Exception:
+    except (InvalidTag, ValueError, TypeError):
         try:
             raw = decrypt(device_key, blob, aad=b"paracci.db.session.v1")
-        except Exception as exc:
+        except (InvalidTag, ValueError, TypeError) as exc:
             raise SessionError("Session data could not be decrypted.") from exc
 
     data = json.loads(raw.decode("utf-8"))

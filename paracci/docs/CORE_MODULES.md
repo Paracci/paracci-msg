@@ -4,7 +4,7 @@ The modules in `paracci/core` are independent of the web and desktop UI layers. 
 
 ## [constants.py](paracci/core/constants.py)
 
-Contains frozen protocol-stable byte constants, labels, and HMAC keys. This layer ensures long-term backwards compatibility across files, sessions, and database structures.
+Contains frozen protocol-stable byte constants and labels. This layer ensures long-term backwards compatibility across files, sessions, and database structures.
 
 ## [crypto.py](paracci/core/crypto.py)
 
@@ -13,7 +13,7 @@ Provides cryptographic primitives:
 - Hybrid X25519 + ML-KEM shared-secret combination through `derive_hybrid_shared_secret`.
 - HKDF-SHA512 and HKDF-SHA256 derivation.
 - ChaCha20-Poly1305 AEAD symmetric encryption.
-- Argon2id key-hardening implementation for user passphrases.
+- Fixed-parameter Argon2id device master-key derivation for user passphrases.
 - Message ID generation, cryptographic hashing, and process memory wipe/hygiene helpers.
 
 ## [quantum_kem.py](paracci/core/quantum_kem.py)
@@ -35,7 +35,7 @@ Coordinates the post-quantum side of the session handshake:
 
 ## [session.py](paracci/core/session.py)
 
-Coordinates the two-party v3 hybrid session setup. Handshake files (initiator and responder setup files) carry authenticated public metadata, including ML-KEM public data and ciphertext. They are integrity-protected but **not confidential**, since the wrapping key is derivable from the public session ID in the file header. Session keys are derived from the hybrid X25519 + ML-KEM shared secret and evolved deterministically.
+Coordinates the two-party v3 hybrid session setup. Handshake files (initiator and responder setup files) carry signed public metadata, including ML-KEM public data and ciphertext. They are integrity-protected but **not confidential**. Session keys are derived from the hybrid X25519 + ML-KEM shared secret and evolved deterministically.
 
 - Initiator and responder setup file creation.
 - Session bonding ceremonies.
@@ -50,7 +50,7 @@ seal_envelope(payload_bytes, session, single_use=True, ttl_seconds=0)
 open_envelope(file_bytes, session)
 ```
 
-Envelopes are encrypted and authenticated using session keys. Each envelope includes a unique message ID and step identifier to prevent replay attacks and unauthorized access.
+Envelopes are encrypted and authenticated using ChaCha20-Poly1305 AEAD and session-derived keys. Each envelope includes a unique message ID and step identifier to prevent replay attacks and unauthorized access. Legacy v1 envelopes with the former outer seal remain readable, but envelope integrity is provided by AEAD authentication.
 
 ## [package.py](paracci/core/package.py)
 
@@ -61,7 +61,7 @@ Handles in-memory assembly and parsing of the encrypted envelope ZIP payload con
 Enforces single-use and TTL guarantees:
 - Manages the SQLite-based `BurnDB` store.
 - Enforces burn semantics: once an envelope is registered as opened, it cannot be opened again on this device. Copies of the envelope on other devices or storage locations are unaffected.
-- Manages device-key derivation from the user's passphrase. Workload parameters are configured via profiles (standard, paranoid, high, and maximum) to increase brute-force costs.
+- Manages device-key storage and unlock. The device key uses fixed Argon2id parameters; configurable workload profiles belong to session and envelope key hardening.
 - Integrates local rate-limiting and lockout durations to block automated brute-force attacks on the local vault.
 - Coordinates secure file-overwrite and deletion routines.
 
