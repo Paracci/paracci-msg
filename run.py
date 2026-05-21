@@ -7,6 +7,8 @@ Execution directory: paracci/
     python run.py
 """
 
+from __future__ import annotations
+
 import sys
 import os
 import argparse
@@ -21,10 +23,78 @@ sys.path.insert(0, str(Path(__file__).parent / "paracci"))
 
 # core.shields import
 from core.shields import shield
+from core.preview_store import preview_store
 
 import threading
 import socket
 import webview
+
+
+_preview_windows: dict[str, webview.Window] = {}
+_preview_windows_lock = threading.Lock()
+_preview_loopback_host = "127.0.0.1"
+_preview_loopback_port: int | None = None
+
+# ── Preview-close guard ────────────────────────────────────────────────────
+# pywebview 6.x has a known multi-window event propagation bug: destroying
+# a secondary (preview) window spuriously fires the MAIN window's lifecycle
+# events (before_load, navigating, loaded) and can trigger a full page
+# reload that blows away the authenticated Flask session.
+#
+# The guard counter is raised BEFORE destroy() is called and stays elevated
+# for _PREVIEW_CLOSING_LINGER_S seconds after cleanup completes.  This
+# linger window covers the async GUI-thread delay between calling destroy()
+# and pywebview actually firing the spurious events.  Both the `navigating`
+# handler and the `loaded` handler bail out immediately while the counter
+# is non-zero.
+_preview_closing_count: int = 0
+_preview_closing_lock = threading.Lock()
+_PREVIEW_CLOSING_LINGER_S: float = 1.5  # seconds to keep guard after teardown
+
+
+def _begin_preview_close_guard() -> None:
+    """Raise the preview-close guard counter (call before window teardown)."""
+    global _preview_closing_count
+    with _preview_closing_lock:
+        _preview_closing_count += 1
+
+
+def _end_preview_close_guard() -> None:
+    """Schedule a delayed decrement so the guard outlives async pywebview events."""
+    def _decrement():
+        import time
+        time.sleep(_PREVIEW_CLOSING_LINGER_S)
+        global _preview_closing_count
+        with _preview_closing_lock:
+            _preview_closing_count = max(0, _preview_closing_count - 1)
+    threading.Thread(target=_decrement, daemon=True).start()
+
+
+def _preview_close_guard_active() -> bool:
+    """Return True if any preview teardown is in progress or recently completed."""
+    with _preview_closing_lock:
+        return _preview_closing_count > 0
+
+
+class PreviewWindowApi:
+    """Token-scoped API exposed only to a dedicated preview window."""
+
+    def __init__(self, token: str):
+        self.token = str(token)
+
+    def close_preview_window(self, token):
+        if not _preview_token_matches(token, self.token):
+            return {"success": False, "error": "Invalid preview token."}
+        return {"success": close_preview_window(self.token)}
+
+    def download_preview_file(self, token):
+        if not _preview_token_matches(token, self.token):
+            return {"success": False, "error": "Invalid preview token."}
+        return download_preview_file(self.token)
+
+
+def _preview_token_matches(candidate: str | None, expected: str | None) -> bool:
+    return bool(candidate and expected and secrets.compare_digest(str(candidate), str(expected)))
 
 def get_free_port():
     """Requests a free port from the OS."""
@@ -33,6 +103,171 @@ def get_free_port():
     port = s.getsockname()[1]
     s.close()
     return port
+
+
+def _configure_preview_window_context(host: str, port: int) -> None:
+    """Set the loopback address used by native preview windows."""
+    global _preview_loopback_host, _preview_loopback_port
+    _preview_loopback_host = host
+    _preview_loopback_port = int(port)
+
+
+def _preview_window_title(filename: str) -> str:
+    title = str(filename or "Paracci Secure Preview").strip() or "Paracci Secure Preview"
+    return title if len(title) <= 60 else f"{title[:57]}..."
+
+
+def _preview_window_size(filename: str, mime_type: str) -> tuple[int, int]:
+    mime = str(mime_type or "").lower()
+    suffix = Path(str(filename or "")).suffix.lower()
+    text_suffixes = {
+        ".txt", ".log", ".csv", ".md", ".json", ".xml", ".html",
+        ".py", ".js", ".css", ".sql", ".sh", ".rs", ".go", ".java",
+        ".c", ".cpp", ".h", ".yaml", ".yml",
+    }
+
+    if mime.startswith("image/"):
+        return 900, 700
+    if mime.startswith("video/"):
+        return 1024, 640
+    if mime.startswith("audio/"):
+        return 500, 200
+    if mime == "application/pdf" or suffix == ".pdf":
+        return 900, 800
+    if mime.startswith("text/") or suffix in text_suffixes or "json" in mime or "xml" in mime:
+        return 900, 700
+    return 800, 600
+
+
+def open_preview_window(token: str, filename: str, mime_type: str, file_size: int) -> None:
+    """Open a dedicated native preview window for a PreviewStore token."""
+    if not token:
+        raise ValueError("preview token is required")
+    if _preview_loopback_port is None:
+        raise RuntimeError("Preview window context is not configured.")
+
+    token = str(token)
+    width, height = _preview_window_size(filename, mime_type)
+    url = f"http://{_preview_loopback_host}:{_preview_loopback_port}/preview/{quote(token, safe='')}"
+
+    print(f"  [>] open_preview_window requested: {filename} ({file_size} bytes)")
+    preview_win = webview.create_window(
+        title=_preview_window_title(filename),
+        url=url,
+        width=width,
+        height=height,
+        resizable=True,
+        on_top=False,
+        background_color='#121212',
+        js_api=PreviewWindowApi(token),
+    )
+
+    with _preview_windows_lock:
+        _preview_windows[token] = preview_win
+
+    try:
+        if hasattr(preview_win.events, 'closed'):
+            preview_win.events.closed += lambda *_args, _token=token: _on_preview_window_closed(_token)
+    except Exception as e:
+        print(f"  [!] Preview close event binding error: {e}")
+
+
+def _on_preview_window_closed(token: str) -> None:
+    # Raise the guard so that any spurious pywebview lifecycle events that
+    # fire on the main window during / after this teardown are suppressed.
+    # The linger keeps it raised past the async GUI-thread event delay.
+    _begin_preview_close_guard()
+    try:
+        with _preview_windows_lock:
+            _preview_windows.pop(str(token), None)
+        preview_store.revoke(str(token))
+    finally:
+        _end_preview_close_guard()
+
+
+def close_preview_window(token: str) -> bool:
+    token = str(token)
+    with _preview_windows_lock:
+        preview_win = _preview_windows.pop(token, None)
+
+    if preview_win is None:
+        preview_store.revoke(token)
+        return False
+
+    # Raise the guard BEFORE destroy() so the GUI-thread's spurious events
+    # are blocked from the moment the window is torn down.  The closed-event
+    # callback (_on_preview_window_closed) will also raise the guard when it
+    # fires — the counter handles the double-increment correctly.
+    _begin_preview_close_guard()
+    try:
+        preview_win.destroy()
+        return True
+    finally:
+        preview_store.revoke(token)
+        _end_preview_close_guard()
+
+
+def _preview_download_destination(downloads_dir: Path, filename: str) -> Path:
+    downloads_dir.mkdir(parents=True, exist_ok=True)
+    dest = downloads_dir / filename
+    if not dest.exists():
+        return dest
+
+    stem = dest.stem
+    suffix = dest.suffix
+    counter = 1
+    while dest.exists():
+        dest = downloads_dir / f"{stem} ({counter}){suffix}"
+        counter += 1
+    return dest
+
+
+def download_preview_file(token: str) -> dict:
+    token = str(token)
+    entry = preview_store.get(token)
+    if entry is None:
+        return {"success": False, "error": "Preview unavailable."}
+    if entry.allow_download is not True:
+        return {"success": False, "error": "Download not permitted."}
+
+    with _preview_windows_lock:
+        preview_win = _preview_windows.get(token)
+    if preview_win is None:
+        return {"success": False, "error": "Preview window unavailable."}
+
+    try:
+        from core.package import sanitize_attachment_filename
+        from core.config import ParacciConfig
+
+        filename = sanitize_attachment_filename(entry.filename or "attachment.bin")
+        cfg = ParacciConfig()
+        downloads_dir = Path(cfg.full_downloads_path)
+        out_path = _preview_download_destination(downloads_dir, filename)
+        out_path.write_bytes(entry.file_bytes)
+        preview_win.evaluate_js(
+            f"window.showDownloadSuccess({json.dumps(out_path.name)});"
+        )
+        return {"success": True, "path": str(out_path), "filename": out_path.name}
+    except Exception as e:
+        print(f"  [!] Preview download error: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def _close_all_preview_windows() -> None:
+    with _preview_windows_lock:
+        windows = list(_preview_windows.items())
+        _preview_windows.clear()
+
+    for token, preview_win in windows:
+        try:
+            preview_win.destroy()
+        except Exception as e:
+            print(f"  [!] Preview window close error: {e}")
+        preview_store.revoke(token)
+
+
+def _on_main_window_closed(*_args) -> None:
+    _close_all_preview_windows()
 
 def clear_recent_docs():
     """Clears the system 'Recent Documents' list (Anti-Forensics)."""
@@ -101,6 +336,7 @@ if __name__ == "__main__":
 
     port = args.port if args.port else get_free_port()
     loopback_host = "127.0.0.1"
+    _configure_preview_window_context(loopback_host, port)
     webview_token = getattr(webview, "token", None) if not args.no_gui else None
     using_webview_token = bool(webview_token)
     loopback_token = (
@@ -151,6 +387,7 @@ if __name__ == "__main__":
         # Window Control API (JS -> Python)
         class ProApi:
             def close(self):
+                _close_all_preview_windows()
                 window.destroy()
             def minimize(self):
                 window.minimize()
@@ -249,6 +486,9 @@ if __name__ == "__main__":
                     return True
                 return False
 
+            def open_preview_window(self, token, filename, mime_type, file_size):
+                open_preview_window(token, filename, mime_type, file_size)
+
         # Main Window (WebView)
         window = webview.create_window(
             title="Paracci Secure Messaging",
@@ -264,7 +504,20 @@ if __name__ == "__main__":
         
         # ── Security Shield (Chromium Hardening) ───────────────
         def on_navigating(url):
-            """Blocks all links leading to the outside world."""
+            """Blocks all links leading to the outside world.
+
+            Also blocks spurious navigations that pywebview 6.x triggers on the
+            main window when a secondary (preview) window is being torn down.
+            This is a known pywebview multi-window event propagation bug.
+            """
+            # Guard: if a preview window is closing right now, any navigation
+            # event on the main window is a spurious side-effect of the
+            # pywebview multi-window bug — block it unconditionally so the
+            # main window's bootstrap state is never disturbed.
+            if _preview_close_guard_active():
+                print(f"  [!] Blocked spurious main-window navigation during preview close: {url}")
+                return False
+
             try:
                 parsed = urlparse(url)
                 allowed = (
@@ -287,7 +540,21 @@ if __name__ == "__main__":
         except:
             pass # This event may not exist in some older versions
 
+        try:
+            if hasattr(window.events, 'closed'):
+                window.events.closed += _on_main_window_closed
+        except Exception as e:
+            print(f"  [!] Main close event binding error: {e}")
+
         def inject_fallback_loopback_token(*_args):
+            # Guard: skip this handler entirely when a preview window is
+            # closing.  pywebview 6.x spuriously fires the main window's
+            # `loaded` event whenever any secondary window closes.  Running
+            # evaluate_js here during that spurious event can interact badly
+            # with the concurrent teardown and is never needed — the main
+            # window's token was already injected at initial load.
+            if _preview_close_guard_active():
+                return
             if using_webview_token:
                 return
             try:
@@ -355,11 +622,28 @@ if __name__ == "__main__":
         if not os.path.exists(ICON_PATH):
             ICON_PATH = None
 
+        # Ensure a persistent WebView storage path to prevent session cookie loss when preview windows are closed
+        storage_path = os.path.join(os.environ.get("DATA_DIR", "data"), "webview")
+
         if ICON_PATH:
-            webview.start(shield.apply_anti_screenshot, (window, anti_screenshot_enabled), debug=args.debug, icon=ICON_PATH)
+            webview.start(
+                shield.apply_anti_screenshot,
+                (window, anti_screenshot_enabled),
+                debug=args.debug,
+                icon=ICON_PATH,
+                private_mode=False,
+                storage_path=storage_path
+            )
         else:
-            webview.start(shield.apply_anti_screenshot, (window, anti_screenshot_enabled), debug=args.debug)
+            webview.start(
+                shield.apply_anti_screenshot,
+                (window, anti_screenshot_enabled),
+                debug=args.debug,
+                private_mode=False,
+                storage_path=storage_path
+            )
         
         # Forcefully close Flask thread and the entire process when the app closes
+        _close_all_preview_windows()
         print("\n  [o] Paracci closed. Cleaning up processes...")
         os._exit(0)
