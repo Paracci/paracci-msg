@@ -20,7 +20,7 @@ window.updateNativeUI = function(fileRef) {
     const selectedText = dropArea?.dataset.selectedText || window.PARACCI_I18N?.file_selected || 'File Selected';
     const ref = typeof fileRef === 'object' && fileRef !== null
         ? fileRef
-        : { id: '', filename: String(fileRef || '').split(/[\\/]/).pop() };
+        : { id: '', filename: String(fileRef || '').split(/[\\\/]/).pop() };
     const name = ref.filename || nativeInput?.dataset.filename || '';
 
     if (nativeInput) nativeInput.value = ref.id || nativeInput.value || '';
@@ -46,6 +46,19 @@ const initSetup = () => {
                 btn.disabled = true;
                 btn.innerHTML = `<span class="spinner"></span> ${escapeHTML(armorText)}`;
             }
+            if (window.showArgonWorkOverlay) {
+                const selectedRadio = setupForm.querySelector('input[name="security_profile"]:checked');
+                const profile = selectedRadio ? selectedRadio.value : 'standard';
+                let params = profile;
+                if (profile === 'custom') {
+                    params = {
+                        t: parseInt(document.getElementById('argon_t')?.value || '1', 10),
+                        m: parseInt(document.getElementById('argon_m')?.value || '64', 10) * 1024, // in KiB
+                        p: parseInt(document.getElementById('argon_p')?.value || '1', 10)
+                    };
+                }
+                window.showArgonWorkOverlay('init', params);
+            }
         });
     }
 
@@ -55,6 +68,9 @@ const initSetup = () => {
             if (btn) {
                 btn.disabled = true;
                 btn.innerHTML = `<span class="spinner"></span> ${escapeHTML(armorText)}`;
+            }
+            if (window.showArgonWorkOverlay) {
+                window.showArgonWorkOverlay('accept', window._importedSecurityParams || null);
             }
         });
     }
@@ -131,6 +147,32 @@ const initSetup = () => {
                 if (dropLabel) {
                     dropLabel.innerHTML = `<span class="text-accent">${escapeHTML(selectedText)}</span><br><small>${escapeHTML(fileInput.files[0].name)}</small>`;
                 }
+
+                // Parse file to get security parameters
+                const file = fileInput.files[0];
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    try {
+                        const text = e.target.result;
+                        const jsonStart = text.indexOf('{');
+                        if (jsonStart !== -1) {
+                            const jsonStr = text.substring(jsonStart);
+                            const payload = JSON.parse(jsonStr);
+                            if (payload && payload.evo_config) {
+                                const evo = payload.evo_config;
+                                if (evo.length >= 36) {
+                                    const t = parseInt(evo.substring(16, 20), 16);
+                                    const m = parseInt(evo.substring(20, 28), 16); // in KiB
+                                    const p = parseInt(evo.substring(28, 36), 16);
+                                    window._importedSecurityParams = { t, m, p };
+                                }
+                            }
+                        }
+                    } catch (err) {
+                        console.error("Failed to parse security parameters from file:", err);
+                    }
+                };
+                reader.readAsText(file);
             }
         });
 
@@ -154,7 +196,9 @@ const initSetup = () => {
         }
     }
 
-    // Color Picker Logic (Shared)
+    // Phase 2 – Color Picker Logic (Shared)
+    // JS handles data-sync between native picker, hex input, and radio buttons.
+    // CSS :has(input[type="radio"]:checked) handles active state visuals without JS queries.
     document.querySelectorAll('.custom-color-section').forEach(section => {
         const nativePicker = section.querySelector('.native-color-picker');
         const customHex = section.querySelector('.custom-color-input');
@@ -162,7 +206,6 @@ const initSetup = () => {
         const radios = group ? group.querySelectorAll('input[type="radio"]') : [];
 
         if (nativePicker && customHex) {
-            // Function to update hex from native
             const syncFromNative = () => {
                 const color = nativePicker.value;
                 customHex.value = color.replace('#', '');
@@ -184,7 +227,6 @@ const initSetup = () => {
                 }
             });
 
-            // Add sync from radios to custom hex
             radios.forEach(radio => {
                 radio.addEventListener('change', () => {
                     if (radio.checked) {
@@ -204,6 +246,15 @@ if (document.readyState === 'loading') {
 }
 
 window.showBenchmarkModal = async function() {
+    // Phase 2: Use native <dialog> element declared in setup.html instead of
+    // building a div overlay from scratch. Benefits: focus trapping, aria-modal,
+    // Escape key dismissal, and ::backdrop pseudo-element — all for free.
+    const dialog = document.getElementById('hw-report-dialog');
+    if (!dialog) {
+        alert(window.PARACCI_I18N?.hw_report_error || 'Dialog element not found');
+        return;
+    }
+
     try {
         const response = await fetch('/api/benchmark-report');
         const data = await response.json();
@@ -212,44 +263,29 @@ window.showBenchmarkModal = async function() {
             return;
         }
 
-        const modal = document.createElement('div');
-        modal.id = 'benchmark-modal';
-        modal.className = 'p-modal-overlay active';
+        // Populate dialog content
+        const titleEl   = document.getElementById('hw-dialog-title-text');
+        const bodyEl    = document.getElementById('hw-dialog-body');
+        const closeLabel = document.getElementById('hw-dialog-close-label');
 
-        const content = document.createElement('div');
-        content.className = 'card p-modal';
-        content.style.maxWidth = '700px';
+        if (titleEl)    titleEl.textContent    = window.PARACCI_I18N?.hw_report_title || 'Hardware Calibration Report';
+        if (bodyEl)     bodyEl.textContent     = data.report;
+        if (closeLabel) closeLabel.textContent = window.PARACCI_I18N?.close || 'Close';
 
-        const closeBtn = document.createElement('button');
-        closeBtn.innerHTML = '&times;';
-        closeBtn.className = 'p-modal-close';
-        closeBtn.onclick = () => modal.remove();
+        // Wire close buttons
+        const closeTop    = document.getElementById('hw-dialog-close-btn');
+        const closeFooter = document.getElementById('hw-dialog-footer-close');
+        const closeDialog = () => dialog.close();
 
-        const title = document.createElement('h2');
-        title.textContent = window.PARACCI_I18N?.hw_report_title || 'Hardware Calibration Report';
-        title.className = 'text-accent mb-4';
+        if (closeTop)    { closeTop.onclick    = closeDialog; }
+        if (closeFooter) { closeFooter.onclick = closeDialog; }
 
-        const body = document.createElement('pre');
-        body.textContent = data.report;
-        body.className = 'preview-text mono font-xs p-3';
+        // Backdrop click dismissal
+        dialog.onclick = (e) => { if (e.target === dialog) dialog.close(); };
 
-        const footer = document.createElement('div');
-        footer.className = 'p-modal-footer';
-        const closeBtnFooter = document.createElement('button');
-        closeBtnFooter.className = 'btn btn-secondary';
-        closeBtnFooter.textContent = window.PARACCI_I18N?.close || 'Close';
-        closeBtnFooter.onclick = () => modal.remove();
-        footer.appendChild(closeBtnFooter);
+        // Open as a modal — browser provides focus trap + Escape key dismissal.
+        dialog.showModal();
 
-        content.appendChild(closeBtn);
-        content.appendChild(title);
-        content.appendChild(body);
-        content.appendChild(footer);
-        modal.appendChild(content);
-        document.body.appendChild(modal);
-        modal.onclick = (e) => {
-            if (e.target === modal) modal.remove();
-        };
     } catch (err) {
         alert((window.PARACCI_I18N?.hw_report_error || 'An error occurred while fetching the report') + ': ' + err);
     }

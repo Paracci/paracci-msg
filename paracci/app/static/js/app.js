@@ -488,17 +488,329 @@ function handleToastClick() {
 }
 
 // 4. Argon2id Work Overlay Helpers
-function showArgonWorkOverlay() {
+let _argonAnimationId = null;
+let _argonState = 'idle'; // 'idle', 'loading', 'finishing', 'fade-wait', 'fading'
+let _argonStartTime = 0;
+let _argonFinishStartTime = 0;
+let _argonFadeStartTime = 0;
+let _argonStartPercent = 0;
+let _argonCurrentPercent = 0;
+const MIN_ARGON_OVERLAY_DISPLAY_MS = 800; // minimum display duration to prevent flickering
+let _argonEstDuration = 800;
+let _argonBackendFinished = false;
+let _argonWorkBenchmarkData = null;
+
+const loaderI18n = {
+    tr: {
+        init: "Kanal Başlatılıyor...",
+        accept: "Davet Kabul Ediliyor...",
+        finalize: "Bağlantı Tamamlanıyor...",
+        seal: "Mesaj Kilitleniyor...",
+        open: "Kilit Açılıyor...",
+        default: "İşlem Yapılıyor...",
+        p_standard: "Standart Profil - Güvenli ve Hızlı Şifreleme (~0.1s)",
+        p_paranoid: "Paranoid Profil - Yüksek Güvenlik (~0.8s)",
+        p_quantum: "Quantum Profil - Post-Quantum Koruması (~3-4dk) - Lütfen bekleyin, bu işlem bilgisayarınızın donanımına bağlıdır.",
+        p_custom: "Özel Profil - Argon2id Korumalı Şifreleme",
+        desc_init: "Kanal anahtarları oluşturuluyor ve el sıkışma başlatılıyor.",
+        desc_accept: "Argon2id zaman-kilitli anahtar türetimi gerçekleştiriliyor. Donma hissi oluşabilir, bu normaldir.",
+        desc_finalize: "Karşı tarafın anahtar doğrulaması yapılıyor ve oturum tamamlanıyor.",
+        desc_seal: "Mesaj içeriği Argon2id ve ML-KEM hibrit kriptografi ile kilitleniyor.",
+        desc_open: "Zarf içeriği çözülüyor, Argon2id koruması aşılıyor."
+    },
+    en: {
+        init: "Initializing Channel...",
+        accept: "Accepting Invitation...",
+        finalize: "Finalizing Connection...",
+        seal: "Sealing Message...",
+        open: "Opening Message...",
+        default: "Processing...",
+        p_standard: "Standard Profile - Secure & Fast Encryption (~0.1s)",
+        p_paranoid: "Paranoid Profile - High Security (~0.8s)",
+        p_quantum: "Quantum Profile - Post-Quantum Protection (~3-4m) - Please wait, this depends on your hardware.",
+        p_custom: "Custom Profile - Argon2id Shielded Encryption",
+        desc_init: "Generating channel keys and starting the handshake.",
+        desc_accept: "Performing Argon2id time-locked key derivation. Browser response may lag, this is normal.",
+        desc_finalize: "Verifying peer's keys and finalizing the secure session.",
+        desc_seal: "Sealing message content with Argon2id and ML-KEM hybrid cryptography.",
+        desc_open: "Decrypting envelope content and breaking Argon2id time-lock."
+    },
+    de: {
+        init: "Kanal wird initialisiert...",
+        accept: "Einladung wird akzeptiert...",
+        finalize: "Verbindung wird abgeschlossen...",
+        seal: "Nachricht wird versiegelt...",
+        open: "Nachricht wird geöffnet...",
+        default: "Verarbeitung...",
+        p_standard: "Standard-Profil - Sichere und schnelle Verschlüsselung (~0.1s)",
+        p_paranoid: "Paranoid-Profil - Hohe Sicherheit (~0.8s)",
+        p_quantum: "Quantum-Profil - Post-Quantum-Schutz (~3-4 Min.) - Bitte warten, dies hängt von Ihrer Hardware ab.",
+        p_custom: "Benutzerdefiniertes Profil - Argon2id-geschützte Verschlüsselung",
+        desc_init: "Kanalschlüssel werden generiert und der Handshake gestartet.",
+        desc_accept: "Argon2id-zeitgesperrte Schlüsselableitung wird durchgeführt. Browser kann verzögern, das ist normal.",
+        desc_finalize: "Schlüssel des Partners werden überprüft und die sichere Sitzung abgeschlossen.",
+        desc_seal: "Nachrichteninhalt wird mit Argon2id und ML-KEM Hybrid-Kryptographie versiegelt.",
+        desc_open: "Umschlaginhalt wird entschlüsselt und Argon2id-Zeitsperre aufgehoben."
+    },
+    es: {
+        init: "Inicializando canal...",
+        accept: "Aceptando invitación...",
+        finalize: "Finalizando conexión...",
+        seal: "Sellando mensaje...",
+        open: "Abriendo mensaje...",
+        default: "Procesando...",
+        p_standard: "Perfil estándar - Cifrado rápido y seguro (~0.1s)",
+        p_paranoid: "Perfil paranoico - Alta seguridad (~0.8s)",
+        p_quantum: "Perfil cuántico - Protección post-cuántica (~3-4 min) - Por favor espere, esto depende de su hardware.",
+        p_custom: "Perfil personalizado - Cifrado protegido por Argon2id",
+        desc_init: "Generando claves de canal e iniciando el saludo.",
+        desc_accept: "Realizando derivación de claves con bloqueo de tiempo Argon2id. El navegador puede ralentizarse, es normal.",
+        desc_finalize: "Verificando las claves del par y finalizando la sesión segura.",
+        desc_seal: "Sellando el contenido del mensaje con criptografía híbrida Argon2id y ML-KEM.",
+        desc_open: "Descifrando el contenido del sobre y rompiendo el bloqueo de tiempo Argon2id."
+    },
+    fr: {
+        init: "Initialisation du canal...",
+        accept: "Acceptation de l'invitation...",
+        finalize: "Finalisation de la connexion...",
+        seal: "Scellement du message...",
+        open: "Ouverture du message...",
+        default: "Traitement...",
+        p_standard: "Profil standard - Chiffrement rapide et sécurisé (~0.1s)",
+        p_paranoid: "Profil paranoïaque - Haute sécurité (~0.8s)",
+        p_quantum: "Profil quantique - Protection post-quantique (~3-4 min) - Veuillez patienter, cela dépend de votre matériel.",
+        p_custom: "Profil personnalisé - Chiffrement protégé par Argon2id",
+        desc_init: "Génération des clés de canal et démarrage de la liaison.",
+        desc_accept: "Dérivation de clés Argon2id verrouillée dans le temps. Le navigateur peut ralentir, c'est normal.",
+        desc_finalize: "Vérification des clés du pair et finalisation de la session sécurisée.",
+        desc_seal: "Scellement du contenu du message avec la cryptographie hybride Argon2id et ML-KEM.",
+        desc_open: "Déchiffrement du contenu de l'enveloppe et levée du verrouillage temporel Argon2id."
+    },
+    ru: {
+        init: "Инициализация канала...",
+        accept: "Принятие приглашения...",
+        finalize: "Завершение соединения...",
+        seal: "Запечатывание сообщения...",
+        open: "Открытие сообщения...",
+        default: "Обработка...",
+        p_standard: "Стандартный профиль - Быстрое и безопасное шифрование (~0.1s)",
+        p_paranoid: "Параноидальный профиль - Высокая безопасность (~0.8s)",
+        p_quantum: "Квантовый профиль - Постквантовая защита (~3-4 мин) - Пожалуйста, подождите, это зависит от вашего оборудования.",
+        p_custom: "Пользовательский профиль - Шифрование с защитой Argon2id",
+        desc_init: "Генерация ключей канала и запуск рукопожатия.",
+        desc_accept: "Выполнение криптографического вывода ключей Argon2id. Браузер может зависнуть, это нормально.",
+        desc_finalize: "Проверка ключей собеседника и завершение безопасного сеанса.",
+        desc_seal: "Запечатывание содержимого сообщения с помощью гибридного шифрования Argon2id и ML-KEM.",
+        desc_open: "Расшифровка конверта и обход временной блокировки Argon2id."
+    }
+};
+
+async function loadBenchmarkData() {
+    try {
+        const res = await fetch('/api/benchmark-results');
+        const json = await res.json();
+        if (json.success && json.data && json.data.results) {
+            _argonWorkBenchmarkData = json.data.results;
+        }
+    } catch (err) {
+        console.error("Failed to load benchmark data", err);
+    }
+}
+
+// Initial fetch
+loadBenchmarkData();
+
+function getProfileName(t, m, p) {
+    t = parseInt(t);
+    m = parseInt(m);
+    p = parseInt(p);
+    if (t === 2 && m === 65536 && p === 2) return "standard";
+    if (t === 8 && m === 262144 && p === 4) return "paranoid";
+    if (t === 256 && m === 2097152 && p === 2) return "quantum";
+    return "custom";
+}
+
+function showArgonWorkOverlay(action = 'seal', params = null) {
     const shield = document.getElementById('argonWorkOverlay');
-    if (shield) shield.classList.add('active');
+    if (!shield) return;
+
+    if (_argonAnimationId) {
+        cancelAnimationFrame(_argonAnimationId);
+        _argonAnimationId = null;
+    }
+
+    _argonState = 'loading';
+    _argonStartTime = performance.now();
+    _argonBackendFinished = false;
+    _argonCurrentPercent = 0;
+
+    const bar = document.getElementById('argonWorkProgress');
+    const pctText = document.getElementById('argonWorkPercent');
+    const titleEl = document.getElementById('argonWorkText');
+    const descEl = document.getElementById('argonWorkSubtext');
+
+    if (bar) {
+        bar.style.transition = 'none'; // Disable CSS transitions for width to avoid lag with RAF updates
+        bar.style.width = '0%';
+    }
+    if (pctText) pctText.textContent = '0%';
+
+    // Detect language
+    const lang = document.documentElement.lang || 'tr';
+    const dict = loaderI18n[lang] || loaderI18n['tr'];
+
+    // Identify profile
+    let profileName = 'standard';
+    let customParams = null;
+    
+    if (typeof params === 'string') {
+        profileName = params.toLowerCase();
+    } else if (params && typeof params === 'object') {
+        if (params.t !== undefined && params.m !== undefined && params.p !== undefined) {
+            profileName = getProfileName(params.t, params.m, params.p);
+            if (profileName === 'custom') {
+                customParams = { t: params.t, m: params.m / 1024, p: params.p }; // Convert back to MB for display
+            }
+        } else {
+            profileName = 'standard';
+        }
+    } else {
+        // Fallback to reading config elements
+        const cfg = document.getElementById('paracci-config');
+        if (cfg) {
+            const t = parseInt(cfg.dataset.securityT || '0');
+            const m = parseInt(cfg.dataset.securityM || '0');
+            const p = parseInt(cfg.dataset.securityP || '0');
+            if (t && m && p) {
+                profileName = getProfileName(t, m, p);
+                if (profileName === 'custom') {
+                    customParams = { t, m: m / 1024, p };
+                }
+            }
+        }
+    }
+
+    // Estimate duration
+    let estDurationSec = 0.8;
+    let isCustom = (profileName === 'custom');
+
+    if (isCustom && customParams) {
+        const t = parseInt(customParams.t || 1);
+        const m = parseInt(customParams.m || 64);
+        const p = parseInt(customParams.p || 1);
+        estDurationSec = (t * m) / 640 / Math.max(1, Math.sqrt(p));
+    } else {
+        const fallbacks = {
+            standard: { init_x: 0.040, accept_y: 0.046, finalize_x: 0.049, seal: 0.044, open: 0.045 },
+            paranoid: { init_x: 0.001, accept_y: 0.381, finalize_x: 0.400, seal: 0.384, open: 0.378 },
+            quantum: { init_x: 0.001, accept_y: 202.9, finalize_x: 223.2, seal: 219.2, open: 211.7 }
+        };
+
+        const lookupKey = action === 'init' ? 'init_x' : 
+                          action === 'accept' ? 'accept_y' : 
+                          action === 'finalize' ? 'finalize_x' : 
+                          action === 'seal' ? 'seal' : 
+                          action === 'open' ? 'open' : 'seal';
+
+        const db = _argonWorkBenchmarkData || fallbacks;
+        const profData = db[profileName] || fallbacks[profileName] || fallbacks['standard'];
+        estDurationSec = profData[lookupKey] || 0.8;
+    }
+
+    _argonEstDuration = Math.max(MIN_ARGON_OVERLAY_DISPLAY_MS, estDurationSec * 1000);
+
+    // Dynamic text
+    if (titleEl) {
+        titleEl.textContent = dict[action] || dict.default;
+    }
+    if (descEl) {
+        let profLabel = dict[`p_${profileName}`] || dict.p_standard;
+        let actLabel = dict[`desc_${action}`] || '';
+        if (isCustom && customParams) {
+            profLabel = `${dict.p_custom} (t=${customParams.t}, m=${customParams.m}MB, p=${customParams.p})`;
+        }
+        descEl.innerHTML = `<strong>${profLabel}</strong><br>${actLabel}`;
+    }
+
+    // Show
+    shield.classList.add('active');
+    shield.style.opacity = '1';
+
+    _argonAnimationId = requestAnimationFrame(updateArgonOverlay);
+}
+
+function updateArgonOverlay(timestamp) {
+    if (_argonState === 'idle') {
+        _argonAnimationId = null;
+        return;
+    }
+
+    const bar = document.getElementById('argonWorkProgress');
+    const pctText = document.getElementById('argonWorkPercent');
+    const shield = document.getElementById('argonWorkOverlay');
+
+    if (_argonState === 'loading') {
+        const elapsed = timestamp - _argonStartTime;
+        const timeConstant = _argonEstDuration / 2.5;
+        const ratio = 1 - Math.exp(-elapsed / timeConstant);
+        _argonCurrentPercent = Math.min(95, 95 * ratio);
+
+        if (bar) bar.style.width = _argonCurrentPercent.toFixed(1) + '%';
+        if (pctText) pctText.textContent = Math.round(_argonCurrentPercent) + '%';
+
+        if (_argonBackendFinished && elapsed >= MIN_ARGON_OVERLAY_DISPLAY_MS) {
+            _argonState = 'finishing';
+            _argonFinishStartTime = timestamp;
+            _argonStartPercent = _argonCurrentPercent;
+        }
+    } else if (_argonState === 'finishing') {
+        const finishElapsed = timestamp - _argonFinishStartTime;
+        const FINISH_DURATION_MS = 400; // Animate to 100% in 400ms
+        const tRatio = Math.min(1.0, finishElapsed / FINISH_DURATION_MS);
+        
+        // Ease-out cubic: f(t) = 1 - (1-t)^3
+        const easeOutCubic = 1 - Math.pow(1 - tRatio, 3);
+        _argonCurrentPercent = _argonStartPercent + (100 - _argonStartPercent) * easeOutCubic;
+
+        if (bar) bar.style.width = _argonCurrentPercent.toFixed(1) + '%';
+        if (pctText) pctText.textContent = Math.round(_argonCurrentPercent) + '%';
+
+        if (tRatio >= 1.0) {
+            _argonState = 'fade-wait';
+            _argonFadeStartTime = timestamp;
+        }
+    } else if (_argonState === 'fade-wait') {
+        const waitElapsed = timestamp - _argonFadeStartTime;
+        if (waitElapsed >= 200) {
+            _argonState = 'fading';
+            _argonFadeStartTime = timestamp;
+            if (shield) {
+                shield.style.opacity = '0';
+            }
+        }
+    } else if (_argonState === 'fading') {
+        const fadeElapsed = timestamp - _argonFadeStartTime;
+        if (fadeElapsed >= 300) {
+            _argonState = 'idle';
+            if (shield) {
+                shield.classList.remove('active');
+                shield.style.opacity = '';
+            }
+            if (bar) bar.style.width = '0%';
+            if (pctText) pctText.textContent = '0%';
+            _argonAnimationId = null;
+            return;
+        }
+    }
+
+    _argonAnimationId = requestAnimationFrame(updateArgonOverlay);
 }
 
 function hideArgonWorkOverlay() {
-    const shield = document.getElementById('argonWorkOverlay');
-    if (shield) shield.classList.remove('active');
+    _argonBackendFinished = true;
 }
 
-// 5. Apple Custom Select Implementation
+// 5. Apple Custom Select & Lang Switcher Popover Implementation
 document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('select.apple-select').forEach(select => {
         // Wrapper
@@ -510,9 +822,14 @@ document.addEventListener('DOMContentLoaded', () => {
         // Hide original
         select.style.display = 'none';
 
-        // Trigger
-        const trigger = document.createElement('div');
+        // Unique Popover ID
+        const popoverId = 'apple-select-' + Math.random().toString(36).substring(2, 11);
+
+        // Trigger (Semantic Button)
+        const trigger = document.createElement('button');
+        trigger.type = 'button';
         trigger.className = 'apple-custom-select-trigger';
+        trigger.setAttribute('popovertarget', popoverId);
         if (select.dataset.style === 'form') {
             trigger.classList.add('form-style');
             wrapper.classList.add('w-full');
@@ -521,9 +838,11 @@ document.addEventListener('DOMContentLoaded', () => {
         trigger.innerHTML = `<span>${initialText}</span><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12"><path d="M6 8L1 3h10z"/></svg>`;
         wrapper.appendChild(trigger);
 
-        // Dropdown menu
+        // Dropdown menu as popover
         const dropdown = document.createElement('div');
         dropdown.className = 'apple-custom-select-dropdown';
+        dropdown.id = popoverId;
+        dropdown.setAttribute('popover', 'auto');
         
         Array.from(select.options).forEach(opt => {
             const item = document.createElement('div');
@@ -540,62 +859,93 @@ document.addEventListener('DOMContentLoaded', () => {
                 dropdown.querySelectorAll('.apple-custom-option').forEach(el => el.classList.remove('selected'));
                 item.classList.add('selected');
                 
-                wrapper.classList.remove('open');
-                ['.settings-group', '.settings-section', '.form-group'].forEach(cls => {
-                    wrapper.closest(cls)?.classList.remove('has-open-dropdown');
-                });
+                dropdown.hidePopover();
             });
             dropdown.appendChild(item);
         });
         wrapper.appendChild(dropdown);
 
-        // Toggle on click
-        trigger.addEventListener('click', (e) => {
-            e.stopPropagation();
-            
-            // Close other elements
-            closeAllPopovers(wrapper);
-
-            const willOpen = !wrapper.classList.contains('open');
-            wrapper.classList.toggle('open');
-            
+        const syncDropdownOpenState = (isOpen) => {
+            wrapper.classList.toggle('open', isOpen);
             ['.settings-group', '.settings-section', '.form-group'].forEach(cls => {
-                wrapper.closest(cls)?.classList.toggle('has-open-dropdown', willOpen);
+                wrapper.closest(cls)?.classList.toggle('has-open-dropdown', isOpen);
             });
-        });
-    });
+        };
 
-    // 6. Language Switcher Click-to-Toggle
-    document.querySelectorAll('.lang-switcher').forEach(switcher => {
-        const btn = switcher.querySelector('.lang-btn');
-        if (btn) {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                closeAllPopovers(switcher);
-                switcher.classList.toggle('open');
-            });
-        }
-    });
+        const positionDropdown = () => {
+            const rect = trigger.getBoundingClientRect();
+            const viewportMargin = 12;
+            const dropdownGap = 8;
+            const viewportWidth = document.documentElement.clientWidth;
+            const viewportHeight = document.documentElement.clientHeight;
+            const availableWidth = Math.max(180, viewportWidth - (viewportMargin * 2));
+            const estimatedWidth = Math.min(Math.max(rect.width, dropdown.offsetWidth || 180), availableWidth);
+            const left = Math.min(
+                Math.max(viewportMargin, rect.left),
+                Math.max(viewportMargin, viewportWidth - estimatedWidth - viewportMargin)
+            );
 
-    function closeAllPopovers(except = null) {
-        // Close Selects
-        document.querySelectorAll('.apple-custom-select-wrapper').forEach(w => {
-            if (w !== except) {
-                w.classList.remove('open');
-                ['.settings-group', '.settings-section', '.form-group'].forEach(cls => {
-                    w.closest(cls)?.classList.remove('has-open-dropdown');
-                });
+            dropdown.style.minWidth = `${rect.width}px`;
+            dropdown.style.maxWidth = `${availableWidth}px`;
+            dropdown.style.left = `${left}px`;
+
+            const availableBelow = viewportHeight - rect.bottom - dropdownGap - viewportMargin;
+            const availableAbove = rect.top - dropdownGap - viewportMargin;
+            const desiredHeight = dropdown.scrollHeight || dropdown.offsetHeight || 180;
+            const shouldOpenAbove = desiredHeight > availableBelow && availableAbove > availableBelow;
+            const availableHeight = Math.max(120, shouldOpenAbove ? availableAbove : availableBelow);
+            const renderedHeight = Math.min(desiredHeight, availableHeight);
+            const top = shouldOpenAbove
+                ? Math.max(viewportMargin, rect.top - renderedHeight - dropdownGap)
+                : Math.min(viewportHeight - viewportMargin, rect.bottom + dropdownGap);
+
+            dropdown.style.maxHeight = `${availableHeight}px`;
+            dropdown.style.top = `${top}px`;
+            dropdown.style.transformOrigin = shouldOpenAbove ? 'bottom center' : 'top center';
+        };
+
+        const repositionOpenDropdown = () => {
+            if (dropdown.matches(':popover-open')) positionDropdown();
+        };
+
+        // Position popovers in viewport coordinates; they render in the top layer.
+        dropdown.addEventListener('beforetoggle', (e) => {
+            if (e.newState === 'open') {
+                syncDropdownOpenState(true);
+                positionDropdown();
+                requestAnimationFrame(positionDropdown);
+            } else {
+                syncDropdownOpenState(false);
             }
         });
-        // Close Lang Switchers
-        document.querySelectorAll('.lang-switcher').forEach(s => {
-            if (s !== except) s.classList.remove('open');
+
+        window.addEventListener('resize', repositionOpenDropdown);
+        window.addEventListener('scroll', repositionOpenDropdown, true);
+    });
+
+    // 6. Language Switcher Popover Dynamic Positioning
+    const langDropdown = document.getElementById('lang-switcher-dropdown');
+    if (langDropdown) {
+        langDropdown.addEventListener('beforetoggle', (e) => {
+            if (e.newState === 'open') {
+                const btn = document.querySelector('.lang-btn');
+                if (!btn) return;
+                const rect = btn.getBoundingClientRect();
+                const dropdownHeight = langDropdown.getBoundingClientRect().height || 180;
+                const isCollapsed = document.body.classList.contains('sidebar-collapsed') || window.innerWidth <= 1200;
+
+                if (isCollapsed) {
+                    langDropdown.style.left = `${rect.right + 12 + window.scrollX}px`;
+                    langDropdown.style.top = `${rect.bottom - dropdownHeight + window.scrollY}px`;
+                } else {
+                    langDropdown.style.left = `${rect.left + window.scrollX}px`;
+                    langDropdown.style.top = `${rect.top - dropdownHeight - 8 + window.scrollY}px`;
+                }
+            }
         });
     }
-
-    // Close on outside click
-    document.addEventListener('click', () => closeAllPopovers());
 });
+
 
 /**
  * Global Notification System
@@ -623,4 +973,3 @@ function showNotification(msg, type = "info") {
 }
 
 window.showNotification = showNotification;
-
