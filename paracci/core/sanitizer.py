@@ -6,6 +6,20 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+class SanitizationError(Exception):
+    """Raised when an attachment cannot be sanitized safely."""
+
+    i18n_key = "session.attachment_sanitization_failed"
+    user_message = (
+        "This image attachment could not be processed and was rejected for safety. "
+        "Please try a different file."
+    )
+
+    def __init__(self, filename: str):
+        self.filename = filename
+        super().__init__(self.user_message)
+
+
 def sanitize_image(image_bytes: bytes, filename: str) -> bytes:
     """
     Cleans EXIF and other metadata from image files.
@@ -34,7 +48,7 @@ def sanitize_image(image_bytes: bytes, filename: str) -> bytes:
         return output.getvalue()
     except Exception as e:
         logger.error(f"Image cleaning error ({filename}): {e}")
-        return image_bytes
+        raise SanitizationError(filename) from e
 
 
 def sanitize_text(text: str) -> str:
