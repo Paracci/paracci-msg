@@ -273,7 +273,7 @@
     "fingerprint_desc": "Verifica este código a través de otro canal. Debe ser idéntico en ambos lados.",
     "safety_code_title": "Confirm safety code",
     "safety_code_desc": "Compare this code with the other person over a separate trusted channel. Only confirm if both sides show the exact same code.",
-    "safety_code_input_label": "Type the matching safety code",
+    "safety_code_input_label": "Confirmo que el código de seguridad coincide con el del dispositivo de la otra parte.",
     "safety_code_confirm_btn": "Confirm and activate",
     "safety_code_confirmed": "Safety code confirmed. Session activated.",
     "safety_code_mismatch": "Safety code does not match. Do not use this session until both sides match.",
@@ -347,6 +347,7 @@
     "current_label": "Session Label",
     "label_change_hint": "Label is permanent and tied to the handshake.",
     "ready_desc_y_p5": "",
+    "waiting_initiator_msg_desc": "El Iniciador (X) debe enviar el primer mensaje para iniciar la comunicación segura. Una vez que importe el archivo de mensaje recibido de X en el panel lateral, podrá enviar mensajes.",
     "settings_btn": "Session Settings",
     "settings_saved": "Session settings saved successfully.",
     "settings_subtitle": "Manage session-specific preferences and appearance.",
@@ -366,6 +367,7 @@
     "clipboard_failed_locked": "Clipboard access failed. It might be locked by another application.",
     "attachments_added": "{count} file(s) added.",
     "attachment_attached": "{filename} attached.",
+    "attachment_sanitization_failed": "Esta imagen adjunta no se pudo procesar y fue rechazada por seguridad. Pruebe con otro archivo.",
     "drop_failed": "Drop failed."
   },
   "profile": {

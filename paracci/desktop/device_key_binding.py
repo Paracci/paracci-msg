@@ -14,6 +14,8 @@ import sqlite3
 import sys
 import threading
 
+from cryptography.exceptions import InvalidTag
+
 from core.burn import (
     UNLOCK_MAX_FAILED_ATTEMPTS,
     BurnDB,
@@ -240,11 +242,13 @@ def _unlock_bound_device(db: BurnDB, pin: str, stored_dpapi_blob: bytes) -> byte
             )
         except DeviceBindingError:
             raise
-        except Exception:
+        except InvalidTag:
             _raise_incorrect_passphrase(db)
     except DeviceError:
         raise
-    except Exception as exc:
+    except sqlite3.Error:
+        raise
+    except (DPAPIError, KeychainError, SecretServiceError, ValueError, TypeError) as exc:
         raise _keyfile_damaged_error() from exc
     else:
         db.reset_unlock_failures()
