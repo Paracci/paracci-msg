@@ -28,39 +28,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install cmake and ninja
-        uses: lukka/get-cmake@latest
-
-      - name: Install OpenSSL headers (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libssl-dev gcc
-
-      - name: Install OpenSSL headers (macOS)
-        if: runner.os == 'macOS'
-        run: brew install openssl
-
-      - name: Build and install liboqs C library
-        shell: bash
-        run: |
-          git clone --branch 0.15.0 --depth 1 https://github.com/open-quantum-safe/liboqs.git
-          cmake_extra_flags=""
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            cmake_extra_flags="-DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=TRUE"
-          fi
-          cmake -S liboqs -B liboqs/build \
-            -DBUILD_SHARED_LIBS=ON \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DOQS_BUILD_ONLY_LIB=ON \
-            -DOQS_DIST_BUILD=ON \
-            -DCMAKE_INSTALL_PREFIX="${{ runner.temp }}/_oqs" \
-            $cmake_extra_flags
-          cmake --build liboqs/build --parallel 4
-          cmake --build liboqs/build --target install
-          rm -rf liboqs
-
-      - name: Set OQS_INSTALL_PATH
-        shell: bash
-        run: echo "OQS_INSTALL_PATH=${{ runner.temp }}/_oqs" >> "$GITHUB_ENV"
+      - name: Install liboqs C library
+        uses: ./.github/actions/install-liboqs
+        with:
+          version: "0.15.0"
+          install-prefix: ${{ runner.temp }}/_oqs
 
       - name: Install dependencies
         run: |

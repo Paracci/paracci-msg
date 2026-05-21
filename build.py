@@ -176,6 +176,13 @@ def print_summary(platform_id: str) -> None:
     print()
 
 
+def print_liboqs_env() -> None:
+    """Print liboqs discovery hints passed into the PyInstaller spec."""
+    print("  liboqs env:")
+    for name in ("LIBOQS_LIB_DIR", "OQS_INSTALL_PATH"):
+        print(f"    {name}: {os.environ.get(name) or '(not set)'}")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -200,6 +207,7 @@ def main() -> int:
     print(f"  Platform  : {platform_id.upper()} ({platform.machine()})")
     print(f"  Python    : {sys.version.split()[0]}")
     print(f"  Spec      : {SPEC_FILE}")
+    print_liboqs_env()
     print("=" * 60)
 
     if not SPEC_FILE.exists():
