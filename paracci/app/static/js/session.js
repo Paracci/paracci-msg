@@ -6,6 +6,38 @@ let quietMode = localStorage.getItem('paracci_quiet_mode') === 'true';
 let copyTimer = null;
 let currentPreviewIds = new Set();
 const MIN_SAFE_DOMPURIFY_VERSION = "3.1.3";
+let runtimeCapabilities = { has_native_window: false };
+let capabilitiesPromise = null;
+
+function previewWindowApiAvailable() {
+    return typeof window.pywebview?.api?.open_preview_window === 'function';
+}
+
+async function loadRuntimeCapabilities({ force = false } = {}) {
+    if (!force && capabilitiesPromise) return capabilitiesPromise;
+
+    const url = window.PARACCI_CONFIG?.capabilities_url || '/api/capabilities';
+    capabilitiesPromise = fetch(url, {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' },
+        cache: 'no-store'
+    })
+        .then(async response => {
+            if (!response.ok) throw new Error(`Capabilities request failed: ${response.status}`);
+            const data = await response.json();
+            runtimeCapabilities = {
+                has_native_window: data?.has_native_window === true
+            };
+            return runtimeCapabilities;
+        })
+        .catch(err => {
+            console.warn('[Paracci] Capability detection failed:', err);
+            runtimeCapabilities = { has_native_window: previewWindowApiAvailable() };
+            return runtimeCapabilities;
+        });
+
+    return capabilitiesPromise;
+}
 
 function parseVersionParts(version) {
     return String(version || "")
@@ -47,11 +79,15 @@ document.addEventListener('DOMContentLoaded', () => {
             auto_download: configEl.dataset.autoDownload === 'true',
             export_url: configEl.dataset.exportUrl,
             export_filename: configEl.dataset.exportFilename,
+            prepare_preview_url: configEl.dataset.preparePreviewUrl,
+            capabilities_url: configEl.dataset.capabilitiesUrl,
             armor_text: configEl.dataset.armorText,
             open_error: configEl.dataset.openError,
             preview_label: configEl.dataset.previewLabel || 'Preview'
         };
     }
+
+    loadRuntimeCapabilities();
 
     // 1. Initial UI Setup
     const qm = document.getElementById('quiet-mode-checkbox');
@@ -97,6 +133,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Pywebview ready event to handle async API injection
 window.addEventListener('pywebviewready', () => {
+    runtimeCapabilities = { has_native_window: true };
+    loadRuntimeCapabilities({ force: true });
     if (window.PARACCI_CONFIG?.auto_download) {
         triggerAutoDownload();
     }
@@ -176,7 +214,6 @@ function setupTemplateEventBindings() {
         });
     });
 
-    document.getElementById('checklist-toggle')?.addEventListener('click', () => window.toggleChecklist?.());
     document.getElementById('dismiss-y-warning')?.addEventListener('click', (e) => {
         window.dismissYWarning?.(e.currentTarget.dataset.sessionId || window.PARACCI_CONFIG?.sid || '');
     });
@@ -221,10 +258,14 @@ function setupForms() {
         const origText = btn.textContent;
         btn.disabled = true;
         btn.textContent = window.PARACCI_CONFIG?.armor_text || 'Processing...';
-        if (window.showArgonWorkOverlay) window.showArgonWorkOverlay();
+        if (window.showArgonWorkOverlay) window.showArgonWorkOverlay('seal');
 
         try {
             const response = await fetch(this.action, { method: 'POST', body: new FormData(this) });
+            if (response.redirected) {
+                window.location.href = response.url;
+                return;
+            }
             if (!response.ok) throw new Error(window.PARACCI_I18N?.server_error || 'Server error');
 
             const blob = await response.blob();
@@ -279,11 +320,23 @@ function setupForms() {
     // OPEN MESSAGE FORM
     document.getElementById('open-message-form')?.addEventListener('submit', async function (e) {
         e.preventDefault();
+
+        const fileInput = document.getElementById('paracci_file');
+        const nativeFileId = document.getElementById('open-native-file-id');
+
+        // Manual validation since hidden required inputs cause focus errors
+        if ((!fileInput || !fileInput.files || fileInput.files.length === 0) && (!nativeFileId || !nativeFileId.value)) {
+            const errorContainer = document.getElementById('dynamic-error-container');
+            clearElement(errorContainer);
+            appendAlert(errorContainer, 'error', window.PARACCI_I18N?.error || 'Error', window.PARACCI_I18N?.select_file_error || 'Please select a file to open.');
+            return;
+        }
+
         const btn = document.getElementById('btn-open-msg');
         const origText = btn.textContent;
         btn.disabled = true;
         btn.textContent = window.PARACCI_CONFIG?.armor_text || 'Processing...';
-        if (window.showArgonWorkOverlay) window.showArgonWorkOverlay();
+        if (window.showArgonWorkOverlay) window.showArgonWorkOverlay('open');
 
         const errorContainer = document.getElementById('dynamic-error-container');
         clearElement(errorContainer);
@@ -319,6 +372,11 @@ function setupForms() {
             btn.textContent = origText;
             if (window.hideArgonWorkOverlay) window.hideArgonWorkOverlay();
         }
+    });
+
+    // RESPONDER FORM
+    document.getElementById('responder-form')?.addEventListener('submit', function () {
+        if (window.showArgonWorkOverlay) window.showArgonWorkOverlay('finalize');
     });
 }
 
@@ -436,6 +494,10 @@ function renderDecryptedMessage(data) {
     }
 
     const canDownload = !!data.allow_download;
+    const msgContainer = document.getElementById('message-view-container');
+    if (msgContainer) {
+        msgContainer.setAttribute('data-allow-download', canDownload ? 'true' : 'false');
+    }
     document.getElementById('allow-download-alert').style.display = canDownload ? 'flex' : 'none';
     document.getElementById('no-download-alert').style.display = canDownload ? 'none' : 'flex';
     document.getElementById('single-use-alert').style.display = data.single_use ? 'flex' : 'none';
@@ -463,13 +525,13 @@ function renderDecryptedMessage(data) {
                 const actions = document.createElement('div');
                 actions.className = 'attachment-actions';
 
-                const previewUrl = attachmentUrl(att, 'preview_url', '/preview');
+                const previewRef = String(att?.pid || '');
                 const previewBtn = document.createElement('button');
                 previewBtn.type = 'button';
                 previewBtn.className = 'btn-attachment';
                 previewBtn.textContent = window.PARACCI_I18N?.preview_label || 'Preview';
-                previewBtn.disabled = !previewUrl;
-                previewBtn.addEventListener('click', () => handleAttachmentPreview(previewUrl));
+                previewBtn.disabled = !previewRef;
+                previewBtn.addEventListener('click', () => handleAttachmentPreview(previewRef, previewBtn));
                 actions.appendChild(previewBtn);
 
                 if (data.allow_download) {
@@ -553,8 +615,8 @@ async function handleManualDownload(url, filename) {
                     b64 = String(reader.result || '').split(',')[1] || '';
                     let savedPath = null;
 
-                    // Prefer silent download for .paracci files if supported
-                    if (filename.endsWith('.paracci') && api.save_file_silent) {
+                    // Always use silent background download if supported, notifying the user afterwards
+                    if (api.save_file_silent) {
                         savedPath = await api.save_file_silent(b64, filename);
                         if (savedPath && window.showDownloadNotification) {
                             window.showDownloadNotification(filename, savedPath);
@@ -609,6 +671,115 @@ async function handleAttachmentDownload(target, filename) {
     await handleManualDownload(url, filename);
 }
 
+function attachmentPreviewRef(target) {
+    const value = String(target || '').trim();
+    if (!value) return '';
+    if (!value.startsWith('/preview/')) return value;
+
+    try {
+        const path = new URL(value, window.location.href).pathname;
+        const parts = path.split('/').filter(Boolean);
+        return parts[0] === 'preview' && parts[1] ? decodeURIComponent(parts[1]) : '';
+    } catch (err) {
+        return '';
+    }
+}
+
+function tokenPreviewUrl(token) {
+    return `/preview/${encodeURIComponent(String(token || ''))}`;
+}
+
+function previewSleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function previewAuthHeaders() {
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+        const security = window.ParacciSecurity;
+        const token = security?.getLoopbackToken?.() || '';
+        const csrf = security?.getCsrfToken?.() || '';
+        if (token && csrf) {
+            return {
+                'X-Paracci-Token': token,
+                'X-CSRF-Token': csrf
+            };
+        }
+        await previewSleep(100);
+    }
+    throw new Error('Unauthorized.');
+}
+
+function showPreviewOpenError(message) {
+    const errorContainer = document.getElementById('dynamic-error-container');
+    if (errorContainer) {
+        clearElement(errorContainer);
+        appendAlert(
+            errorContainer,
+            'error',
+            `${window.PARACCI_I18N?.error || 'Error'}:`,
+            message || window.PARACCI_I18N?.server_error || 'Preview could not be opened.'
+        );
+        return;
+    }
+    showNotification(message || 'Preview could not be opened.', 'error');
+}
+
+async function prepareAttachmentPreview(attachmentRef) {
+    const authHeaders = await previewAuthHeaders();
+    const response = await fetch(window.PARACCI_CONFIG?.prepare_preview_url || '/api/prepare-preview', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            ...authHeaders
+        },
+        credentials: 'same-origin',
+        body: JSON.stringify({ attachment_ref: attachmentRef })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(data?.error || window.PARACCI_I18N?.server_error || 'Preview could not be prepared.');
+    }
+    if (!data?.preview_token) {
+        throw new Error(window.PARACCI_I18N?.server_error || 'Preview token is missing.');
+    }
+    return data;
+}
+
+async function getPreviewWindowApi() {
+    const capabilities = await loadRuntimeCapabilities();
+    if (!capabilities?.has_native_window) return null;
+
+    let api = window.pywebview?.api;
+    let attempts = 0;
+    while (!api?.open_preview_window && attempts < 10) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        api = window.pywebview?.api;
+        attempts++;
+    }
+    return api?.open_preview_window ? api : null;
+}
+
+async function openPreparedPreview(data) {
+    const token = data.preview_token;
+    const api = await getPreviewWindowApi();
+    if (api) {
+        try {
+            await api.open_preview_window(
+                token,
+                data.filename || 'attachment.bin',
+                data.mime_type || 'application/octet-stream',
+                Number(data.file_size || 0)
+            );
+            return;
+        } catch (err) {
+            console.warn('[Paracci] Native preview window failed, falling back to browser tab:', err);
+        }
+    }
+
+    window.open(tokenPreviewUrl(token), '_blank', 'width=1000,height=800');
+}
+
 
 // Global exposure
 window.handleManualDownload = handleManualDownload;
@@ -617,8 +788,18 @@ window.handleAttachmentDownload = handleAttachmentDownload;
 window.triggerAutoDownload = triggerAutoDownload;
 window.updateAttachmentBadge = updateAttachmentBadge;
 window.toggleQuietMode = (v) => { quietMode = v; localStorage.setItem('paracci_quiet_mode', v); };
-window.handleCloseClick = () => { if (quietMode) closeMessage(); else document.getElementById('exit-modal-overlay')?.classList.add('active'); };
-window.cancelClose = () => document.getElementById('exit-modal-overlay')?.classList.remove('active');
+window.handleCloseClick = () => { 
+    if (quietMode) {
+        closeMessage(); 
+    } else {
+        const dialog = document.getElementById('exit-confirm-dialog');
+        if (dialog) dialog.showModal();
+    }
+};
+window.cancelClose = () => {
+    const dialog = document.getElementById('exit-confirm-dialog');
+    if (dialog) dialog.close();
+};
 window.confirmClose = () => { window.cancelClose?.(); closeMessage(); };
 window.dismissYWarning = (sid) => {
     if (sid) localStorage.setItem("dismiss_y_" + sid, "true");
@@ -631,30 +812,28 @@ window.toggleSafetyDetails = () => {
     if (el) el.classList.toggle('hidden');
 };
 
-window.toggleChecklist = () => {
-    const card = document.querySelector('.collapsible-card');
-    if (card) {
-        card.classList.toggle('active');
-    }
-};
+window.handleAttachmentPreview = async (target, button) => {
+    const attachmentRef = attachmentPreviewRef(target);
+    if (!attachmentRef) return;
 
-window.handleAttachmentPreview = async (target) => {
-    const url = normalizeAttachmentTarget(target, false);
-    if (!url) return;
-    
-    let api = window.pywebview?.api;
-    let attempts = 0;
-    while (!api?.open_preview && attempts < 10) {
-        await new Promise(r => setTimeout(r, 100));
-        api = window.pywebview?.api;
-        attempts++;
+    const previewButton = button instanceof HTMLButtonElement ? button : null;
+    const originalText = previewButton?.textContent;
+    if (previewButton) {
+        previewButton.disabled = true;
+        previewButton.textContent = 'Opening...';
     }
 
-    if (api?.open_preview) {
-        api.open_preview(url);
-    } else {
-        console.warn('pywebview API not found, falling back to window.open');
-        window.open(url, '_blank', 'width=1000,height=800');
+    try {
+        const data = await prepareAttachmentPreview(attachmentRef);
+        await openPreparedPreview(data);
+    } catch (err) {
+        console.error('[Paracci] Preview error:', err);
+        showPreviewOpenError(err.message);
+    } finally {
+        if (previewButton) {
+            previewButton.disabled = false;
+            previewButton.textContent = originalText || window.PARACCI_I18N?.preview_label || 'Preview';
+        }
     }
 };
 
@@ -671,3 +850,11 @@ window.addEventListener('pagehide', () => {
 window.addEventListener('beforeunload', () => {
     clearOpenMessageState({ keepalive: true });
 });
+
+// Phase 3: Global Drag & Drop prevention to prevent pywebview navigation leak
+window.addEventListener('dragover', (e) => {
+    e.preventDefault();
+}, false);
+window.addEventListener('drop', (e) => {
+    e.preventDefault();
+}, false);

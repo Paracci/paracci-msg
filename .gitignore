@@ -52,3 +52,13 @@ DerivedData/
 platform/macos/ParacciMac/.build/
 platform/macos/ParacciMac/.swiftpm/
 platform/macos/ParacciMac/DerivedData/
+
+# --- Temporary Test/Benchmark artifacts ---
+temp_test_data/
+benchmark_result.json
+
+# --- Reports ---
+*report.md
+!*armor_report_*
+
+

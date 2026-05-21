@@ -11,9 +11,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from core import session as session_module
 from core.burn import BurnDB
 from core.crypto import (
-    EncryptedBlob,
-    NONCE_LEN,
-    decrypt,
     encrypt,
     generate_identity_keypair,
     random_bytes,
@@ -65,18 +62,25 @@ def _confirmed_handshake():
     return confirm_safety_code(meta_x, code), confirm_safety_code(meta_y, code), init_file, resp_file
 
 
-def _tamper_and_reencrypt(file_bytes: bytes, purpose: bytes, mutator) -> bytes:
-    session_id = file_bytes[6:22]
-    header = file_bytes[:22]
-    blob = EncryptedBlob(
-        nonce=file_bytes[22:22 + NONCE_LEN],
-        ciphertext=file_bytes[22 + NONCE_LEN:],
-    )
-    fkey = session_module._file_encryption_key(session_id, purpose)
-    payload = json.loads(decrypt(fkey, blob, aad=header).decode("utf-8"))
+def _load_setup_payload(file_bytes: bytes) -> dict:
+    return json.loads(file_bytes[22:].decode("utf-8"))
+
+
+def _tamper_signed_payload(file_bytes: bytes, mutator) -> bytes:
+    payload = _load_setup_payload(file_bytes)
     mutator(payload)
-    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    sealed = encrypt(fkey, raw, aad=header)
+    return file_bytes[:22] + session_module._canonical_payload(payload)
+
+
+def _legacy_v3_wrapped_setup_file(file_bytes: bytes, purpose: bytes) -> bytes:
+    session_id = file_bytes[6:22]
+    header = session_module._build_file_header(
+        file_bytes[5],
+        session_id,
+        file_version=session_module.LEGACY_WRAPPED_HANDSHAKE_FILE_VERSION,
+    )
+    fkey = session_module._legacy_file_encryption_key(session_id, purpose)
+    sealed = encrypt(fkey, session_module._canonical_payload(_load_setup_payload(file_bytes)), aad=header)
     return header + sealed.nonce + sealed.ciphertext
 
 
@@ -108,12 +112,11 @@ def test_signed_handshake_requires_safety_confirmation_before_messages():
 
 
 @oqs_required
-def test_modified_initiator_payload_is_rejected_after_reencrypt():
+def test_modified_initiator_payload_is_rejected_after_plaintext_tamper():
     _meta_x, _meta_y, init_file, _resp_file = _handshake()
     y_identity_priv, y_identity_pub = _identity()
-    tampered = _tamper_and_reencrypt(
+    tampered = _tamper_signed_payload(
         init_file,
-        b"initiator",
         lambda payload: payload.__setitem__("label", "attacker label"),
     )
 
@@ -127,16 +130,40 @@ def test_modified_initiator_payload_is_rejected_after_reencrypt():
 
 
 @oqs_required
-def test_modified_responder_payload_is_rejected_after_reencrypt():
+def test_modified_responder_payload_is_rejected_after_plaintext_tamper():
     meta_x, _meta_y, _init_file, resp_file = _handshake()
-    tampered = _tamper_and_reencrypt(
+    tampered = _tamper_signed_payload(
         resp_file,
-        b"responder",
         lambda payload: payload.__setitem__("username", "attacker"),
     )
 
     with pytest.raises(Exception):
         finalize_initiator_session(meta_x, tampered)
+
+
+@oqs_required
+def test_legacy_v3_wrapped_handshake_files_import():
+    x_identity_priv, x_identity_pub = _identity()
+    y_identity_priv, y_identity_pub = _identity()
+    meta_x, init_file = create_initiator_session(
+        "X",
+        session_ttl_sec=EVO_UNLIMITED,
+        profile="standard",
+        identity_pub=x_identity_pub,
+        identity_priv=x_identity_priv,
+    )
+    legacy_init = _legacy_v3_wrapped_setup_file(init_file, b"initiator")
+    meta_y, resp_file = accept_initiator_and_create_responder(
+        legacy_init,
+        "Y",
+        identity_pub=y_identity_pub,
+        identity_priv=y_identity_priv,
+    )
+    legacy_resp = _legacy_v3_wrapped_setup_file(resp_file, b"responder")
+    finalized_x = finalize_initiator_session(meta_x, legacy_resp)
+
+    assert finalized_x.keys == meta_y.keys
+    assert finalized_x.session_id == meta_y.session_id
 
 
 def test_unsigned_legacy_initiator_file_is_rejected():
@@ -159,7 +186,7 @@ def test_unsigned_legacy_initiator_file_is_rejected():
         session_id,
         file_version=session_module.FILE_VERSION,
     )
-    fkey = session_module._file_encryption_key(session_id, b"initiator")
+    fkey = session_module._legacy_file_encryption_key(session_id, b"initiator")
     blob = encrypt(fkey, json.dumps(payload, separators=(",", ":")).encode("utf-8"), aad=header)
     legacy_file = header + blob.nonce + blob.ciphertext
     y_identity_priv, y_identity_pub = _identity()

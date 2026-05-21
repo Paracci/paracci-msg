@@ -291,3 +291,109 @@
     align-items: flex-start;
   }
 }
+
+/* ─── Phase 2: CSS :has() Color Picker Active State ─────────────────────────
+   Replaces JS-driven active-state toggling on .color-option.
+   The browser reads :has(input:checked) directly — no querySelector needed.
+─────────────────────────────────────────────────────────────────────────── */
+
+/* Highlight the entire custom-color-wrapper when native picker or hex is active
+   (i.e., when no radio is checked and focus is inside the custom section) */
+.color-picker-group:has(.custom-color-input:focus) .custom-color-wrapper,
+.color-picker-group:has(.native-color-picker:focus) .custom-color-wrapper {
+  border-color: var(--accent-primary);
+  background: var(--bg-subtle);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.1);
+}
+
+/* ─── Phase 2: Native <dialog> Hardware Calibration Report Modal ─────────────
+   Replaces .p-modal-overlay div-soup. Browser provides focus trap,
+   aria-modal state, and Escape key dismissal automatically.
+─────────────────────────────────────────────────────────────────────────── */
+
+.hw-report-dialog {
+  width: min(700px, calc(100vw - 48px));
+  max-height: calc(100vh - 80px);
+  padding: 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xl);
+  background: var(--material-popover);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-primary);
+  overflow: hidden;
+  /* Animate in */
+  animation: modalIn var(--duration-md) var(--ease) both;
+}
+
+/* Glassmorphic backdrop — replaces old rgba overlay div */
+.hw-report-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(8px) saturate(120%);
+  -webkit-backdrop-filter: blur(8px) saturate(120%);
+}
+
+.hw-dialog-inner {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 80px);
+  overflow: hidden;
+}
+
+.hw-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-6);
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.hw-dialog-header h2 {
+  margin: 0;
+  font-size: var(--text-h3);
+  font-weight: 650;
+}
+
+.hw-dialog-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--duration-sm) var(--ease), color var(--duration-sm) var(--ease);
+}
+
+.hw-dialog-close:hover {
+  background: var(--interactive-hover);
+  color: var(--text-primary);
+}
+
+#hw-dialog-body {
+  flex: 1;
+  overflow-y: auto;
+  margin: 0;
+  padding: var(--space-5) var(--space-6);
+  background: var(--bg-canvas);
+  font-size: var(--text-caption);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-all;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+  scrollbar-width: thin;
+}
+
+.hw-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-4) var(--space-6);
+  border-top: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+

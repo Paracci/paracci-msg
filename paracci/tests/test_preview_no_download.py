@@ -73,6 +73,21 @@ def seed_preview(pid, content, mime, allow_download):
     }
 
 
+def seed_token_preview(pid, content, mime, allow_download, access_token="preview-access-token"):
+    from app import routes
+
+    routes.PREVIEW_CACHE.clear()
+    routes.PREVIEW_CACHE[pid] = {
+        "filename": "preview.png" if mime.startswith("image/") else "preview.mp4",
+        "content": content,
+        "mime": mime,
+        "expires": time.time() + 600,
+        "allow_download": allow_download,
+        "access_token": access_token,
+    }
+    return access_token
+
+
 def get(client, path):
     return client.get(path, base_url=ORIGIN, headers={"Host": HOST})
 
@@ -116,6 +131,72 @@ def test_allow_download_raw_and_attachment_download_return_original_bytes(tmp_pa
     assert download_response.status_code == 200
     assert download_response.data == original
     assert "attachment" in download_response.headers["Content-Disposition"]
+
+
+def test_preview_token_allows_child_window_without_bootstrap_session(tmp_path, monkeypatch):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    from core.burn import init_device
+
+    ag_app.device_key = init_device(ag_app.db, "Correct-Horse-95175328")
+    ag_app.active_client_id = "already-unlocked-parent"
+    original = png_bytes()
+    token = seed_token_preview("child-window-image", original, "image/png", allow_download=True)
+
+    child_client = flask_app.test_client()
+    response = child_client.get(
+        f"/preview/child-window-image?preview_token={token}",
+        base_url=ORIGIN,
+        headers={"Host": HOST},
+    )
+
+    assert response.status_code == 200
+    html = response.data.decode("utf-8")
+    assert f"/preview/child-window-image?raw=1&amp;preview_token={token}" in html
+    assert f"/preview/child-window-image/download?preview_token={token}" in html
+
+
+def test_preview_token_download_respects_allow_download_boundary(tmp_path, monkeypatch):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    from core.burn import init_device
+
+    ag_app.device_key = init_device(ag_app.db, "Correct-Horse-95175328")
+    ag_app.active_client_id = "already-unlocked-parent"
+    original = png_bytes()
+    token = seed_token_preview("child-window-image", original, "image/png", allow_download=True)
+    child_client = flask_app.test_client()
+
+    download_response = child_client.get(
+        f"/preview/child-window-image/download?preview_token={token}",
+        base_url=ORIGIN,
+        headers={"Host": HOST},
+    )
+
+    assert download_response.status_code == 200
+    assert download_response.data == original
+
+    no_download_token = seed_token_preview("no-download-image", original, "image/png", allow_download=False)
+    rejected_response = child_client.get(
+        f"/preview/no-download-image/download?preview_token={no_download_token}",
+        base_url=ORIGIN,
+        headers={"Host": HOST},
+    )
+
+    assert rejected_response.status_code == 403
+
+
+def test_generated_preview_urls_include_child_window_access_token(tmp_path, monkeypatch):
+    _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    from app import routes
+
+    with flask_app.test_request_context("/", base_url=ORIGIN, headers={"Host": HOST}):
+        pid = routes._add_to_preview_cache("preview.png", png_bytes(), "image/png", True)
+        token = routes.PREVIEW_CACHE[pid]["access_token"]
+
+        preview_url = routes._preview_url("main.preview", pid)
+        download_url = routes._preview_url("main.preview_download", pid)
+
+    assert preview_url == f"/preview/{pid}?preview_token={token}"
+    assert download_url == f"/preview/{pid}/download?preview_token={token}"
 
 
 def test_no_download_image_html_embeds_transformed_preview_not_raw(tmp_path, monkeypatch):

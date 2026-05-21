@@ -21,7 +21,7 @@
   <!-- Profile Preview Card (Apple Style Banner) -->
   <div class="settings-section">
     <div class="settings-group" style="text-align: center; padding: var(--space-8) 0; border: none; background: transparent;">
-      <div class="avatar-huge" style="--avatar-bg: {{ profile.avatar_color }}; color: var(--bg-base); background: var(--avatar-bg); border-color: var(--avatar-bg);">
+      <div class="avatar-huge" data-avatar-color="{{ profile.avatar_color }}">
         {{ profile.username[0] | upper }}
       </div>
       <h2 class="preview-name">{{ profile.username }}</h2>
@@ -50,7 +50,7 @@
             {% for color in colors %}
               <label class="color-option">
                 <input type="radio" name="avatar_color" value="{{ color }}" {% if profile.avatar_color == color %}checked{% endif %}>
-                <span class="color-circle" style="--avatar-bg: {{ color }};"></span>
+                <span class="color-circle" data-avatar-color="{{ color }}"></span>
               </label>
             {% endfor %}
           </div>

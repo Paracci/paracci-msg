@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core import session as session_module
 from core.burn import BurnDB, init_device
-from core.crypto import EncryptedBlob, NONCE_LEN, decrypt, encrypt, generate_identity_keypair, random_bytes
+from core.crypto import EncryptedBlob, NONCE_LEN, decrypt, generate_identity_keypair, random_bytes
 from core.evolution import EVO_UNLIMITED, serialize_evo_config
 from core.hybrid_kem import HybridKEMError
 from core.session import (
@@ -57,25 +57,14 @@ def _handshake():
     return meta_x, finalized_x, meta_y, init_file, resp_file
 
 
-def _decrypt_setup_payload(file_bytes: bytes, purpose: bytes) -> dict:
-    session_id = file_bytes[6:22]
-    header = file_bytes[:22]
-    blob = EncryptedBlob(
-        nonce=file_bytes[22:22 + NONCE_LEN],
-        ciphertext=file_bytes[22 + NONCE_LEN:],
-    )
-    file_key = session_module._file_encryption_key(session_id, purpose)
-    return json.loads(decrypt(file_key, blob, aad=header).decode("utf-8"))
+def _load_setup_payload(file_bytes: bytes) -> dict:
+    return json.loads(file_bytes[22:].decode("utf-8"))
 
 
-def _tamper_and_reencrypt(file_bytes: bytes, purpose: bytes, mutator) -> bytes:
-    session_id = file_bytes[6:22]
-    header = file_bytes[:22]
-    payload = _decrypt_setup_payload(file_bytes, purpose)
+def _tamper_signed_payload(file_bytes: bytes, mutator) -> bytes:
+    payload = _load_setup_payload(file_bytes)
     mutator(payload)
-    file_key = session_module._file_encryption_key(session_id, purpose)
-    blob = encrypt(file_key, session_module._canonical_payload(payload), aad=header)
-    return header + blob.nonce + blob.ciphertext
+    return file_bytes[:22] + session_module._canonical_payload(payload)
 
 
 def _legacy_initiator_file(handshake_version: int) -> bytes:
@@ -95,11 +84,9 @@ def _legacy_initiator_file(handshake_version: int) -> bytes:
     header = session_module._build_file_header(
         TYPE_INITIATOR,
         session_id,
-        file_version=session_module.FILE_VERSION,
+        file_version=handshake_version,
     )
-    file_key = session_module._file_encryption_key(session_id, b"initiator")
-    blob = encrypt(file_key, session_module._canonical_payload(payload), aad=header)
-    return header + blob.nonce + blob.ciphertext
+    return header + session_module._canonical_payload(payload)
 
 
 def _save_meta(db: BurnDB, device_key: bytes, meta) -> None:
@@ -124,6 +111,8 @@ def test_full_v3_hybrid_handshake_roundtrip():
 
     assert init_file[4] == HANDSHAKE_FILE_VERSION
     assert resp_file[4] == HANDSHAKE_FILE_VERSION
+    assert _load_setup_payload(init_file)["session_id"] == meta_x.session_id.hex()
+    assert _load_setup_payload(resp_file)["session_id"] == meta_x.session_id.hex()
     assert meta_x.handshake_version == 3
     assert meta_y.handshake_version == 3
     assert meta_x.keys == meta_y.keys
@@ -159,9 +148,8 @@ def test_v3_initiator_missing_ml_kem_public_key_raises_hybrid_error():
         identity_pub=x_identity_pub,
         identity_priv=x_identity_priv,
     )
-    tampered = _tamper_and_reencrypt(
+    tampered = _tamper_signed_payload(
         init_file,
-        b"initiator",
         lambda payload: payload.pop("ml_kem_public_key", None),
     )
 

@@ -43,10 +43,7 @@ def test_integrity_tamper_state_does_not_change_derived_keys():
         integrity.set_tampered_state(False)
 
 
-def test_file_seal_uses_frozen_compatibility_key():
-    content = b"paracci-test-envelope-content"
-
-    seal = integrity.generate_file_seal(content)
-
-    assert seal.hex() == "da089b719462992a544eda7a9f21ac33"
-    assert integrity.verify_file_seal(content, seal)
+def test_public_envelope_file_seal_helpers_are_removed():
+    assert not hasattr(constants, "ENVELOPE_FILE_SEAL_HMAC_KEY_V1")
+    assert not hasattr(integrity, "generate_file_seal")
+    assert not hasattr(integrity, "verify_file_seal")

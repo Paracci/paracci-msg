@@ -18,7 +18,7 @@
       <div class="settings-group">
         <a href="{{ url_for('main.profile') }}" class="settings-item" style="text-decoration: none; padding-top: var(--space-5); padding-bottom: var(--space-5);">
           <div class="profile-banner">
-            <span class="profile-avatar flex-center" style="--avatar-bg: {{ user_profile.avatar_color }}; color: var(--bg-base); font-weight: 700; border-radius: 50%; background: var(--avatar-bg);">
+            <span class="profile-avatar flex-center" data-avatar-color="{{ user_profile.avatar_color }}">
               {{ user_profile.username[0] | upper }}
             </span>
             <div class="profile-banner-info">

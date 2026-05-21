@@ -27,6 +27,7 @@
           data-lockout-seconds="{{ lockout_seconds|default(0)|int }}"
           data-lockout-message="{{ _('unlock.lockout_message') }}"
           data-armor-text="{{ _('base.argon_work_active') }}">
+      <input type="text" name="username" style="display:none;" autocomplete="username" value="user">
       <div class="form-group">
         <!-- Passphrase display -->
         <div class="pin-display-wrapper">

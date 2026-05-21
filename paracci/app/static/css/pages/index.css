@@ -127,3 +127,25 @@
     min-height: 0;
   }
 }
+
+@media (max-width: 900px) {
+  .workspace-content {
+    padding-top: var(--space-4) !important;
+  }
+
+  .page-header {
+    margin-bottom: var(--space-4) !important;
+  }
+
+  .index-actions {
+    margin-bottom: var(--space-4) !important;
+  }
+
+  .session-list {
+    gap: var(--space-4) !important;
+  }
+
+  .empty-state {
+    margin: var(--space-4) auto !important;
+  }
+}
