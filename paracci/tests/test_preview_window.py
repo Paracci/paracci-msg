@@ -93,6 +93,7 @@ def test_open_preview_window_registers_window_and_token_url(reset_preview_window
     assert created[0].kwargs["height"] == 700
     assert created[0].kwargs["resizable"] is True
     assert created[0].kwargs["on_top"] is False
+    assert created[0].kwargs["text_select"] is True
     assert created[0].kwargs["js_api"].token == TOKEN_A
     assert hasattr(created[0].kwargs["js_api"], "close_preview_window")
     assert hasattr(created[0].kwargs["js_api"], "download_preview_file")
