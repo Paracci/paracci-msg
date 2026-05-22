@@ -91,6 +91,7 @@ button {
 }
 
 .download-success-toast {
+  display: none !important;
   position: fixed;
   top: 12px;
   left: 50%;
@@ -110,6 +111,7 @@ button {
 }
 
 .download-success-toast.show {
+  display: none !important;
   transform: translate(-50%, 0);
   opacity: 1;
 }
