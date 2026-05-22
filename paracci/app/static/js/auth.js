@@ -35,6 +35,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const authForm = document.getElementById('authForm');
     const submitBtn = document.getElementById('submitBtn');
     const pinInput = document.getElementById('pinInput');
+    const authCodeInput = document.getElementById('authCodeInput');
     const pinDots = document.querySelectorAll('.pin-dot');
     const pinDisplay = document.getElementById('pinDisplay');
     const passphraseCount = document.getElementById('passphraseCount');
@@ -268,6 +269,10 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
         updatePinDisplay();
+    }
+
+    if (authCodeInput) {
+        authCodeInput.focus();
     }
 
     if (authForm && submitBtn) {
