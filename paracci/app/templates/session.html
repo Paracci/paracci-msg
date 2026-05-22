@@ -281,8 +281,8 @@
             <p class="font-xs text-dim mt-2">{{ _('session.add_files_desc') }}</p>
             <input type="file" id="attachments" name="attachments" multiple class="file-input hidden">
           </div>
-          <div id="attachment-count-badge" style="margin-top: 0.5rem; display: none;">
-            <span class="badge badge-info"><span id="att-count-val">0</span> {{ _('session.files_added_badge') }}</span>
+          <div id="selected-attachments-container" style="margin-top: 0.5rem; display: none;">
+            <div class="selected-attachments-list" id="selected-attachments-list"></div>
           </div>
         </div>
 
