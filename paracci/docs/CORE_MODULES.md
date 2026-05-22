@@ -11,10 +11,13 @@ Contains frozen protocol-stable byte constants and labels. This layer ensures lo
 Provides cryptographic primitives:
 - X25519 key pair generation and ECDH key exchange.
 - Hybrid X25519 + ML-KEM shared-secret combination through `derive_hybrid_shared_secret`.
+- SHA3-256 handshake transcript computation through `compute_handshake_transcript()`.
 - HKDF-SHA512 and HKDF-SHA256 derivation.
 - ChaCha20-Poly1305 AEAD symmetric encryption.
 - Fixed-parameter Argon2id device master-key derivation for user passphrases.
 - Message ID generation, cryptographic hashing, and process memory wipe/hygiene helpers.
+
+`compute_handshake_transcript()` computes a SHA3-256 handshake transcript binding session ID, both parties' Ed25519 identity keys, ML-KEM algorithm, public key, and ciphertext. The transcript is fed into the hybrid KEM combiner for identity-bound key derivation.
 
 ## [quantum_kem.py](paracci/core/quantum_kem.py)
 
@@ -31,14 +34,14 @@ Coordinates the post-quantum side of the session handshake:
 - Initiator ML-KEM key generation.
 - Responder encapsulation.
 - Initiator decapsulation.
-- Validation of v3 hybrid setup metadata and legacy-session rejection.
+- Validation of hybrid setup metadata and legacy-session rejection.
 
 ## [session.py](paracci/core/session.py)
 
-Coordinates the two-party hybrid session setup. Active sessions use the v4 signed plaintext JSON handshake format, while legacy sessions are initialized via the v3 wrapped handshake format. Handshake files (initiator and responder setup files) carry signed public metadata, including ML-KEM public data and ciphertext. They are integrity-protected but **not confidential**. Session keys are derived from the hybrid X25519 + ML-KEM shared secret and evolved deterministically.
+Coordinates the two-party hybrid session setup. Active sessions use the v5 signed plaintext JSON handshake format with transcript-bound hybrid key derivation. Handshake files (initiator and responder setup files) carry signed public metadata, including identity keys, ML-KEM public data, and ciphertext. They are integrity-protected but **not confidential**. Session keys are derived from the hybrid X25519 + ML-KEM shared secret plus the SHA3-256 handshake transcript and evolved deterministically. Legacy v4 and older handshakes are rejected with a migration message requiring a new session.
 
-- Initiator and responder setup file creation (v4 plaintext JSON format).
-- Backward-compatible legacy v3 wrapped handshake parsing and import.
+- Initiator and responder setup file creation (v5 plaintext JSON format).
+- Legacy v4 and older handshake rejection.
 - Session bonding ceremonies.
 - Serialization of encrypted session metadata stored in the database.
 
