@@ -368,7 +368,9 @@
     "attachments_added": "{count} file(s) added.",
     "attachment_attached": "{filename} attached.",
     "attachment_sanitization_failed": "Esta imagen adjunta no se pudo procesar y fue rechazada por seguridad. Pruebe con otro archivo.",
-    "drop_failed": "Drop failed."
+    "drop_failed": "Drop failed.",
+    "unexpected_error": "Ocurrió un error inesperado. Por favor, inténtalo de nuevo.",
+    "package_limit_error": "El mensaje no pudo abrirse: se superó el límite de tamaño o estructura del paquete."
   },
   "profile": {
     "username_required": "El nombre de usuario no puede estar vacío.",

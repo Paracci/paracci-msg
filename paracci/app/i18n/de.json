@@ -368,7 +368,9 @@
     "attachments_added": "{count} file(s) added.",
     "attachment_attached": "{filename} attached.",
     "attachment_sanitization_failed": "Dieser Bildanhang konnte nicht verarbeitet werden und wurde aus Sicherheitsgründen abgelehnt. Bitte versuchen Sie es mit einer anderen Datei.",
-    "drop_failed": "Drop failed."
+    "drop_failed": "Drop failed.",
+    "unexpected_error": "Ein unerwarteter Fehler ist aufgetreten. Bitte versuchen Sie es erneut.",
+    "package_limit_error": "Die Nachricht konnte nicht geöffnet werden: Paketgröße oder Strukturlimit überschritten."
   },
   "profile": {
     "username_required": "Benutzername darf nicht leer sein.",

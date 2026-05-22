@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import time
 import uuid
 from dataclasses import asdict, dataclass
@@ -10,7 +11,9 @@ from pathlib import Path
 from typing import Any
 
 from desktop.device_key_binding import DeviceBindingError
-from desktop.services import AttachmentPayload, NativeServices, OpenedMessage, SessionServiceError
+from desktop.services import AttachmentPayload, MessageServiceError, NativeServices, OpenedMessage, SessionServiceError
+
+logger = logging.getLogger(__name__)
 
 
 OPEN_CACHE_TTL_SECONDS = 600
@@ -71,9 +74,16 @@ class UIApi:
             message = str(exc)
             if message.startswith("hybrid_kem_"):
                 raise UIApiError(message, self.services.i18n.translate(message)) from exc
-            raise UIApiError(exc.__class__.__name__, message) from exc
+            raise UIApiError("session_service_error", message) from exc
+        except MessageServiceError as exc:
+            raise UIApiError("message_service_error", str(exc)) from exc
+        except (MemoryError, KeyboardInterrupt, SystemExit):
+            raise
         except Exception as exc:
-            raise UIApiError(exc.__class__.__name__, str(exc)) from exc
+            logger.exception(
+                "Unexpected error in UIApi.dispatch method=%s", method
+            )
+            raise UIApiError("unexpected_error", "Unexpected error.") from exc
 
     # ------------------------------------------------------------------
     # Device and settings

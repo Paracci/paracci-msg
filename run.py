@@ -12,6 +12,7 @@ from __future__ import annotations
 import sys
 import os
 import argparse
+import logging
 import secrets
 import json
 from pathlib import Path
@@ -28,6 +29,8 @@ from core.preview_store import preview_store
 import threading
 import socket
 import webview
+
+logger = logging.getLogger(__name__)
 
 
 _preview_windows: dict[str, webview.Window] = {}
@@ -168,8 +171,12 @@ def open_preview_window(token: str, filename: str, mime_type: str, file_size: in
     try:
         if hasattr(preview_win.events, 'closed'):
             preview_win.events.closed += lambda *_args, _token=token: _on_preview_window_closed(_token)
-    except Exception as e:
-        print(f"  [!] Preview close event binding error: {e}")
+    except AttributeError as exc:
+        logger.warning("Preview close event binding error (attribute): %s", exc)
+    except (MemoryError, KeyboardInterrupt, SystemExit):
+        raise
+    except Exception as exc:
+        logger.exception("Unexpected preview close event binding error: %s", exc)
 
 
 def _on_preview_window_closed(token: str) -> None:
@@ -463,8 +470,12 @@ def _install_navigation_guard_or_exit(window, script) -> None:
 
     try:
         window.events.loaded += inject_navigation_guard
+    except AttributeError as exc:
+        logger.warning("Navigation guard event binding failed (attribute): %s", exc)
+    except (MemoryError, KeyboardInterrupt, SystemExit):
+        raise
     except Exception as exc:
-        print(f"  [!] Navigation guard event binding failed: {exc}")
+        logger.exception("Unexpected navigation guard event binding error: %s", exc)
 
 
 def _close_all_preview_windows() -> None:
@@ -475,8 +486,12 @@ def _close_all_preview_windows() -> None:
     for token, preview_win in windows:
         try:
             preview_win.destroy()
-        except Exception as e:
-            print(f"  [!] Preview window close error: {e}")
+        except AttributeError as exc:
+            logger.warning("Preview window close error (attribute): %s", exc)
+        except (MemoryError, KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as exc:
+            logger.exception("Unexpected preview window close error: %s", exc)
         preview_store.revoke(token)
 
 
@@ -620,8 +635,12 @@ if __name__ == "__main__":
         try:
             if hasattr(window.events, 'closed'):
                 window.events.closed += _on_main_window_closed
-        except Exception as e:
-            print(f"  [!] Main close event binding error: {e}")
+        except AttributeError as exc:
+            logger.warning("Main close event binding error (attribute): %s", exc)
+        except (MemoryError, KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as exc:
+            logger.exception("Unexpected main close event binding error: %s", exc)
 
         def inject_fallback_loopback_token(*_args):
             # Guard: skip this handler entirely when a preview window is
@@ -636,14 +655,22 @@ if __name__ == "__main__":
                 return
             try:
                 window.evaluate_js(f"window.__PARACCI_NATIVE_TOKEN = {json.dumps(loopback_token)};")
-            except Exception as e:
-                print(f"  [!] Loopback token injection failed: {e}")
+            except (RuntimeError, AttributeError) as exc:
+                logger.warning("Loopback token injection error (expected): %s", exc)
+            except (MemoryError, KeyboardInterrupt, SystemExit):
+                raise
+            except Exception as exc:
+                logger.exception("Unexpected loopback token injection failure")
 
         try:
             if hasattr(window.events, 'loaded'):
                 window.events.loaded += inject_fallback_loopback_token
-        except Exception as e:
-            print(f"  [!] Token event binding error: {e}")
+        except AttributeError as exc:
+            logger.warning("Token event binding error (attribute): %s", exc)
+        except (MemoryError, KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as exc:
+            logger.exception("Unexpected token event binding error: %s", exc)
 
         
         # Drag-and-Drop Handler (Global)
@@ -659,8 +686,13 @@ if __name__ == "__main__":
                     try:
                         from app.routes import register_native_file_path
                         file_ref = register_native_file_path(file_path)
-                    except Exception as e:
-                        print(f"  [!] Native file reference error: {e}")
+                    except (ValueError, OSError) as exc:
+                        logger.warning("Native file reference error (expected): %s", exc)
+                        return
+                    except (MemoryError, KeyboardInterrupt, SystemExit):
+                        raise
+                    except Exception as exc:
+                        logger.exception("Unexpected native file reference error")
                         return
                     ref_json = json.dumps(file_ref)
                     # If we are already on the import page, update the UI directly
@@ -675,7 +707,14 @@ if __name__ == "__main__":
                         window.location.href = '/session/import?native_file_id=' + encodeURIComponent(nativeRef.id);
                     }}
                     """
-                    window.evaluate_js(js_code)
+                    try:
+                        window.evaluate_js(js_code)
+                    except (RuntimeError, AttributeError) as exc:
+                        logger.warning("File drop JS injection error (expected): %s", exc)
+                    except (MemoryError, KeyboardInterrupt, SystemExit):
+                        raise
+                    except Exception as exc:
+                        logger.exception("Unexpected file drop JS injection error")
 
         # Bind events (Error-protected)
         try:
@@ -686,8 +725,12 @@ if __name__ == "__main__":
             else:
                 # If no drag-and-drop support, continue silently
                 pass
-        except Exception as e:
-            print(f"  [!] Event binding error: {e}")
+        except AttributeError as exc:
+            logger.warning("Event binding error (attribute): %s", exc)
+        except (MemoryError, KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as exc:
+            logger.exception("Unexpected event binding error: %s", exc)
 
         # Start GUI
         from core.config import ParacciConfig
