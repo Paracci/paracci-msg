@@ -14,6 +14,10 @@ DOMAIN_SESSION_MASTER_V3 = b"paracci.session.master.v3"
 SESSION_MASTER_HKDF_LENGTH_V3 = 131
 KEM_ALGORITHM = "ML-KEM-768"
 HYBRID_KEM_DOMAIN = b"paracci.hybrid.kem.v1"
+TRANSCRIPT_DOMAIN = b"paracci.transcript.v1"
+HANDSHAKE_FILE_VERSION_V4 = 0x04  # legacy, transcript-unbound
+HANDSHAKE_FILE_VERSION_V5 = 0x05
+HANDSHAKE_TRANSCRIPT_VERSION = 1
 
 # Frozen legacy domain for reading v3 setup files that used the removed
 # public session_id-derived AEAD wrapper.
