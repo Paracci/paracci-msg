@@ -6,6 +6,7 @@ let quietMode = localStorage.getItem('paracci_quiet_mode') === 'true';
 let copyTimer = null;
 let currentPreviewIds = new Set();
 const MIN_SAFE_DOMPURIFY_VERSION = "3.1.3";
+const MARKDOWN_FRAGMENT_HREF_RE = /^#[^\s"'<>]*$/;
 let runtimeCapabilities = { has_native_window: false };
 let capabilitiesPromise = null;
 
@@ -67,6 +68,18 @@ function requireSafeDompurify() {
         throw new Error(`DOMPurify ${sanitizer.version || "unknown"} is below ${MIN_SAFE_DOMPURIFY_VERSION}.`);
     }
     return sanitizer;
+}
+
+function sanitizeRenderedMarkdown(rawHtml, sanitizer) {
+    return sanitizer.sanitize(rawHtml, {
+        ALLOWED_URI_REGEXP: MARKDOWN_FRAGMENT_HREF_RE,
+        FORBID_ATTR: ['target']
+    });
+}
+
+function renderSafeMarkdown(text, sanitizer = requireSafeDompurify()) {
+    const rawHtml = marked.parse(String(text ?? ''));
+    return sanitizeRenderedMarkdown(rawHtml, sanitizer);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -477,8 +490,7 @@ function renderDecryptedMessage(data) {
     // Message Content
     try {
         const sanitizer = requireSafeDompurify();
-        const rawHtml = marked.parse(data.text);
-        document.getElementById('rendered-message').innerHTML = sanitizer.sanitize(rawHtml);
+        document.getElementById('rendered-message').innerHTML = renderSafeMarkdown(data.text, sanitizer);
     } catch (e) {
         document.getElementById('rendered-message').textContent = data.text;
     }
