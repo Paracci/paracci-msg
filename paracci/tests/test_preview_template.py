@@ -51,8 +51,17 @@ def test_preview_template_is_standalone_and_receives_metadata(tmp_path, monkeypa
     assert "document.pdf" in html
     assert token in html
     assert f"/preview/{token}/content" in html
+    assert "static/css/standalone-preview.css" in html
+    assert "static/css/highlight-dark.css" in html
+    assert "static/js/lib/marked.min.js" in html
+    assert "static/js/lib/highlight.min.js" in html
     assert "static/js/preview.js" in html
     assert "secret-content" not in html
+    assert "cdn.jsdelivr.net" not in html
+    assert "cdnjs.cloudflare.com" not in html
+    assert "integrity=" not in html
+    assert "crossorigin=" not in html
+    assert "<style>" not in html
 
     for shell_marker in (
         "desktop-shell",
@@ -77,9 +86,11 @@ def test_preview_template_csp_allows_standalone_preview_runtime(tmp_path, monkey
 
     csp = response.headers["Content-Security-Policy"]
     assert response.status_code == 200
-    assert "'unsafe-inline'" not in csp.split("script-src", 1)[1].split(";", 1)[0]
-    assert "https://cdn.jsdelivr.net" in csp
-    assert "https://cdnjs.cloudflare.com" in csp
+    assert "script-src 'self';" in csp
+    assert "style-src 'self';" in csp
+    assert "'unsafe-inline'" not in csp
+    assert "https://cdn.jsdelivr.net" not in csp
+    assert "https://cdnjs.cloudflare.com" not in csp
     assert "object-src 'self' blob:" in csp
     assert "frame-src 'self' blob:" in csp
 
@@ -124,13 +135,14 @@ def test_preview_template_hides_download_for_non_downloadable_token(tmp_path, mo
 
 def test_preview_runtime_uses_custom_media_controls():
     preview_html = Path("paracci/app/templates/preview.html").read_text(encoding="utf-8")
+    preview_css = Path("paracci/app/static/css/standalone-preview.css").read_text(encoding="utf-8")
     preview_js = Path("paracci/app/static/js/preview.js").read_text(encoding="utf-8")
 
     assert "video.controls = true" not in preview_js
     assert "audio.controls = true" not in preview_js
-    assert "media-controls" in preview_html
+    assert "media-controls" in preview_css
     assert "customMediaPlayer" in preview_js
-    assert "download-success-toast" in preview_html
+    assert "download-success-toast" in preview_css
     assert "showDownloadSuccess" in preview_js
     assert "This file cannot be previewed here." in preview_js
     assert "Preview not available for this file type when downloading is disabled." in preview_js
@@ -154,3 +166,9 @@ def test_preview_template_returns_404_for_expired_token(tmp_path, monkeypatch):
     )
 
     assert response.status_code == 404
+    html = response.data.decode("utf-8")
+    assert "static/css/standalone-preview.css" in html
+    assert "static/js/preview.js" in html
+    assert "cdn.jsdelivr.net" not in html
+    assert "cdnjs.cloudflare.com" not in html
+    assert "<style>" not in html

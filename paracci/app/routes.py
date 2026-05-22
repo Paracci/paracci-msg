@@ -160,9 +160,9 @@ def _preview_content_security_policy() -> str:
     """Return the CSP for the standalone preview window."""
     return (
         "default-src 'self'; "
-        "script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
+        "script-src 'self'; "
         "script-src-attr 'none'; "
-        "style-src 'self' 'unsafe-inline'; "
+        "style-src 'self'; "
         "font-src 'self'; "
         "img-src 'self' data: blob:; "
         "media-src 'self' data: blob:; "
@@ -2076,22 +2076,20 @@ def _get_preview_response_data(file_data, pid):
 
 def _preview_token_not_found():
     token = (request.view_args or {}).get("pid") or ""
+    preview_css = url_for("static", filename="css/standalone-preview.css")
     preview_js = url_for("static", filename="js/preview.js")
     return (
         "<!doctype html><html><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
         "<title>Preview unavailable</title>"
+        f"<link rel=\"stylesheet\" href=\"{preview_css}\">"
         f"<script src=\"{preview_js}\" defer></script>"
-        "<style>"
-        "body{margin:0;min-height:100vh;display:grid;place-items:center;"
-        "background:#050507;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}"
-        ".panel{max-width:420px;padding:24px;text-align:center}"
-        "p{color:#b7bac4}.btn{border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.065);"
-        "color:#f5f5f7;border-radius:8px;padding:9px 14px;cursor:pointer}"
-        "</style></head><body>"
-        "<main class=\"panel\"><h3>Preview unavailable</h3>"
-        "<p>This preview has expired. Please reopen the message.</p>"
-        "<button class=\"btn\" id=\"closeBtn\" type=\"button\">Close</button></main>"
+        "</head><body>"
+        "<div class=\"preview-shell\"><main class=\"preview-main\"><div class=\"content-host\">"
+        "<div class=\"message-state\"><h1 class=\"state-title\">Preview unavailable</h1>"
+        "<p class=\"state-copy\">This preview has expired. Please reopen the message.</p>"
+        "<button class=\"btn\" id=\"closeBtn\" type=\"button\">Close</button></div>"
+        "</div></main></div>"
         f"<div id=\"previewConfig\" hidden data-token=\"{token}\" data-allow-download=\"false\"></div>"
         "</body></html>"
     ), 404
