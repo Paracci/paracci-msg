@@ -72,11 +72,14 @@ class UIApi:
             raise UIApiError(exc.code, message) from exc
         except SessionServiceError as exc:
             message = str(exc)
-            if message.startswith("hybrid_kem_"):
+            if message.startswith("hybrid_kem_") or message.startswith("session."):
                 raise UIApiError(message, self.services.i18n.translate(message)) from exc
             raise UIApiError("session_service_error", message) from exc
         except MessageServiceError as exc:
-            raise UIApiError("message_service_error", str(exc)) from exc
+            message = str(exc)
+            if message.startswith("hybrid_kem_") or message.startswith("session."):
+                raise UIApiError(message, self.services.i18n.translate(message)) from exc
+            raise UIApiError("message_service_error", message) from exc
         except (MemoryError, KeyboardInterrupt, SystemExit):
             raise
         except Exception as exc:

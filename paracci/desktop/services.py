@@ -43,8 +43,6 @@ from core.package import Attachment, PackageLimitError, create_package, extract_
 from core.sanitizer import SanitizationError, sanitize_image
 from core.security_utils import scan_text_for_security
 from core.session import (
-    FILE_VERSION,
-    HANDSHAKE_FILE_VERSION,
     LEGACY_WRAPPED_HANDSHAKE_FILE_VERSION,
     TYPE_INITIATOR,
     TYPE_MESSAGE,
@@ -57,6 +55,7 @@ from core.session import (
     deserialize_session_meta,
     finalize_initiator_session,
     get_session_safety_code,
+    require_transcript_bound_session,
     serialize_initiator_file,
     serialize_responder_file,
     serialize_session_meta,
@@ -302,7 +301,7 @@ def parse_file_header(file_bytes: bytes) -> dict | None:
     if file_type == TYPE_MESSAGE:
         if file_version not in (LEGACY_ENVELOPE_FILE_VERSION, ENVELOPE_FILE_VERSION):
             return None
-    elif file_version not in (FILE_VERSION, LEGACY_WRAPPED_HANDSHAKE_FILE_VERSION, HANDSHAKE_FILE_VERSION):
+    elif file_version < LEGACY_WRAPPED_HANDSHAKE_FILE_VERSION:
         return None
 
     session_id = file_bytes[6:22]
@@ -640,6 +639,10 @@ class MessageService:
         ttl_seconds: int = 0,
     ) -> tuple[bytes, str]:
         meta = self.sessions.load(session_id_hex)
+        try:
+            require_transcript_bound_session(meta)
+        except HybridKEMError as exc:
+            raise MessageServiceError(exc.i18n_key) from exc
         if not meta.can_send:
             raise MessageServiceError("Session safety code has not been confirmed.")
 
@@ -662,6 +665,10 @@ class MessageService:
         source_path: Path | None = None,
     ) -> OpenedMessage:
         meta = self.sessions.load(session_id_hex)
+        try:
+            require_transcript_bound_session(meta)
+        except HybridKEMError as exc:
+            raise MessageServiceError(exc.i18n_key) from exc
         if not meta.can_open:
             raise MessageServiceError("Session safety code has not been confirmed.")
 
