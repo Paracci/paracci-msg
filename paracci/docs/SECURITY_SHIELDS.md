@@ -28,6 +28,7 @@ Platform routing and fallbacks are coordinated by [device_key_binding.py](paracc
 
 The local device key is derived from the user's passphrase using Argon2id with fixed parameters (t=2, m=64MB, p=4), which meet OWASP minimum recommendations. Configurable cost profiles (standard, paranoid, and quantum/Maximum) are applied to session and envelope key hardening, not to device key derivation.
 - **Post-Quantum Security**: Paracci uses a hybrid X25519 + ML-KEM-768 key exchange. Both classical and post-quantum secrets must be compromised to break the session key. Argon2id hardening is a separate key-hardening layer, not a replacement for the hybrid exchange.
+- **Transcript Identity Binding**: Session keys are bound to both parties' Ed25519 identity keys via a handshake transcript (SHA3-256). Unknown-key-share resistance is reinforced at the key derivation layer, not only at the signature verification layer.
 
 ---
 

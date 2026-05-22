@@ -38,11 +38,11 @@ Coordinates platform-native system utilities:
 ### 5. Core Engine ([core/](paracci/core/))
 
 The cryptographic and logic core:
-- [crypto.py](paracci/core/crypto.py): Implements primitives including X25519 key exchange, HKDF-SHA512, ChaCha20-Poly1305 AEAD, Argon2id, and the hybrid shared-secret combiner.
+- [crypto.py](paracci/core/crypto.py): Implements primitives including X25519 key exchange, HKDF-SHA512, ChaCha20-Poly1305 AEAD, Argon2id, handshake transcript computation, and the hybrid shared-secret combiner.
 - [quantum_kem.py](paracci/core/quantum_kem.py): Wraps ML-KEM-768 operations through `liboqs-python`.
 - [hybrid_kem.py](paracci/core/hybrid_kem.py): Coordinates ML-KEM setup, encapsulation, decapsulation, and validation for hybrid session handshakes.
 - [constants.py](paracci/core/constants.py): Frozen protocol-stable constants and identifiers used throughout the application to ensure backwards compatibility.
-- [session.py](paracci/core/session.py): Coordinates Handshake V3 hybrid X25519 + ML-KEM setup, generates initiator/responder files containing authenticated public metadata, and derives session key seeds.
+- [session.py](paracci/core/session.py): Coordinates v5 hybrid X25519 + ML-KEM setup, generates initiator/responder files containing authenticated public metadata, computes the SHA3-256 handshake transcript, feeds that transcript into the hybrid KEM combiner, and derives session key seeds. Legacy v4 and older handshake files are rejected with a start-new-session migration message because they are not transcript-bound.
 - [preview_store.py](paracci/core/preview_store.py): Thread-safe, in-memory store managing short-lived, token-scoped preview sessions for message attachments.
 - [envelope.py](paracci/core/envelope.py): Packages encrypted message payloads and attachment ZIP archives.
 - [package.py](paracci/core/package.py): Manages in-memory ZIP extraction and safety limits (uncompressed size, entry count, compression ratio).
@@ -53,10 +53,11 @@ The cryptographic and logic core:
 
 ## Handshake File Formats
 
-Paracci supports two formats for exchanging handshake and session setup configurations:
-- **v3 Legacy (Wrapped)**: Encrypts the session setup metadata using a key derived from the session ID. Legacy clients and imports decrypt the wrapper payload using the derived key.
-- **v4 Current (Plaintext JSON Header)**: Serializes setup data as plaintext JSON appended directly after the 22-byte magic binary header. Contains identity public keys, hybrid ML-KEM details, and an Ed25519 signature verified against the sender's identity.
-- **Migration & Compatibility**: The system dynamically inspects the file version header byte. If a v3 legacy wrapped handshake is detected, it falls back to wrapped decryption to ensure seamless backward compatibility during import.
+Paracci recognizes these handshake file versions:
+- **v5 Current (Transcript-Bound Plaintext JSON)**: Serializes signed setup data as plaintext JSON appended directly after the 22-byte magic binary header. Contains identity public keys, hybrid ML-KEM details, and an Ed25519 signature verified against the sender's identity. Session key derivation includes a SHA3-256 transcript over the session ID, both identity keys, ML-KEM algorithm, ML-KEM public key, and ML-KEM ciphertext.
+- **v4 Legacy (Plaintext JSON Header)**: Uses signed plaintext setup metadata but does not bind the hybrid combiner to the full identity/KEM transcript.
+- **v3 Legacy (Wrapped)**: Wrapped setup metadata with a key derived from the public session ID.
+- **Migration & Compatibility**: v4 and older handshake files are rejected with a migration message instructing users to start a new session.
 
 ---
 
