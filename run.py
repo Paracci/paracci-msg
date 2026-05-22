@@ -94,6 +94,15 @@ class PreviewWindowApi:
             return {"success": False, "error": "Invalid preview token."}
         return download_preview_file(self.token)
 
+    def open_file_location(self, path):
+        """Opens the folder containing the file in Windows Explorer."""
+        import os
+        import subprocess
+
+        if os.path.exists(path):
+            print(f"  [>] Opening location (Preview window): {path}")
+            subprocess.Popen(f'explorer /select,"{os.path.normpath(path)}"')
+
 
 def _preview_token_matches(candidate: str | None, expected: str | None) -> bool:
     return bool(candidate and expected and secrets.compare_digest(str(candidate), str(expected)))
