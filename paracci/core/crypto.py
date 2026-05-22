@@ -30,6 +30,7 @@ from .constants import (
     LABEL_QUANTUM_V3,
     LABEL_SYNC_V3,
     SESSION_MASTER_HKDF_LENGTH_V3,
+    TRANSCRIPT_DOMAIN,
 )
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
@@ -262,6 +263,51 @@ def get_safety_code(
     return "-".join(raw[i:i + 4] for i in range(0, len(raw), 4))
 
 
+def compute_handshake_transcript(
+    session_id: bytes,
+    initiator_identity_pub: bytes,
+    responder_identity_pub: bytes,
+    ml_kem_algorithm: str,
+    ml_kem_public_key: bytes,
+    ml_kem_ciphertext: bytes,
+) -> bytes:
+    """
+    Compute a cryptographic transcript of the handshake.
+
+    Hashes all identity-binding material into a single 32-byte digest using
+    SHA3-256. This transcript is fed into the hybrid KEM combiner to bind the
+    derived session keys to both parties' identities and the exact KEM material.
+    """
+    if not isinstance(session_id, bytes):
+        raise ValueError("Session ID must be bytes.")
+    if len(session_id) != 16:
+        raise ValueError("Session ID must be 16 bytes.")
+    if not isinstance(initiator_identity_pub, bytes):
+        raise ValueError("Initiator identity public key must be bytes.")
+    if len(initiator_identity_pub) != 32:
+        raise ValueError("Initiator identity public key must be 32 bytes.")
+    if not isinstance(responder_identity_pub, bytes):
+        raise ValueError("Responder identity public key must be bytes.")
+    if len(responder_identity_pub) != 32:
+        raise ValueError("Responder identity public key must be 32 bytes.")
+    if not isinstance(ml_kem_algorithm, str) or not ml_kem_algorithm:
+        raise ValueError("ML-KEM algorithm must be a non-empty string.")
+    if not isinstance(ml_kem_public_key, bytes) or not ml_kem_public_key:
+        raise ValueError("ML-KEM public key must be non-empty bytes.")
+    if not isinstance(ml_kem_ciphertext, bytes) or not ml_kem_ciphertext:
+        raise ValueError("ML-KEM ciphertext must be non-empty bytes.")
+
+    h = hashlib.sha3_256()
+    h.update(TRANSCRIPT_DOMAIN)
+    h.update(session_id)
+    h.update(initiator_identity_pub)
+    h.update(responder_identity_pub)
+    h.update(ml_kem_algorithm.encode())
+    h.update(ml_kem_public_key)
+    h.update(ml_kem_ciphertext)
+    return h.digest()
+
+
 # ---------------------------------------------------------------------------
 # HKDF Derivation
 # ---------------------------------------------------------------------------
@@ -289,12 +335,14 @@ def derive_hybrid_shared_secret(
     x25519_shared: bytes,
     ml_kem_shared: bytes,
     session_id: bytes,
+    transcript: bytes | None = None,
 ) -> bytes:
     """
     Combines X25519 and ML-KEM shared secrets into one 64-byte hybrid secret.
 
-    HKDF-SHA512 uses session_id as a public per-session salt and
-    HYBRID_KEM_DOMAIN as the protocol domain label.
+    When transcript is provided, HKDF-SHA512 binds the result to the signed
+    handshake identities and KEM transcript. A missing transcript is retained
+    only as the M-1A compatibility path until session.py is integrated in M-1B.
     """
     if not isinstance(x25519_shared, bytes):
         raise ValueError("X25519 shared secret must be bytes.")
@@ -308,11 +356,17 @@ def derive_hybrid_shared_secret(
         raise ValueError("Session ID must be bytes.")
     if len(session_id) != 16:
         raise ValueError("Session ID must be 16 bytes.")
+    if transcript is not None:
+        if not isinstance(transcript, bytes):
+            raise ValueError("Handshake transcript must be bytes.")
+        if len(transcript) != 32:
+            raise ValueError("Handshake transcript must be 32 bytes.")
 
+    info = HYBRID_KEM_DOMAIN if transcript is None else HYBRID_KEM_DOMAIN + transcript
     return hkdf_derive(
         x25519_shared + ml_kem_shared,
         length=64,
-        info=HYBRID_KEM_DOMAIN,
+        info=info,
         salt=session_id,
     )
 
