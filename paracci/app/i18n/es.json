@@ -279,6 +279,8 @@
     "safety_code_mismatch": "Safety code does not match. Do not use this session until both sides match.",
     "safety_unverified": "Safety code must be confirmed before this session can be used.",
     "legacy_handshake_blocked": "This session was created with an older unsigned handshake and cannot be used safely. Create a new session.",
+    "legacy_handshake_version": "Esta sesión se estableció con una versión anterior de Paracci y no tiene vinculación de identidad. Inicia una sesión nueva.",
+    "legacy_session_requires_new": "Esta sesión se creó sin vinculación de identidad. Pide a tu contacto que inicie una sesión nueva.",
     "state_unverified": "Unverified",
     "msg_opened": "📨 Mensaje abierto",
     "msg_burned": "abierto - no puede reabrirse en este dispositivo",

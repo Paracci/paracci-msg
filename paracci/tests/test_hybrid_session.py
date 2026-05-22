@@ -106,8 +106,16 @@ def _decrypt_session_row(db: BurnDB, device_key: bytes, session_id: bytes) -> di
 
 
 @oqs_required
-def test_full_v3_hybrid_handshake_roundtrip():
-    _pending_x, meta_x, meta_y, init_file, resp_file = _handshake()
+def test_full_v5_hybrid_handshake_roundtrip(monkeypatch):
+    transcript_calls = []
+    real_compute_transcript = session_module.compute_handshake_transcript
+
+    def capture_transcript(**kwargs):
+        transcript_calls.append(dict(kwargs))
+        return real_compute_transcript(**kwargs)
+
+    monkeypatch.setattr(session_module, "compute_handshake_transcript", capture_transcript)
+    pending_x, meta_x, meta_y, init_file, resp_file = _handshake()
 
     assert init_file[4] == HANDSHAKE_FILE_VERSION
     assert resp_file[4] == HANDSHAKE_FILE_VERSION
@@ -115,8 +123,22 @@ def test_full_v3_hybrid_handshake_roundtrip():
     assert _load_setup_payload(resp_file)["session_id"] == meta_x.session_id.hex()
     assert meta_x.handshake_version == 3
     assert meta_y.handshake_version == 3
+    assert meta_x.handshake_file_version == 5
+    assert meta_y.handshake_file_version == 5
+    assert meta_x.transcript_version == 1
+    assert meta_y.transcript_version == 1
+    assert meta_x.is_transcript_bound
+    assert meta_y.is_transcript_bound
     assert meta_x.keys == meta_y.keys
     assert get_session_safety_code(meta_x) == get_session_safety_code(meta_y)
+    assert len(transcript_calls) == 2
+    assert transcript_calls[0]["initiator_identity_pub"] == transcript_calls[1]["initiator_identity_pub"]
+    assert transcript_calls[0]["responder_identity_pub"] == transcript_calls[1]["responder_identity_pub"]
+    assert transcript_calls[0]["initiator_identity_pub"] == pending_x.my_identity_pub
+    assert transcript_calls[0]["responder_identity_pub"] == meta_y.my_identity_pub
+    assert transcript_calls[0]["ml_kem_public_key"] == transcript_calls[1]["ml_kem_public_key"]
+    assert transcript_calls[0]["ml_kem_ciphertext"] == transcript_calls[1]["ml_kem_ciphertext"]
+    assert real_compute_transcript(**transcript_calls[0]) == real_compute_transcript(**transcript_calls[1])
 
     code = get_session_safety_code(meta_x)
     active_x = confirm_safety_code(meta_x, code)
@@ -125,9 +147,9 @@ def test_full_v3_hybrid_handshake_roundtrip():
     assert active_y.can_open
 
 
-def test_v1_and_v2_initiator_files_are_rejected_with_legacy_i18n_key():
+def test_pre_v5_initiator_files_are_rejected_with_identity_binding_i18n_key():
     y_identity_priv, y_identity_pub = _identity()
-    for handshake_version in (1, 2):
+    for handshake_version in (1, 2, 4):
         with pytest.raises(HybridKEMError) as exc_info:
             accept_initiator_and_create_responder(
                 _legacy_initiator_file(handshake_version),
@@ -135,7 +157,19 @@ def test_v1_and_v2_initiator_files_are_rejected_with_legacy_i18n_key():
                 identity_pub=y_identity_pub,
                 identity_priv=y_identity_priv,
             )
-        assert exc_info.value.i18n_key == "hybrid_kem_legacy_session"
+        assert exc_info.value.i18n_key == "session.legacy_handshake_version"
+
+
+@oqs_required
+def test_v4_responder_file_is_rejected_with_identity_binding_i18n_key():
+    pending_x, _meta_x, _meta_y, _init_file, resp_file = _handshake()
+    legacy_resp = bytearray(resp_file)
+    legacy_resp[4] = session_module.HANDSHAKE_FILE_VERSION_V4
+
+    with pytest.raises(HybridKEMError) as exc_info:
+        finalize_initiator_session(pending_x, bytes(legacy_resp))
+
+    assert exc_info.value.i18n_key == "session.legacy_handshake_version"
 
 
 @oqs_required
@@ -167,11 +201,15 @@ def test_v3_initiator_missing_ml_kem_public_key_raises_hybrid_error():
 def test_ml_kem_secret_key_is_absent_from_database_after_bond_completes(tmp_path):
     db = BurnDB(tmp_path / "sessions.db")
     device_key = random_bytes(32)
-    pending_x, finalized_x, _meta_y, _init_file, _resp_file = _handshake()
+    pending_x, finalized_x, _meta_y, _init_file, resp_file = _handshake()
 
     _save_meta(db, device_key, pending_x)
     pending_data = _decrypt_session_row(db, device_key, pending_x.session_id)
     assert pending_data["ml_kem_secret_key"] == pending_x.ml_kem_secret_key.hex()
+    assert pending_data["ml_kem_public_key"] == pending_x.ml_kem_public_key.hex()
+    restored_pending = deserialize_session_meta(db.load_session(pending_x.session_id)[2], device_key)
+    assert restored_pending.ml_kem_public_key == pending_x.ml_kem_public_key
+    assert finalize_initiator_session(restored_pending, resp_file).keys == _meta_y.keys
 
     _save_meta(db, device_key, finalized_x)
     finalized_data = _decrypt_session_row(db, device_key, finalized_x.session_id)

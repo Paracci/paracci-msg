@@ -61,8 +61,8 @@ from core.session import (
     create_initiator_session, accept_initiator_and_create_responder,
     finalize_initiator_session, apply_bond_nonce_to_y,
     serialize_initiator_file, serialize_responder_file,
-    confirm_safety_code, get_session_safety_code,
-    FILE_VERSION, HANDSHAKE_FILE_VERSION, LEGACY_WRAPPED_HANDSHAKE_FILE_VERSION,
+    confirm_safety_code, get_session_safety_code, require_transcript_bound_session,
+    LEGACY_WRAPPED_HANDSHAKE_FILE_VERSION,
     SESSION_COLORS, SESSION_STATE_UNVERIFIED, SessionError
 )
 from core.hybrid_kem import HybridKEMError
@@ -1133,7 +1133,7 @@ def _parse_file_header_raw(file_bytes: bytes) -> dict | None:
     if file_type == 0x20:
         if version not in (LEGACY_ENVELOPE_FILE_VERSION, ENVELOPE_FILE_VERSION):
             return None
-    elif version not in (FILE_VERSION, LEGACY_WRAPPED_HANDSHAKE_FILE_VERSION, HANDSHAKE_FILE_VERSION):
+    elif version < LEGACY_WRAPPED_HANDSHAKE_FILE_VERSION:
         return None
         
     try:
@@ -1723,6 +1723,12 @@ def session_seal(sid: str):
     meta = _load_session(sid)
     if meta is None: abort(404)
 
+    try:
+        require_transcript_bound_session(meta)
+    except HybridKEMError as e:
+        flash(_hybrid_error_message(e), "error")
+        return redirect(url_for("main.session_detail", sid=sid))
+
     if not meta.can_send:
         if not meta.safety_confirmed:
             msg = _('session.safety_unverified')
@@ -1809,6 +1815,12 @@ def session_open(sid: str):
     is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest" or request.args.get("ajax") == "1"
     meta = _load_session(sid)
     if meta is None: return (jsonify({"success": False, "error": "Session not found."}), 404) if is_ajax else abort(404)
+
+    try:
+        require_transcript_bound_session(meta)
+    except HybridKEMError as e:
+        msg = _hybrid_error_message(e)
+        return jsonify({"success": False, "error": msg}) if is_ajax else (flash(msg, "error") or redirect(url_for("main.session_detail", sid=sid)))
 
     if not meta.can_open:
         msg = _('session.safety_unverified') if not meta.safety_confirmed else _('session.not_active')

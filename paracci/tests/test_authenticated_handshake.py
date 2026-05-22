@@ -27,6 +27,7 @@ from core.session import (
     deserialize_session_meta,
     finalize_initiator_session,
     get_session_safety_code,
+    require_transcript_bound_session,
 )
 
 
@@ -142,7 +143,7 @@ def test_modified_responder_payload_is_rejected_after_plaintext_tamper():
 
 
 @oqs_required
-def test_legacy_v3_wrapped_handshake_files_import():
+def test_legacy_v3_wrapped_handshake_files_are_rejected():
     x_identity_priv, x_identity_pub = _identity()
     y_identity_priv, y_identity_pub = _identity()
     meta_x, init_file = create_initiator_session(
@@ -152,18 +153,28 @@ def test_legacy_v3_wrapped_handshake_files_import():
         identity_pub=x_identity_pub,
         identity_priv=x_identity_priv,
     )
-    legacy_init = _legacy_v3_wrapped_setup_file(init_file, b"initiator")
     meta_y, resp_file = accept_initiator_and_create_responder(
-        legacy_init,
+        init_file,
         "Y",
         identity_pub=y_identity_pub,
         identity_priv=y_identity_priv,
     )
+    legacy_init = _legacy_v3_wrapped_setup_file(init_file, b"initiator")
     legacy_resp = _legacy_v3_wrapped_setup_file(resp_file, b"responder")
-    finalized_x = finalize_initiator_session(meta_x, legacy_resp)
 
-    assert finalized_x.keys == meta_y.keys
-    assert finalized_x.session_id == meta_y.session_id
+    with pytest.raises(session_module.HybridKEMError) as init_exc:
+        accept_initiator_and_create_responder(
+            legacy_init,
+            "Y",
+            identity_pub=y_identity_pub,
+            identity_priv=y_identity_priv,
+        )
+    with pytest.raises(session_module.HybridKEMError) as resp_exc:
+        finalize_initiator_session(meta_x, legacy_resp)
+
+    assert init_exc.value.i18n_key == "session.legacy_handshake_version"
+    assert resp_exc.value.i18n_key == "session.legacy_handshake_version"
+    assert meta_y.session_id == meta_x.session_id
 
 
 def test_unsigned_legacy_initiator_file_is_rejected():
@@ -264,3 +275,58 @@ def test_legacy_session_metadata_deserializes_as_unverified():
     assert restored.state == SESSION_STATE_UNVERIFIED
     assert not restored.safety_confirmed
     assert not restored.can_send
+
+
+@oqs_required
+def test_established_pre_v5_session_metadata_requires_new_session():
+    meta_x, _meta_y, _init_file, _resp_file = _confirmed_handshake()
+    device_key = random_bytes(32)
+    keys_data = {
+        "x_to_y": meta_x.keys.key_x_to_y.hex(),
+        "y_to_x": meta_x.keys.key_y_to_x.hex(),
+        "sync": meta_x.keys.sync_key.hex(),
+        "evo": meta_x.keys.evo_seed.hex(),
+    }
+    legacy_data = {
+        "session_id": meta_x.session_id.hex(),
+        "role": meta_x.role,
+        "my_priv": meta_x.my_priv.hex(),
+        "my_pub": meta_x.my_pub.hex(),
+        "peer_pub": meta_x.peer_pub.hex(),
+        "keys": keys_data,
+        "bond_seed": meta_x.bond_seed.hex(),
+        "send_seed": meta_x.send_seed.hex(),
+        "recv_seed": meta_x.recv_seed.hex(),
+        "bond_nonce": meta_x.bond_nonce.hex(),
+        "tx_count": meta_x.tx_count,
+        "rx_count": meta_x.rx_count,
+        "my_qseed": meta_x.my_qseed.hex(),
+        "peer_qseed": meta_x.peer_qseed.hex(),
+        "peer_username": meta_x.peer_username,
+        "color": meta_x.color,
+        "evo_config": serialize_evo_config(meta_x.evo_config).hex(),
+        "state": SESSION_STATE_ACTIVE,
+        "label": meta_x.label,
+        "created_at": meta_x.created_at,
+        "my_identity_pub": meta_x.my_identity_pub.hex(),
+        "peer_identity_pub": meta_x.peer_identity_pub.hex(),
+        "handshake_version": session_module.HANDSHAKE_VERSION,
+        "safety_confirmed": True,
+        "safety_confirmed_at": 1,
+    }
+    blob = encrypt(
+        device_key,
+        json.dumps(legacy_data, separators=(",", ":")).encode("utf-8"),
+        aad=b"paracci.db.session.v2",
+    )
+
+    restored = deserialize_session_meta(blob.nonce + blob.ciphertext, device_key)
+
+    assert restored.handshake_file_version == session_module.HANDSHAKE_FILE_VERSION_V4
+    assert restored.transcript_version is None
+    assert restored.state == SESSION_STATE_ACTIVE
+    assert restored.safety_confirmed
+    assert not restored.can_send
+    with pytest.raises(session_module.HybridKEMError) as exc_info:
+        require_transcript_bound_session(restored)
+    assert exc_info.value.i18n_key == "session.legacy_session_requires_new"

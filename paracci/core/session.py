@@ -13,12 +13,19 @@ from typing import NamedTuple, Optional
 
 from cryptography.exceptions import InvalidTag
 
-from .constants import KEM_ALGORITHM, LEGACY_HANDSHAKE_FILE_WRAPPER_DOMAIN_V3
+from .constants import (
+    HANDSHAKE_FILE_VERSION_V4,
+    HANDSHAKE_FILE_VERSION_V5,
+    HANDSHAKE_TRANSCRIPT_VERSION,
+    KEM_ALGORITHM,
+    LEGACY_HANDSHAKE_FILE_WRAPPER_DOMAIN_V3,
+)
 from .crypto import (
     DerivedKeys,
     EncryptedBlob,
     KEY_LEN,
     NONCE_LEN,
+    compute_handshake_transcript,
     decrypt,
     derive_hybrid_shared_secret,
     derive_session_keys,
@@ -45,7 +52,6 @@ from .evolution import (
 )
 from .hybrid_kem import (
     HYBRID_HANDSHAKE_VERSION,
-    OLDER_VERSION_ERROR,
     HybridKEMError,
     initiator_kem_complete,
     initiator_kem_setup,
@@ -56,7 +62,7 @@ from .hybrid_kem import (
 MAGIC_BYTES = b"PARC"
 FILE_VERSION = 0x01
 LEGACY_WRAPPED_HANDSHAKE_FILE_VERSION = 0x03
-HANDSHAKE_FILE_VERSION = 0x04
+HANDSHAKE_FILE_VERSION = HANDSHAKE_FILE_VERSION_V5
 TYPE_INITIATOR = 0x10
 TYPE_RESPONDER = 0x11
 TYPE_MESSAGE = 0x20
@@ -73,6 +79,7 @@ LEGACY_HANDSHAKE_VERSION = 1
 # Handshake file-header versions:
 # v3: signed metadata wrapped in AEAD with a key derived from public session_id.
 # v4: signed public metadata stored directly as canonical JSON.
+# v5: signed public metadata with transcript-bound hybrid key derivation.
 SIGN_INITIATOR_LABEL = b"paracci.handshake.initiator.v3"
 SIGN_RESPONDER_LABEL = b"paracci.handshake.responder.v3"
 
@@ -123,11 +130,21 @@ class SessionMeta(NamedTuple):
     ml_kem_public_key: Optional[bytes] = None
     ml_kem_secret_key: Optional[bytes] = None
     ml_kem_ciphertext: Optional[bytes] = None
+    handshake_file_version: int = HANDSHAKE_FILE_VERSION
+    transcript_version: Optional[int] = None
 
     @property
     def is_bonded(self) -> bool:
         """Is the message ratchet bond established?"""
         return self.send_seed is not None and self.recv_seed is not None
+
+    @property
+    def is_transcript_bound(self) -> bool:
+        """Was this session derived with the identity-bound transcript combiner?"""
+        return (
+            self.handshake_file_version >= HANDSHAKE_FILE_VERSION_V5
+            and self.transcript_version == HANDSHAKE_TRANSCRIPT_VERSION
+        )
 
     @property
     def can_send(self) -> bool:
@@ -136,6 +153,7 @@ class SessionMeta(NamedTuple):
             self.state == SESSION_STATE_ACTIVE
             and self.is_bonded
             and self.safety_confirmed
+            and self.is_transcript_bound
         )
 
     @property
@@ -145,6 +163,7 @@ class SessionMeta(NamedTuple):
             self.state == SESSION_STATE_ACTIVE
             and self.keys is not None
             and self.safety_confirmed
+            and self.is_transcript_bound
         )
 
     @property
@@ -239,10 +258,13 @@ def _decode_file_payload(data: bytes, expected_type: int, purpose: bytes) -> tup
         raise SessionFileError("Unexpected session file type.")
     file_version = data[4]
     if _is_handshake_type(expected_type):
-        if file_version not in (LEGACY_WRAPPED_HANDSHAKE_FILE_VERSION, HANDSHAKE_FILE_VERSION):
-            if file_version < LEGACY_WRAPPED_HANDSHAKE_FILE_VERSION:
-                raise HybridKEMError(OLDER_VERSION_ERROR, "hybrid_kem_legacy_session")
-            raise SessionFileError("Unsupported version.")
+        if file_version < HANDSHAKE_FILE_VERSION_V5:
+            raise HybridKEMError(
+                "This session was established with an older version of Paracci and does not have identity binding. Please start a new session.",
+                "session.legacy_handshake_version",
+            )
+        if file_version > HANDSHAKE_FILE_VERSION_V5:
+            raise SessionFileError("Unsupported handshake version.")
     elif file_version != FILE_VERSION:
         raise SessionFileError("Unsupported version.")
 
@@ -512,6 +534,8 @@ def create_initiator_session(
         ml_kem_public_key=kem_setup["ml_kem_public_key"],
         ml_kem_secret_key=kem_setup["ml_kem_secret_key"],
         ml_kem_ciphertext=None,
+        handshake_file_version=HANDSHAKE_FILE_VERSION,
+        transcript_version=HANDSHAKE_TRANSCRIPT_VERSION,
     )
     return meta, serialize_initiator_file(meta, my_username=my_username, identity_priv=identity_priv)
 
@@ -538,11 +562,22 @@ def accept_initiator_and_create_responder(
     y_priv, y_pub = generate_keypair()
     y_qseed = random_bytes(QSEED_LEN)
     kem_response = responder_kem_respond(ml_kem_public_key)
+    ml_kem_ciphertext = kem_response["ml_kem_ciphertext"]
+    ml_kem_shared = kem_response["ml_kem_shared_secret"]
     x25519_shared = ecdh(y_priv, x_pub)
+    transcript = compute_handshake_transcript(
+        session_id=session_id,
+        initiator_identity_pub=x_identity_pub,
+        responder_identity_pub=identity_pub,
+        ml_kem_algorithm=KEM_ALGORITHM,
+        ml_kem_public_key=ml_kem_public_key,
+        ml_kem_ciphertext=ml_kem_ciphertext,
+    )
     shared_secret = derive_hybrid_shared_secret(
-        x25519_shared,
-        kem_response["ml_kem_shared_secret"],
-        session_id,
+        x25519_shared=x25519_shared,
+        ml_kem_shared=ml_kem_shared,
+        session_id=session_id,
+        transcript=transcript,
     )
     q_salt = (x_qseed or b"") + (y_qseed or b"")
     keys = derive_session_keys(
@@ -584,7 +619,9 @@ def accept_initiator_and_create_responder(
         safety_confirmed_at=None,
         ml_kem_public_key=ml_kem_public_key,
         ml_kem_secret_key=None,
-        ml_kem_ciphertext=kem_response["ml_kem_ciphertext"],
+        ml_kem_ciphertext=ml_kem_ciphertext,
+        handshake_file_version=HANDSHAKE_FILE_VERSION,
+        transcript_version=HANDSHAKE_TRANSCRIPT_VERSION,
     )
     resp_bytes = serialize_responder_file(
         session_id,
@@ -597,7 +634,7 @@ def accept_initiator_and_create_responder(
         x_identity_pub=x_identity_pub,
         y_identity_pub=identity_pub,
         identity_priv=identity_priv,
-        ml_kem_ciphertext=kem_response["ml_kem_ciphertext"],
+        ml_kem_ciphertext=ml_kem_ciphertext,
     )
     return meta, resp_bytes
 
@@ -617,13 +654,24 @@ def finalize_initiator_session(meta: SessionMeta, responder_file_bytes: bytes) -
     ml_kem_ciphertext = info["ml_kem_ciphertext"]
     if not meta.ml_kem_secret_key:
         raise HybridKEMError("Missing ML-KEM secret key.", "hybrid_kem_complete_failed")
+    if not meta.ml_kem_public_key:
+        raise HybridKEMError("Missing ML-KEM public key.", "hybrid_kem_complete_failed")
     evo_config = validate_evo_config(meta.evo_config)
     ml_kem_shared = initiator_kem_complete(meta.ml_kem_secret_key, ml_kem_ciphertext)
     x25519_shared = ecdh(meta.my_priv, y_pub)
+    transcript = compute_handshake_transcript(
+        session_id=meta.session_id,
+        initiator_identity_pub=meta.my_identity_pub,
+        responder_identity_pub=info["y_identity_pub"],
+        ml_kem_algorithm=KEM_ALGORITHM,
+        ml_kem_public_key=meta.ml_kem_public_key,
+        ml_kem_ciphertext=ml_kem_ciphertext,
+    )
     shared_secret = derive_hybrid_shared_secret(
-        x25519_shared,
-        ml_kem_shared,
-        meta.session_id,
+        x25519_shared=x25519_shared,
+        ml_kem_shared=ml_kem_shared,
+        session_id=meta.session_id,
+        transcript=transcript,
     )
     q_salt = (meta.my_qseed or b"") + (y_qseed or b"")
     keys = derive_session_keys(
@@ -660,6 +708,8 @@ def finalize_initiator_session(meta: SessionMeta, responder_file_bytes: bytes) -
         ml_kem_public_key=None,
         ml_kem_secret_key=None,
         ml_kem_ciphertext=ml_kem_ciphertext,
+        handshake_file_version=HANDSHAKE_FILE_VERSION,
+        transcript_version=HANDSHAKE_TRANSCRIPT_VERSION,
     )
 
 
@@ -724,6 +774,15 @@ def confirm_safety_code(meta: SessionMeta, user_code: str) -> SessionMeta:
     )
 
 
+def require_transcript_bound_session(meta: SessionMeta) -> None:
+    """Reject established sessions whose keys were derived without transcript binding."""
+    if not meta.is_transcript_bound:
+        raise HybridKEMError(
+            "This session was created without identity binding. Please ask your contact to start a new session.",
+            "session.legacy_session_requires_new",
+        )
+
+
 def serialize_session_meta(meta: SessionMeta, device_key: bytes) -> bytes:
     """Serializes session data by encrypting it for the local database."""
     keys_data = None
@@ -758,6 +817,8 @@ def serialize_session_meta(meta: SessionMeta, device_key: bytes) -> bytes:
         "my_identity_pub": meta.my_identity_pub.hex() if meta.my_identity_pub else None,
         "peer_identity_pub": meta.peer_identity_pub.hex() if meta.peer_identity_pub else None,
         "handshake_version": meta.handshake_version,
+        "handshake_file_version": meta.handshake_file_version,
+        "transcript_version": meta.transcript_version,
         "safety_confirmed": meta.safety_confirmed,
         "safety_confirmed_at": meta.safety_confirmed_at,
     }
@@ -795,6 +856,9 @@ def deserialize_session_meta(encrypted_data: bytes, device_key: bytes) -> Sessio
         )
 
     handshake_version = int(data.get("handshake_version", LEGACY_HANDSHAKE_VERSION))
+    handshake_file_version = int(data.get("handshake_file_version", HANDSHAKE_FILE_VERSION_V4))
+    transcript_version_raw = data.get("transcript_version")
+    transcript_version = int(transcript_version_raw) if transcript_version_raw is not None else None
     safety_confirmed = bool(data.get("safety_confirmed", False)) if handshake_version >= HANDSHAKE_VERSION else False
     state = data["state"]
     if handshake_version < HANDSHAKE_VERSION and state == SESSION_STATE_ACTIVE:
@@ -831,6 +895,8 @@ def deserialize_session_meta(encrypted_data: bytes, device_key: bytes) -> Sessio
         ml_kem_public_key=bytes.fromhex(data["ml_kem_public_key"]) if data.get("ml_kem_public_key") else None,
         ml_kem_secret_key=bytes.fromhex(data["ml_kem_secret_key"]) if data.get("ml_kem_secret_key") else None,
         ml_kem_ciphertext=bytes.fromhex(data["ml_kem_ciphertext"]) if data.get("ml_kem_ciphertext") else None,
+        handshake_file_version=handshake_file_version,
+        transcript_version=transcript_version,
     )
 
 

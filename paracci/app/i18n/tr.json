@@ -279,6 +279,8 @@
     "safety_code_mismatch": "Güvenlik kodu eşleşmiyor. İki taraftaki kod aynı olmadan bu oturumu kullanmayın.",
     "safety_unverified": "Bu oturum kullanılmadan önce güvenlik kodu doğrulanmalıdır.",
     "legacy_handshake_blocked": "Bu oturum eski imzasız el sıkışma ile oluşturulmuş ve güvenle kullanılamaz. Yeni bir oturum oluşturun.",
+    "legacy_handshake_version": "Bu oturum Paracci'nin daha eski bir sürümüyle kurulmuş ve kimlik bağlamasına sahip değil. Lütfen yeni bir oturum başlatın.",
+    "legacy_session_requires_new": "Bu oturum kimlik bağlaması olmadan oluşturulmuş. Lütfen kişinizden yeni bir oturum başlatmasını isteyin.",
     "state_unverified": "Doğrulanmadı",
     "msg_opened": "📨 Mesaj açıldı",
     "msg_burned": "açıldı - bu cihazda tekrar açılamaz",
