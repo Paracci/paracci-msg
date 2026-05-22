@@ -39,6 +39,15 @@ Paracci runs a local Flask server wrapped by a `pywebview` shell. This loopback 
 - **Header & CSRF Validation**: The server validates Host, Origin, Referer, and Fetch Metadata headers to block cross-origin requests. CSRF tokens are enforced on all unsafe methods.
 - **Sandboxed WebView**: The `pywebview` window blocks all navigation to external domains and disables developer inspector tools (unless debug mode is enabled).
 
+### Navigation Security
+
+External navigation is blocked via a JavaScript guard injected on window load. All external links in rendered message content are neutralized before DOM insertion.
+
+### Preview System Security
+
+- **Token Isolation**: Preview windows are isolated from main app privileges by exposing a limited, token-scoped `PreviewWindowApi` instead of the privileged `ProApi`. Preview URLs require cryptographically secure random tokens.
+- **Server-Side Download Enforcement**: The server routes check the `allow_download` property of the preview entry. If downloads are prohibited, attempts to download or fetch the original attachment binary return HTTP 403, and image previews are dynamically degraded and watermarked.
+
 ---
 
 ## Platform Shield Matrix

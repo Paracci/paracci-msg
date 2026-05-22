@@ -35,11 +35,19 @@ Coordinates the post-quantum side of the session handshake:
 
 ## [session.py](paracci/core/session.py)
 
-Coordinates the two-party v3 hybrid session setup. Handshake files (initiator and responder setup files) carry signed public metadata, including ML-KEM public data and ciphertext. They are integrity-protected but **not confidential**. Session keys are derived from the hybrid X25519 + ML-KEM shared secret and evolved deterministically.
+Coordinates the two-party hybrid session setup. Active sessions use the v4 signed plaintext JSON handshake format, while legacy sessions are initialized via the v3 wrapped handshake format. Handshake files (initiator and responder setup files) carry signed public metadata, including ML-KEM public data and ciphertext. They are integrity-protected but **not confidential**. Session keys are derived from the hybrid X25519 + ML-KEM shared secret and evolved deterministically.
 
-- Initiator and responder setup file creation.
+- Initiator and responder setup file creation (v4 plaintext JSON format).
+- Backward-compatible legacy v3 wrapped handshake parsing and import.
 - Session bonding ceremonies.
 - Serialization of encrypted session metadata stored in the database.
+
+## [preview_store.py](paracci/core/preview_store.py)
+
+Thread-safe, in-memory store for short-lived preview tokens. Coordinates preview sessions:
+- Generates 32-byte cryptographically secure random tokens.
+- Manages `PreviewEntry` objects (RAM-only file bytes, filename, mime type, and download flags).
+- Enforces time-to-live (TTL) validation and background token revocation.
 
 ## [envelope.py](paracci/core/envelope.py)
 
@@ -50,7 +58,7 @@ seal_envelope(payload_bytes, session, single_use=True, ttl_seconds=0)
 open_envelope(file_bytes, session)
 ```
 
-Envelopes are encrypted and authenticated using ChaCha20-Poly1305 AEAD and session-derived keys. Each envelope includes a unique message ID and step identifier to prevent replay attacks and unauthorized access. Legacy v1 envelopes with the former outer seal remain readable, but envelope integrity is provided by AEAD authentication.
+Envelopes use the active v2 format (HEADER + payload_len + payload_nonce + payload_ciphertext + sync_nonce + sync_ciphertext) and are encrypted and authenticated using ChaCha20-Poly1305 AEAD and session-derived keys, removing the hardcoded HMAC seal used in v1. Each envelope includes a unique message ID and step identifier to prevent replay attacks and unauthorized access. Legacy v1 envelopes with the former outer seal remain readable by stripping that trailer before parsing, but envelope authenticity and integrity are strictly provided by AEAD authentication.
 
 ## [package.py](paracci/core/package.py)
 

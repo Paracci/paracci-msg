@@ -43,10 +43,38 @@ The cryptographic and logic core:
 - [hybrid_kem.py](paracci/core/hybrid_kem.py): Coordinates ML-KEM setup, encapsulation, decapsulation, and validation for hybrid session handshakes.
 - [constants.py](paracci/core/constants.py): Frozen protocol-stable constants and identifiers used throughout the application to ensure backwards compatibility.
 - [session.py](paracci/core/session.py): Coordinates Handshake V3 hybrid X25519 + ML-KEM setup, generates initiator/responder files containing authenticated public metadata, and derives session key seeds.
+- [preview_store.py](paracci/core/preview_store.py): Thread-safe, in-memory store managing short-lived, token-scoped preview sessions for message attachments.
 - [envelope.py](paracci/core/envelope.py): Packages encrypted message payloads and attachment ZIP archives.
 - [package.py](paracci/core/package.py): Manages in-memory ZIP extraction and safety limits (uncompressed size, entry count, compression ratio).
 - [burn.py](paracci/core/burn.py): Enforces database transaction-bound message burn registries and device key storage.
 - [shields/](paracci/core/shields/): Contains platform-specific implementations (Windows, macOS, Linux) for clipboard clearing, anti-screenshot protection, and recent document cleanup.
+
+---
+
+## Handshake File Formats
+
+Paracci supports two formats for exchanging handshake and session setup configurations:
+- **v3 Legacy (Wrapped)**: Encrypts the session setup metadata using a key derived from the session ID. Legacy clients and imports decrypt the wrapper payload using the derived key.
+- **v4 Current (Plaintext JSON Header)**: Serializes setup data as plaintext JSON appended directly after the 22-byte magic binary header. Contains identity public keys, hybrid ML-KEM details, and an Ed25519 signature verified against the sender's identity.
+- **Migration & Compatibility**: The system dynamically inspects the file version header byte. If a v3 legacy wrapped handshake is detected, it falls back to wrapped decryption to ensure seamless backward compatibility during import.
+
+---
+
+## Preview System
+
+Message attachment previewing is isolated from main application privileges:
+- **PreviewStore** ([preview_store.py](paracci/core/preview_store.py)): A RAM-only, thread-safe manager that constructs brief, unique tokens for decrypted attachments.
+- **Routes**: Exposes Flask routes `/preview/<token>` to load the preview document layout and `/preview/<token>/content` to stream the underlying bytes securely.
+- **Window Isolation**: Opened preview frames run inside a restricted webview containing a restricted `PreviewWindowApi` instead of the main window's privileged `ProApi`. Actions are scoped to the matching token, preventing attachment environments from executing high-privilege operations.
+- **Download Enforcement**: Server-side routes enforce `allow_download` restrictions. If disabled, non-image requests abort with HTTP 403, and image formats are degraded and watermarked.
+
+---
+
+## Navigation Security
+
+Main UI and preview browser controls mitigate external link execution:
+- **JS Navigation Guard**: A window-load script injected at the pywebview frame initialization that intercepts and cancels clicks on external `href`s, form submissions, and `window.open` requests directing traffic outside local loopback boundaries.
+- **Link Neutralization**: Markdown contents are sanitized with DOMPurify, enforcing the `MARKDOWN_FRAGMENT_HREF_RE` pattern on all anchor tags to strip external URIs before DOM insertion.
 
 ---
 
