@@ -171,8 +171,8 @@ def test_preview_content_download_rejects_non_downloadable_token(tmp_path, monke
         headers={"Host": HOST},
     )
 
-    assert inline_response.status_code == 200
-    assert inline_response.data == b"do not download"
+    assert inline_response.status_code == 403
+    assert inline_response.data != b"do not download"
     assert download_response.status_code == 403
 
 

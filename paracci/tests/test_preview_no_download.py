@@ -53,6 +53,15 @@ def auth_client(tmp_path, monkeypatch):
     return client
 
 
+def fresh_preview_store(monkeypatch):
+    from app import routes
+    from core.preview_store import PreviewStore
+
+    store = PreviewStore()
+    monkeypatch.setattr(routes, "preview_store", store)
+    return store
+
+
 def png_bytes(size=(1400, 900), color=(14, 80, 130, 255)):
     image = Image.new("RGBA", size, color)
     output = io.BytesIO()
@@ -90,6 +99,78 @@ def seed_token_preview(pid, content, mime, allow_download, access_token="preview
 
 def get(client, path):
     return client.get(path, base_url=ORIGIN, headers={"Host": HOST})
+
+
+def test_no_download_token_image_content_is_inline_only(tmp_path, monkeypatch):
+    client = auth_client(tmp_path, monkeypatch)
+    store = fresh_preview_store(monkeypatch)
+    original = png_bytes()
+    token = store.generate_token(
+        original,
+        "preview.png",
+        "image/png",
+        allow_download=False,
+    )
+
+    inline_response = get(client, f"/preview/{token}/content")
+    download_response = get(client, f"/preview/{token}/content?download=1")
+
+    assert inline_response.status_code == 200
+    assert inline_response.data == original
+    assert inline_response.mimetype == "image/png"
+    disposition = inline_response.headers["Content-Disposition"].lower()
+    assert disposition.startswith("inline")
+    assert "attachment" not in disposition
+    assert download_response.status_code == 403
+    assert download_response.data != original
+
+
+def test_no_download_token_text_content_is_forbidden(tmp_path, monkeypatch):
+    client = auth_client(tmp_path, monkeypatch)
+    store = fresh_preview_store(monkeypatch)
+    token = store.generate_token(
+        b"private text",
+        "private.txt",
+        "text/plain",
+        allow_download=False,
+    )
+
+    response = get(client, f"/preview/{token}/content")
+
+    assert response.status_code == 403
+    assert response.data != b"private text"
+
+
+def test_no_download_token_pdf_content_is_forbidden(tmp_path, monkeypatch):
+    client = auth_client(tmp_path, monkeypatch)
+    store = fresh_preview_store(monkeypatch)
+    token = store.generate_token(
+        b"%PDF-private",
+        "private.pdf",
+        "application/pdf",
+        allow_download=False,
+    )
+
+    response = get(client, f"/preview/{token}/content")
+
+    assert response.status_code == 403
+    assert response.data != b"%PDF-private"
+
+
+def test_no_download_token_video_content_is_forbidden(tmp_path, monkeypatch):
+    client = auth_client(tmp_path, monkeypatch)
+    store = fresh_preview_store(monkeypatch)
+    token = store.generate_token(
+        b"private-video-bytes",
+        "private.mp4",
+        "video/mp4",
+        allow_download=False,
+    )
+
+    response = get(client, f"/preview/{token}/content")
+
+    assert response.status_code == 403
+    assert response.data != b"private-video-bytes"
 
 
 def test_no_download_raw_preview_rejects_original_bytes(tmp_path, monkeypatch):
