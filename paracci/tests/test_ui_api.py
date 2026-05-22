@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import subprocess
@@ -26,6 +27,23 @@ def make_api(path: Path) -> UIApi:
     os.environ["DATA_DIR"] = str(path)
     svc = NativeServices(path, "en")
     return UIApi(svc)
+
+
+def cache_open_attachment(api: UIApi, attachment: AttachmentPayload, open_id: str = "open-id") -> str:
+    api._opened[open_id] = CachedOpenMessage(
+        message=OpenedMessage(
+            text="secret",
+            attachments=[attachment],
+            allow_download=attachment.allow_download,
+            msg_id_hex="00",
+            evo_step=1,
+            expire_at=0,
+            single_use=True,
+            security_report={"is_safe": True, "risks": []},
+        ),
+        opened_at=int(time.time()),
+    )
+    return open_id
 
 
 def test_ui_api_device_settings_and_profile(tmp_path):
@@ -157,6 +175,74 @@ def test_ui_api_device_lock_drops_open_cache_and_windows_status_is_best_effort(t
 
     assert locked["unlocked"] is False
     assert api._opened == {}
+
+
+def test_ui_api_non_downloadable_text_preview_returns_policy_message(tmp_path):
+    api = make_api(tmp_path / "native-preview-text")
+    open_id = cache_open_attachment(
+        api,
+        AttachmentPayload(
+            filename="secret.txt",
+            content=b"attachment plaintext",
+            mime_type="text/plain",
+            allow_download=False,
+        ),
+    )
+
+    preview = api.dispatch(
+        "attachment_preview",
+        {"open_id": open_id, "attachment_id": "0"},
+    )
+
+    assert preview["preview_kind"] == "unsupported"
+    assert preview["message"] == "This file cannot be previewed here."
+    assert "text" not in preview
+    assert "content_base64" not in preview
+
+
+def test_ui_api_non_downloadable_binary_preview_returns_policy_message(tmp_path):
+    api = make_api(tmp_path / "native-preview-binary")
+    open_id = cache_open_attachment(
+        api,
+        AttachmentPayload(
+            filename="secret.pdf",
+            content=b"%PDF-private",
+            mime_type="application/pdf",
+            allow_download=False,
+        ),
+    )
+
+    preview = api.dispatch(
+        "attachment_preview",
+        {"open_id": open_id, "attachment_id": "0"},
+    )
+
+    assert preview["preview_kind"] == "unsupported"
+    assert preview["message"] == "Preview not available for this file type when downloading is disabled."
+    assert "text" not in preview
+    assert "content_base64" not in preview
+
+
+def test_ui_api_non_downloadable_image_preview_remains_available(tmp_path):
+    api = make_api(tmp_path / "native-preview-image")
+    image_bytes = b"\x89PNG\r\npreview-bytes"
+    open_id = cache_open_attachment(
+        api,
+        AttachmentPayload(
+            filename="preview.png",
+            content=image_bytes,
+            mime_type="image/png",
+            allow_download=False,
+        ),
+    )
+
+    preview = api.dispatch(
+        "attachment_preview",
+        {"open_id": open_id, "attachment_id": "0"},
+    )
+
+    assert preview["preview_kind"] == "image_base64"
+    assert base64.b64decode(preview["content_base64"]) == image_bytes
 
 
 def test_ui_api_maps_device_binding_error(tmp_path):

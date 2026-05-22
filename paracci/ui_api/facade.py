@@ -14,6 +14,8 @@ from desktop.services import AttachmentPayload, NativeServices, OpenedMessage, S
 
 
 OPEN_CACHE_TTL_SECONDS = 600
+NO_DOWNLOAD_TEXT_PREVIEW_MESSAGE = "This file cannot be previewed here."
+NO_DOWNLOAD_BINARY_PREVIEW_MESSAGE = "Preview not available for this file type when downloading is disabled."
 
 
 class UIApiError(Exception):
@@ -284,6 +286,19 @@ class UIApi:
     def cmd_attachment_preview(self, open_id: str, attachment_id: str) -> dict[str, Any]:
         attachment = self._get_attachment(open_id, attachment_id)
         response = self._attachment_meta(attachment, attachment_id)
+        if not attachment.allow_download:
+            if attachment.is_image:
+                response["preview_kind"] = "image_base64"
+                response["content_base64"] = base64.b64encode(attachment.content).decode("ascii")
+            else:
+                response["preview_kind"] = "unsupported"
+                response["message"] = (
+                    NO_DOWNLOAD_TEXT_PREVIEW_MESSAGE
+                    if attachment.is_text_like or attachment.is_dangerous
+                    else NO_DOWNLOAD_BINARY_PREVIEW_MESSAGE
+                )
+            return response
+
         if attachment.is_text_like or attachment.is_dangerous:
             response["preview_kind"] = "text"
             response["text"] = attachment.content.decode("utf-8", errors="replace")

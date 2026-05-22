@@ -118,7 +118,7 @@ def test_preview_template_hides_download_for_non_downloadable_token(tmp_path, mo
     html = response.data.decode("utf-8")
     assert response.status_code == 200
     assert 'data-allow-download="false"' in html
-    assert 'id="downloadBtn" hidden' in html
+    assert 'id="downloadBtn"' not in html
     assert f"/preview/{token}/content?download=1" not in html
 
 
@@ -132,6 +132,8 @@ def test_preview_runtime_uses_custom_media_controls():
     assert "customMediaPlayer" in preview_js
     assert "download-success-toast" in preview_html
     assert "showDownloadSuccess" in preview_js
+    assert "This file cannot be previewed here." in preview_js
+    assert "Preview not available for this file type when downloading is disabled." in preview_js
     assert "▶" in preview_js
     assert "⏸" in preview_js
     assert "toggleFullscreen" in preview_js

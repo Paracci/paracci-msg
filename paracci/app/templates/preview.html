@@ -772,7 +772,9 @@
         <div class="details" id="detailsText"></div>
       </div>
       <div class="actions">
-        <button class="btn btn-primary" type="button" id="downloadBtn" {% if not preview_allow_download %}hidden{% endif %}>Download</button>
+        {% if preview_allow_download %}
+        <button class="btn btn-primary" type="button" id="downloadBtn">Download</button>
+        {% endif %}
         <button class="btn" type="button" id="closeBtn">Close</button>
       </div>
     </header>

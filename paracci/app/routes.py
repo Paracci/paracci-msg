@@ -123,6 +123,10 @@ CODE_EXTENSIONS = {
     '.json', '.yaml', '.md', '.sql', '.php', '.asp', '.aspx', '.jsp'
 }
 
+INLINE_PREVIEW_IMAGE_EXTENSIONS = {
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".ico"
+}
+
 SENSITIVE_CACHE_CLEAR_LIMIT = 100
 
 
@@ -289,6 +293,13 @@ def _add_to_preview_cache(filename, content, mime, allow_download, ttl=600):
 def _can_send_original_attachment(file_data):
     """Return whether this preview entry may expose original attachment bytes."""
     return bool(file_data and file_data.get("allow_download") is True)
+
+
+def _is_inline_preview_image(filename: str | None, mime_type: str | None) -> bool:
+    """Return whether an attachment may be rendered as an inline image preview."""
+    mime = str(mime_type or "").lower()
+    suffix = Path(str(filename or "")).suffix.lower()
+    return mime.startswith("image/") or suffix in INLINE_PREVIEW_IMAGE_EXTENSIONS
 
 
 def _preview_url(endpoint: str, pid: str, file_data=None, **values) -> str:
@@ -1378,7 +1389,9 @@ def api_prepare_preview():
     file_bytes = file_data.get("content", b"")
     if not isinstance(file_bytes, bytes):
         file_bytes = bytes(file_bytes or b"")
-    mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    stored_mime = str(file_data.get("mime") or "").strip()
+    guessed_mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    mime_type = stored_mime if stored_mime and stored_mime != "application/octet-stream" else guessed_mime
     allow_download = file_data.get("allow_download") is True
     token = preview_store.generate_token(file_bytes, filename, mime_type, allow_download=allow_download)
     response = jsonify({
@@ -2161,14 +2174,26 @@ def preview_content(preview_token: str):
         abort(404)
 
     download_requested = request.args.get("download") == "1"
-    if download_requested and entry.allow_download is not True:
-        abort(403)
+    filename = sanitize_attachment_filename(entry.filename or "attachment.bin")
+    mime_type = entry.mime_type or "application/octet-stream"
+    if entry.allow_download is not True:
+        if download_requested or not _is_inline_preview_image(filename, mime_type):
+            abort(403)
+
+        response = send_file(
+            io.BytesIO(entry.file_bytes),
+            mimetype=mime_type,
+            as_attachment=False,
+            download_name=filename,
+        )
+        return _mark_sensitive_no_store(response)
+
     response = send_file(
         io.BytesIO(entry.file_bytes),
-        mimetype=entry.mime_type or "application/octet-stream",
+        mimetype=mime_type,
         as_attachment=download_requested,
         download_name=(
-            sanitize_attachment_filename(entry.filename or "attachment.bin")
+            filename
             if download_requested
             else None
         ),

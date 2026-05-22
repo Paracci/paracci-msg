@@ -209,7 +209,35 @@
         showState("Could not load preview content.", "", [closeButton()]);
     }
 
+    function showNoDownloadBlocked(kind = previewKind()) {
+        const textKinds = new Set(["text", "markdown", "code"]);
+        const title = textKinds.has(kind)
+            ? "This file cannot be previewed here."
+            : "Preview not available for this file type when downloading is disabled.";
+        showState(title, "", [closeButton()]);
+    }
+
+    function showResponseError(response, kind = previewKind()) {
+        if (response.status === 404) {
+            showExpired();
+            return true;
+        }
+        if (response.status === 403 && !config.allowDownload) {
+            showNoDownloadBlocked(kind);
+            return true;
+        }
+        if (!response.ok) {
+            showLoadError();
+            return true;
+        }
+        return false;
+    }
+
     function showUnsupported() {
+        if (!config.allowDownload) {
+            showNoDownloadBlocked("unsupported");
+            return;
+        }
         const actions = [];
         if (downloadUrl()) actions.push(downloadButton(true));
         actions.push(closeButton());
@@ -226,7 +254,11 @@
     async function fetchContent(asText = false) {
         const url = contentUrl();
         if (!url) {
-            showUnsupported();
+            if (config.allowDownload) {
+                showUnsupported();
+            } else {
+                showNoDownloadBlocked(previewKind());
+            }
             throw new Error("Preview content URL missing.");
         }
 
@@ -238,12 +270,7 @@
             throw error;
         }
 
-        if (response.status === 404) {
-            showExpired();
-            throw new Error("Preview token expired.");
-        }
-        if (!response.ok) {
-            showLoadError();
+        if (showResponseError(response, previewKind())) {
             throw new Error(`Preview fetch failed: ${response.status}`);
         }
         return asText ? response.text() : response.blob();
@@ -623,18 +650,17 @@
     async function renderPdf() {
         const url = contentUrl();
         if (!url) {
-            showUnsupported();
+            if (config.allowDownload) {
+                showUnsupported();
+            } else {
+                showNoDownloadBlocked("pdf");
+            }
             return;
         }
 
         try {
             const probe = await fetch(url, { method: "HEAD", cache: "no-store" });
-            if (probe.status === 404) {
-                showExpired();
-                return;
-            }
-            if (!probe.ok) {
-                showLoadError();
+            if (showResponseError(probe, "pdf")) {
                 return;
             }
         } catch (error) {
