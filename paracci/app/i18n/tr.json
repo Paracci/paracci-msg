@@ -368,7 +368,9 @@
     "close_modal_title": "Mesaj kapatılsın mı?",
     "close_modal_desc": "Bu mesaj tek açımlıktır. Kapatmak Paracci'nin yönettiği durumu ve önbellekleri bırakır, ancak işletim sistemi/çalışma zamanı kopyaları kalabilir; bu zarfı bu cihazda bir daha açamayacaksınız. Başka yerlerdeki kopyalar bu uygulamadan etkilenmez.",
     "close_modal_dont_ask": "Bir daha sorma (Hızlı Çıkış modunu etkinleştir)",
-    "close_modal_confirm": "Evet, Kapat"
+    "close_modal_confirm": "Evet, Kapat",
+    "unexpected_error": "Beklenmeyen bir hata oluştu. Lütfen tekrar deneyin.",
+    "package_limit_error": "Mesaj açılamadı: paket boyutu veya yapı limiti aşıldı."
   },
   "profile": {
     "username_required": "Kullanıcı adı boş olamaz.",

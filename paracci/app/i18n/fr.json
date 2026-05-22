@@ -368,7 +368,9 @@
     "attachments_added": "{count} file(s) added.",
     "attachment_attached": "{filename} attached.",
     "attachment_sanitization_failed": "Cette image jointe n'a pas pu être traitée et a été rejetée par sécurité. Veuillez essayer un autre fichier.",
-    "drop_failed": "Drop failed."
+    "drop_failed": "Drop failed.",
+    "unexpected_error": "Une erreur inattendue s'est produite. Veuillez réessayer.",
+    "package_limit_error": "Le message n'a pas pu être ouvert : limite de taille ou de structure du paquet dépassée."
   },
   "profile": {
     "username_required": "Le nom d'utilisateur ne peut pas être vide.",

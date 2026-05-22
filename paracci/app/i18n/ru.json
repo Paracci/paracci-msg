@@ -368,7 +368,9 @@
     "attachments_added": "{count} file(s) added.",
     "attachment_attached": "{filename} attached.",
     "attachment_sanitization_failed": "Это вложенное изображение не удалось обработать, поэтому оно было отклонено из соображений безопасности. Попробуйте другой файл.",
-    "drop_failed": "Drop failed."
+    "drop_failed": "Drop failed.",
+    "unexpected_error": "Произошла непредвиденная ошибка. Пожалуйста, попробуйте ещё раз.",
+    "package_limit_error": "Сообщение не удалось открыть: превышен предел размера или структуры пакета."
   },
   "profile": {
     "username_required": "Имя пользователя не может быть пустым.",

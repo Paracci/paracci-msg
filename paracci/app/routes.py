@@ -1755,9 +1755,11 @@ def session_seal(sid: str):
         updated = meta._replace(tx_count=meta.tx_count + 1, send_seed=sealed.next_seed)
         _save_session(updated)
         return send_file(io.BytesIO(sealed.file_bytes), mimetype="application/octet-stream", as_attachment=True, download_name=f"msg_{sealed.msg_id.hex()[:12]}.paracci")
-    except Exception as e:
-        logger.exception("Message could not be encrypted")
-        flash(f"Message could not be encrypted: {e}", "error")
+    except (MemoryError, KeyboardInterrupt, SystemExit):
+        raise
+    except Exception:
+        logger.exception("Unexpected error during message seal")
+        flash(_('session.unexpected_error'), "error")
         return redirect(url_for("main.session_detail", sid=sid))
     finally:
         files.clear()
@@ -1846,7 +1848,9 @@ def session_open(sid: str):
             try:
                 meta = apply_bond_nonce_to_y(meta, opened.bond_nonce)
                 _save_session(meta)
-            except Exception as e: flash(f"Error while establishing bond: {e}", "warning")
+            except SessionError as e:
+                flash(_('session.unexpected_error'), "warning")
+                logger.warning("Bond nonce application failed for session=%s: %s", sid[:8], e)
 
         guard.post_open_burn(msg_id=opened.msg_id, session_id=opened.session_id, direction=opened.direction, single_use=opened.single_use, file_path=native_file_path)
         return _prepare_open_response(meta, opened, sid, is_ajax)
@@ -1854,15 +1858,20 @@ def session_open(sid: str):
         msg = "This message was already opened or has expired."
         return jsonify({"success": False, "error": msg}) if is_ajax else _render_session_error(meta, sid, msg)
     except PackageLimitError as e:
-        msg = str(e)
         msg_id = raw.get("msg_id", b"").hex() if isinstance(raw, dict) else ""
-        logger.warning("Rejected unsafe package expansion for session=%s msg=%s: %s", sid[:8], msg_id, msg)
+        logger.warning("Rejected unsafe package expansion for session=%s msg=%s: %s", sid[:8], msg_id, e)
+        stable_msg = _('session.package_limit_error')
         if is_ajax:
-            return jsonify({"success": False, "error": msg}), 400
-        return _render_session_error(meta, sid, msg)
-    except Exception as e:
-        if is_ajax: return jsonify({"success": False, "error": str(e)})
-        return _render_session_error(meta, sid, str(e))
+            return jsonify({"success": False, "error": stable_msg}), 400
+        return _render_session_error(meta, sid, stable_msg)
+    except (MemoryError, KeyboardInterrupt, SystemExit):
+        raise
+    except Exception:
+        logger.exception("Unexpected error during session open for session=%s", sid[:8])
+        stable_msg = _('session.unexpected_error')
+        if is_ajax:
+            return jsonify({"success": False, "error": stable_msg}), 500
+        return _render_session_error(meta, sid, stable_msg)
 
 
 def _render_session_error(meta, sid, msg):
@@ -2234,16 +2243,17 @@ def armor_report():
         
     if not report_files:
         abort(404, description="Report file not found.")
-        
+
     # Get the latest one (sort by name)
     latest_report = sorted(report_files)[-1]
-    
+
     try:
         with open(latest_report, "r", encoding="utf-8") as f:
             content = f.read()
-    except Exception as e:
-        abort(500, description=f"Report read error: {e}")
-        
+    except (OSError, UnicodeDecodeError) as e:
+        logger.warning("Could not read armor report: %s", e)
+        abort(500)
+
     return render_template("report_viewer.html", content=content, title=_('nav.armor_report'))
 
 
@@ -2256,23 +2266,27 @@ def api_benchmark_report():
     """Returns the system verification (benchmark) report in JSON format."""
     lang = session.get('locale', 'tr')
     reports_dir = APP_DIR / "reports"
-    
+
     report_files = list(reports_dir.glob(f"armor_report_*_{lang}.md"))
     if not report_files:
         report_files = list(reports_dir.glob("armor_report_*_tr.md"))
-    
+
     if not report_files:
         return jsonify({"success": False, "message": _('benchmark.not_found')}), 404
-        
+
     try:
         latest_report = sorted(report_files)[-1]
         with open(latest_report, "r", encoding="utf-8") as f:
             content = f.read()
         return jsonify({"success": True, "report": content})
-    except Exception as e:
-        return jsonify({"success": False, "message": str(e)}), 500
-
-    return jsonify({"success": False, "message": "Unknown error"}), 500
+    except (OSError, UnicodeDecodeError) as e:
+        logger.warning("Could not read armor report file: %s", e)
+        return jsonify({"success": False, "message": "Report file could not be read."}), 500
+    except (MemoryError, KeyboardInterrupt, SystemExit):
+        raise
+    except Exception:
+        logger.exception("Unexpected error reading armor report")
+        return jsonify({"success": False, "message": "Report file could not be read."}), 500
 
 
 @bp.route("/api/benchmark-results")
@@ -2312,17 +2326,23 @@ def api_benchmark_results():
             }
         }
         return jsonify({"success": True, "data": fallback})
-    
+
     try:
         with open(result_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         return jsonify({"success": True, "data": data})
-    except Exception as e:
-        return jsonify({"success": False, "message": str(e)}), 500
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
+        logger.warning("Could not read benchmark results file: %s", e)
+        return jsonify({"success": False, "message": "Benchmark results file could not be read."}), 500
+    except (MemoryError, KeyboardInterrupt, SystemExit):
+        raise
+    except Exception:
+        logger.exception("Unexpected error reading benchmark results")
+        return jsonify({"success": False, "message": "Benchmark results file could not be read."}), 500
 
 
 # ---------------------------------------------------------------------------
-# 404
+# Security and 404 error handlers
 # ---------------------------------------------------------------------------
 
 @bp.app_errorhandler(SecurityError)
