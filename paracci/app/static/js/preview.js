@@ -20,6 +20,8 @@
         allowDownload: true
     };
 
+    let _currentDownloadPath = null;
+
     function clearPreviewDomState() {
         document.querySelectorAll("video, audio").forEach(media => {
             try {
@@ -164,22 +166,46 @@
         host()?.appendChild(state);
     }
 
-    function showDownloadSuccess(filename) {
-        let toast = document.getElementById("downloadSuccessToast");
-        if (!toast) {
-            toast = document.createElement("div");
-            toast.id = "downloadSuccessToast";
-            toast.className = "download-success-toast";
-            toast.setAttribute("role", "status");
-            toast.setAttribute("aria-live", "polite");
-            document.body.appendChild(toast);
+    function showDownloadSuccess(filename, path) {
+        if (path) {
+            _currentDownloadPath = path;
         }
-        toast.textContent = `✓ Saved to Downloads: ${filename || "attachment"}`;
-        toast.classList.add("show");
+
+        // For backwards compatibility/tests
+        let legacyToast = document.getElementById("downloadSuccessToast");
+        if (!legacyToast) {
+            legacyToast = document.createElement("div");
+            legacyToast.id = "downloadSuccessToast";
+            legacyToast.className = "download-success-toast";
+            legacyToast.setAttribute("role", "status");
+            legacyToast.setAttribute("aria-live", "polite");
+            document.body.appendChild(legacyToast);
+        }
+        legacyToast.textContent = `✓ Saved to Downloads: ${filename || "attachment"}`;
+        legacyToast.classList.add("show");
         window.clearTimeout(showDownloadSuccess.timer);
         showDownloadSuccess.timer = window.setTimeout(() => {
-            toast.classList.remove("show");
+            legacyToast.classList.remove("show");
         }, 3000);
+
+        // Slide in the new custom toast
+        const toast = document.getElementById("download-toast");
+        const label = document.getElementById("toast-filename");
+        if (toast && label) {
+            label.textContent = filename || "attachment";
+            toast.classList.add("active");
+            window.clearTimeout(toast._timer);
+            toast._timer = window.setTimeout(() => {
+                toast.classList.remove("active");
+            }, 8000);
+        }
+    }
+
+    function handleToastClick() {
+        if (_currentDownloadPath && window.pywebview?.api) {
+            window.pywebview.api.open_file_location(_currentDownloadPath);
+            document.getElementById("download-toast")?.classList.remove("active");
+        }
     }
 
     function closeButton() {
@@ -667,7 +693,7 @@
             try {
                 const result = await api.download_preview_file(config.token);
                 if (result?.success) {
-                    showDownloadSuccess(result.filename || config.filename);
+                    showDownloadSuccess(result.filename || config.filename, result.path);
                     return;
                 }
                 if (result?.cancelled) return;
@@ -700,6 +726,7 @@
             downloadBtn.addEventListener("click", handleDownload);
         }
         if (closeBtn) closeBtn.addEventListener("click", handleClose);
+        document.getElementById("download-toast")?.addEventListener("click", handleToastClick);
 
         if (!host()) return;
 
