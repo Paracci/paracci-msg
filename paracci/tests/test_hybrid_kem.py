@@ -89,6 +89,46 @@ def test_compute_handshake_transcript_is_sensitive_to_each_input():
         assert _transcript(**override) != baseline
 
 
+@pytest.mark.parametrize(
+    ("override", "expected"),
+    [
+        ({"session_id": "not-bytes"}, "Session ID must be bytes."),
+        ({"session_id": b"\x00" * 15}, "Session ID must be 16 bytes."),
+        (
+            {"initiator_identity_pub": b"\x00" * 31},
+            "Initiator identity public key must be 32 bytes.",
+        ),
+        (
+            {"responder_identity_pub": b"\x00" * 31},
+            "Responder identity public key must be 32 bytes.",
+        ),
+        ({"ml_kem_algorithm": ""}, "ML-KEM algorithm must be a non-empty string."),
+        ({"ml_kem_public_key": b""}, "ML-KEM public key must be non-empty bytes."),
+        ({"ml_kem_ciphertext": b""}, "ML-KEM ciphertext must be non-empty bytes."),
+    ],
+)
+def test_compute_handshake_transcript_rejects_invalid_inputs(override, expected):
+    inputs = _transcript_inputs()
+    inputs.update(override)
+
+    with pytest.raises(ValueError, match=expected):
+        compute_handshake_transcript(**inputs)
+
+
+def test_compute_handshake_transcript_identity_order_matters():
+    inputs = _transcript_inputs()
+
+    transcript_ab = compute_handshake_transcript(**inputs)
+    transcript_ba = compute_handshake_transcript(
+        session_id=inputs["session_id"],
+        initiator_identity_pub=inputs["responder_identity_pub"],
+        responder_identity_pub=inputs["initiator_identity_pub"],
+        ml_kem_algorithm=inputs["ml_kem_algorithm"],
+        ml_kem_public_key=inputs["ml_kem_public_key"],
+        ml_kem_ciphertext=inputs["ml_kem_ciphertext"],
+    )
+
+    assert transcript_ab != transcript_ba
 
 
 @oqs_required
@@ -215,6 +255,16 @@ def test_derive_hybrid_shared_secret_changes_when_transcript_changes():
     )
 
     assert first != second
+
+
+def test_derive_hybrid_shared_secret_rejects_wrong_length_transcript():
+    with pytest.raises(ValueError, match="Handshake transcript must be 32 bytes."):
+        derive_hybrid_shared_secret(
+            bytes(range(32)),
+            bytes(range(32, 64)),
+            bytes(range(16)),
+            b"\x00" * 31,
+        )
 
 
 @oqs_required
