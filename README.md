@@ -29,7 +29,7 @@ Think of it as a **locked envelope** that only the intended recipient can open, 
 ## How It Works
 
 1. **Session Setup** — Alice and Bob perform a one-time authenticated handshake by exchanging two setup files (initiator and responder). These files contain signed public metadata: identity keys, session parameters, and evolution settings. They are integrity-protected but **not confidential**. No server is involved.
-2. **Sealing a Message** — Alice writes a message, optionally attaches files, and seals it. Paracci produces a fully encrypted, signed `.paracci` message envelope (`.msg`) that only the intended recipient can decrypt with session-derived keys. Alice sends the file to Bob through any trusted channel.
+2. **Sealing a Message** — Alice writes a message, optionally attaches files, and seals it. Paracci produces a fully authenticated and encrypted `.paracci` message envelope (`.msg`) that only the intended recipient can decrypt with session-derived keys. Alice sends the file to Bob through any trusted channel.
 3. **Opening a Message** — Bob opens the envelope in his Paracci app. The message is decrypted in memory and displayed once. Once opened, the envelope cannot be opened again on this device. Copies of this file on other devices or storage locations are not affected by this local registry.
 
 ---
