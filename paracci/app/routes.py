@@ -2175,7 +2175,7 @@ def preview_content(preview_token: str):
     filename = sanitize_attachment_filename(entry.filename or "attachment.bin")
     mime_type = entry.mime_type or "application/octet-stream"
     if entry.allow_download is not True:
-        if download_requested or not _is_inline_preview_image(filename, mime_type):
+        if download_requested:
             abort(403)
 
         response = send_file(

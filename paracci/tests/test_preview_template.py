@@ -144,8 +144,8 @@ def test_preview_runtime_uses_custom_media_controls():
     assert "customMediaPlayer" in preview_js
     assert "download-success-toast" in preview_css
     assert "showDownloadSuccess" in preview_js
-    assert "This file cannot be previewed here." in preview_js
-    assert "Preview not available for this file type when downloading is disabled." in preview_js
+    assert "This file cannot be previewed here." not in preview_js
+    assert "Preview not available for this file type when downloading is disabled." not in preview_js
     assert "▶" in preview_js
     assert "⏸" in preview_js
     assert "toggleFullscreen" in preview_js
