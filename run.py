@@ -15,7 +15,7 @@ import argparse
 import secrets
 import json
 from pathlib import Path
-from urllib.parse import quote, urlparse
+from urllib.parse import quote
 
 # Add paracci/ directory to import path (for core.xxx imports)
 # This makes core/ and app/ folders appear as root.
@@ -38,15 +38,14 @@ _preview_loopback_port: int | None = None
 # ── Preview-close guard ────────────────────────────────────────────────────
 # pywebview 6.x has a known multi-window event propagation bug: destroying
 # a secondary (preview) window spuriously fires the MAIN window's lifecycle
-# events (before_load, navigating, loaded) and can trigger a full page
+# events (before_load, loaded) and can trigger a full page
 # reload that blows away the authenticated Flask session.
 #
 # The guard counter is raised BEFORE destroy() is called and stays elevated
 # for _PREVIEW_CLOSING_LINGER_S seconds after cleanup completes.  This
 # linger window covers the async GUI-thread delay between calling destroy()
-# and pywebview actually firing the spurious events.  Both the `navigating`
-# handler and the `loaded` handler bail out immediately while the counter
-# is non-zero.
+# and pywebview actually firing the spurious events.  Loaded-event handlers
+# bail out immediately while the counter is non-zero.
 _preview_closing_count: int = 0
 _preview_closing_lock = threading.Lock()
 _PREVIEW_CLOSING_LINGER_S: float = 1.5  # seconds to keep guard after teardown
@@ -159,6 +158,7 @@ def open_preview_window(token: str, filename: str, mime_type: str, file_size: in
         resizable=True,
         on_top=False,
         background_color='#121212',
+        text_select=True,
         js_api=PreviewWindowApi(token),
     )
 
@@ -251,6 +251,219 @@ def download_preview_file(token: str) -> dict:
     except Exception as e:
         print(f"  [!] Preview download error: {e}")
         return {"success": False, "error": str(e)}
+
+
+def _safe_native_download_filename(filename) -> str:
+    from core.package import sanitize_attachment_filename
+
+    leaf = Path(str(filename or "").replace("\\", "/")).name
+    return sanitize_attachment_filename(leaf, fallback="attachment")
+
+
+class ProApi:
+    """Privileged API exposed only to the trusted main pywebview window."""
+
+    def __init__(self):
+        self._window = None
+
+    def bind_window(self, window):
+        self._window = window
+        return self
+
+    def _require_window(self):
+        if self._window is None:
+            raise RuntimeError("ProApi window is not bound.")
+        return self._window
+
+    def close(self):
+        window = self._require_window()
+        _close_all_preview_windows()
+        window.destroy()
+
+    def minimize(self):
+        self._require_window().minimize()
+
+    def select_file(self):
+        window = self._require_window()
+        result = window.create_file_dialog(
+            webview.FileDialog.OPEN,
+            allow_multiple=False,
+            file_types=('Paracci Message (*.paracci)', 'All Files (*.*)')
+        )
+        if result:
+            return result[0] if isinstance(result, (list, tuple)) else result
+        return None
+
+    def select_attachments(self):
+        window = self._require_window()
+        result = window.create_file_dialog(
+            webview.FileDialog.OPEN,
+            allow_multiple=True,
+            file_types=('All Files (*.*)',)
+        )
+        if not result:
+            return {"success": True, "attachments": []}
+        paths = list(result) if isinstance(result, (list, tuple)) else [result]
+        try:
+            from app.routes import stage_native_attachment_paths
+            return {
+                "success": True,
+                "attachments": stage_native_attachment_paths(paths),
+            }
+        except Exception as e:
+            print(f"  [!] Attachment staging error: {e}")
+            return {"success": False, "error": str(e)}
+
+    def save_file(self, content_b64, filename):
+        import base64
+        from core.config import ParacciConfig
+
+        window = self._require_window()
+        cfg = ParacciConfig()
+
+        print(f"  [>] save_file requested: {filename}")
+
+        path = window.create_file_dialog(
+            webview.FileDialog.SAVE,
+            directory=cfg.full_downloads_path,
+            save_filename=filename,
+            file_types=('Paracci Message (*.paracci)', 'All Files (*.*)')
+        )
+
+        if path:
+            if isinstance(path, (list, tuple)):
+                path = path[0]
+
+            try:
+                file_data = base64.b64decode(content_b64)
+                with open(path, "wb") as f:
+                    f.write(file_data)
+                print(f"  [+] Saved to: {path}")
+                return path
+            except Exception as e:
+                print(f"  [!] Save error: {e}")
+        return None
+
+    def save_file_silent(self, content_b64, filename):
+        """Saves directly to the downloads folder without asking the user."""
+        import base64
+        from core.config import ParacciConfig
+
+        cfg = ParacciConfig()
+        safe_filename = _safe_native_download_filename(filename)
+        path = Path(cfg.full_downloads_path) / safe_filename
+        try:
+            file_data = base64.b64decode(content_b64)
+            with open(path, "wb") as f:
+                f.write(file_data)
+            print(f"  [+] Silent Save: {path}")
+            return str(path)
+        except Exception as e:
+            print(f"  [!] Silent save error: {e}")
+        return None
+
+    def open_file_location(self, path):
+        """Opens the folder containing the file in Windows Explorer."""
+        import subprocess
+
+        if os.path.exists(path):
+            print(f"  [>] Opening location: {path}")
+            subprocess.Popen(f'explorer /select,"{os.path.normpath(path)}"')
+
+    def copy_and_clear(self, text, delay=30):
+        """Copies text to the clipboard and clears it after X seconds."""
+        if shield.copy_to_clipboard(text, delay):
+            print(f"  [>] Text copied to clipboard. Cleanup: {delay}s ({shield.get_os_name()})")
+            return True
+        return False
+
+    def open_preview_window(self, token, filename, mime_type, file_size):
+        open_preview_window(token, filename, mime_type, file_size)
+
+
+def _build_main_navigation_guard_script(loopback_host: str, port: int) -> str:
+    return f"""
+    (function() {{
+        if (window.__PARACCI_NAVIGATION_GUARD_INSTALLED__) {{
+            return;
+        }}
+        window.__PARACCI_NAVIGATION_GUARD_INSTALLED__ = true;
+
+        const allowedHost = {json.dumps(loopback_host)};
+        const allowedPort = {json.dumps(str(port))};
+
+        function isAllowedHref(href) {{
+            if (!href || href.charAt(0) === '#') {{
+                return true;
+            }}
+
+            let target;
+            try {{
+                target = new URL(href, window.location.href);
+            }} catch (e) {{
+                return false;
+            }}
+
+            return target.protocol === 'http:' &&
+                target.hostname === allowedHost &&
+                target.port === allowedPort &&
+                target.username === '' &&
+                target.password === '';
+        }}
+
+        function blockIfExternal(event, href) {{
+            if (isAllowedHref(href)) {{
+                return false;
+            }}
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            console.warn('Paracci blocked external navigation:', href);
+            return true;
+        }}
+
+        function handleLinkEvent(event) {{
+            const link = event.target && event.target.closest
+                ? event.target.closest('a[href]')
+                : null;
+            if (link) {{
+                blockIfExternal(event, link.getAttribute('href'));
+            }}
+        }}
+
+        document.addEventListener('click', handleLinkEvent, true);
+        document.addEventListener('auxclick', handleLinkEvent, true);
+        document.addEventListener('submit', function(event) {{
+            const form = event.target;
+            if (form && form.tagName === 'FORM') {{
+                blockIfExternal(event, form.getAttribute('action') || form.action);
+            }}
+        }}, true);
+
+        const originalOpen = window.open;
+        window.open = function(url) {{
+            if (url && !isAllowedHref(String(url))) {{
+                console.warn('Paracci blocked external window.open:', url);
+                return null;
+            }}
+            return originalOpen.apply(window, arguments);
+        }};
+    }})();
+    """
+
+
+def _install_navigation_guard_or_exit(window, script) -> None:
+    def inject_navigation_guard(*_args):
+        if _preview_close_guard_active():
+            return
+        try:
+            window.evaluate_js(script)
+        except Exception as exc:
+            print(f"  [!] Navigation guard injection failed: {exc}")
+
+    try:
+        window.events.loaded += inject_navigation_guard
+    except Exception as exc:
+        print(f"  [!] Navigation guard event binding failed: {exc}")
 
 
 def _close_all_preview_windows() -> None:
@@ -384,112 +597,8 @@ if __name__ == "__main__":
         server_thread.daemon = True
         server_thread.start()
 
-        # Window Control API (JS -> Python)
-        class ProApi:
-            def close(self):
-                _close_all_preview_windows()
-                window.destroy()
-            def minimize(self):
-                window.minimize()
-            def select_file(self):
-                # Native Windows File Selection Dialog
-                result = window.create_file_dialog(
-                    webview.FileDialog.OPEN, 
-                    allow_multiple=False, 
-                    file_types=('Paracci Message (*.paracci)', 'All Files (*.*)')
-                )
-                if result:
-                    # Pywebview returns a list in some versions
-                    return result[0] if isinstance(result, (list, tuple)) else result
-                return None
-
-            def select_attachments(self):
-                result = window.create_file_dialog(
-                    webview.FileDialog.OPEN,
-                    allow_multiple=True,
-                    file_types=('All Files (*.*)',)
-                )
-                if not result:
-                    return {"success": True, "attachments": []}
-                paths = list(result) if isinstance(result, (list, tuple)) else [result]
-                try:
-                    from app.routes import stage_native_attachment_paths
-                    return {
-                        "success": True,
-                        "attachments": stage_native_attachment_paths(paths),
-                    }
-                except Exception as e:
-                    print(f"  [!] Attachment staging error: {e}")
-                    return {"success": False, "error": str(e)}
-
-            def save_file(self, content_b64, filename):
-                # Native Windows Save As Dialog
-                import base64
-                from core.config import ParacciConfig
-                cfg = ParacciConfig()
-                
-                print(f"  [>] save_file requested: {filename}")
-                
-                path = window.create_file_dialog(
-                    webview.FileDialog.SAVE,
-                    directory=cfg.full_downloads_path, # Default folder
-                    save_filename=filename,
-                    file_types=('Paracci Message (*.paracci)', 'All Files (*.*)')
-                )
-                
-                if path:
-                    # Some pywebview versions may return a list/tuple
-                    if isinstance(path, (list, tuple)):
-                        path = path[0]
-                        
-                    try:
-                        file_data = base64.b64decode(content_b64)
-                        with open(path, "wb") as f:
-                            f.write(file_data)
-                        print(f"  [+] Saved to: {path}")
-                        return path
-                    except Exception as e:
-                        print(f"  [!] Save error: {e}")
-                return None
-
-            def save_file_silent(self, content_b64, filename):
-                """Saves directly to the downloads folder without asking the user."""
-                import base64
-                import os
-                from core.config import ParacciConfig
-                cfg = ParacciConfig()
-                
-                path = os.path.join(cfg.full_downloads_path, filename)
-                try:
-                    file_data = base64.b64decode(content_b64)
-                    with open(path, "wb") as f:
-                        f.write(file_data)
-                    print(f"  [+] Silent Save: {path}")
-                    return path
-                except Exception as e:
-                    print(f"  [!] Silent save error: {e}")
-                return None
-
-            def open_file_location(self, path):
-                """Opens the folder containing the file in Windows Explorer."""
-                import os
-                import subprocess
-                if os.path.exists(path):
-                    print(f"  [>] Opening location: {path}")
-                    # Open the folder and select the file (Windows-specific command)
-                    subprocess.Popen(f'explorer /select,"{os.path.normpath(path)}"')
-
-            def copy_and_clear(self, text, delay=30):
-                """Copies text to the clipboard and clears it after X seconds (Shielded)."""
-                if shield.copy_to_clipboard(text, delay):
-                    print(f"  [>] Text copied to clipboard. Cleanup: {delay}s ({shield.get_os_name()})")
-                    return True
-                return False
-
-            def open_preview_window(self, token, filename, mime_type, file_size):
-                open_preview_window(token, filename, mime_type, file_size)
-
         # Main Window (WebView)
+        pro_api = ProApi()
         window = webview.create_window(
             title="Paracci Secure Messaging",
             url=bootstrap_url,
@@ -499,46 +608,13 @@ if __name__ == "__main__":
             background_color='#121212',
             frameless=False,
             easy_drag=False, # Disable window dragging trick (title bar only)
-            js_api=ProApi()
+            js_api=pro_api
         )
+        pro_api.bind_window(window)
         
         # ── Security Shield (Chromium Hardening) ───────────────
-        def on_navigating(url):
-            """Blocks all links leading to the outside world.
-
-            Also blocks spurious navigations that pywebview 6.x triggers on the
-            main window when a secondary (preview) window is being torn down.
-            This is a known pywebview multi-window event propagation bug.
-            """
-            # Guard: if a preview window is closing right now, any navigation
-            # event on the main window is a spurious side-effect of the
-            # pywebview multi-window bug — block it unconditionally so the
-            # main window's bootstrap state is never disturbed.
-            if _preview_close_guard_active():
-                print(f"  [!] Blocked spurious main-window navigation during preview close: {url}")
-                return False
-
-            try:
-                parsed = urlparse(url)
-                allowed = (
-                    parsed.scheme == "http"
-                    and parsed.hostname == loopback_host
-                    and parsed.port == port
-                    and parsed.username is None
-                    and parsed.password is None
-                )
-            except Exception:
-                allowed = False
-
-            if not allowed:
-                print(f"  [!] Security: Access to external address blocked: {url}")
-                return False # Cancel navigation
-            return True
-
-        try:
-            window.events.navigating += on_navigating
-        except:
-            pass # This event may not exist in some older versions
+        navigation_guard_script = _build_main_navigation_guard_script(loopback_host, port)
+        _install_navigation_guard_or_exit(window, navigation_guard_script)
 
         try:
             if hasattr(window.events, 'closed'):
