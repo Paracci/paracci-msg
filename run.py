@@ -393,7 +393,8 @@ def _build_main_navigation_guard_script(loopback_host: str, port: int) -> str:
         const allowedPort = {json.dumps(str(port))};
 
         function isAllowedHref(href) {{
-            if (!href || href.charAt(0) === '#') {{
+            if (!href || typeof href !== 'string') return true;
+            if (href.charAt(0) === '#') {{
                 return true;
             }}
 
