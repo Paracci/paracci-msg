@@ -598,3 +598,71 @@ details.collapsible-card summary {
   gap: var(--space-3);
   margin-top: var(--space-6);
 }
+
+/* Selected attachments list for message creation */
+.selected-attachments-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.selected-attachment-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(4px);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.selected-attachment-item:hover {
+  border-color: var(--border-default);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.selected-attachment-info {
+  min-width: 0;
+  flex: 1;
+}
+
+.selected-attachment-name {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: var(--text-body-sm);
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selected-attachment-size {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  margin-top: 1px;
+}
+
+.btn-selected-attachment-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  padding: 0;
+}
+
+.btn-selected-attachment-remove:hover {
+  background: rgba(239, 68, 68, 0.18);
+  color: var(--state-error-border, #ef4444);
+  border-color: rgba(239, 68, 68, 0.25);
+}

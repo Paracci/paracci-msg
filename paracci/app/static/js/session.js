@@ -249,18 +249,146 @@ function setupTemplateEventBindings() {
 
 function updateAttachmentBadge() {
     const attInput = document.getElementById('attachments');
-    const badge = document.getElementById('attachment-count-badge');
-    const countVal = document.getElementById('att-count-val');
-    if (!badge || !countVal) return;
-    const uploadedCount = attInput?.files?.length || 0;
-    const stagedCount = window.PARACCI_STAGED_ATTACHMENTS?.length || 0;
-    const totalCount = uploadedCount + stagedCount;
-    if (totalCount) {
-        badge.style.display = 'block';
-        countVal.textContent = totalCount;
-    } else {
-        badge.style.display = 'none';
+    const container = document.getElementById('selected-attachments-container');
+    const list = document.getElementById('selected-attachments-list');
+    if (!container || !list) return;
+
+    list.innerHTML = '';
+
+    const browserFiles = attInput?.files ? Array.from(attInput.files) : [];
+    const nativeFiles = window.PARACCI_STAGED_ATTACHMENTS || [];
+
+    const totalCount = browserFiles.length + nativeFiles.length;
+
+    if (totalCount === 0) {
+        container.style.display = 'none';
+        return;
     }
+
+    container.style.display = 'block';
+
+    function formatFileSize(bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+        if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+        return (bytes / (1024 * 1024 * 1024)).toFixed(2) + " GB";
+    }
+
+    // 1. Render Browser-selected files
+    browserFiles.forEach((file, index) => {
+        const itemDiv = document.createElement('div');
+        itemDiv.className = 'selected-attachment-item';
+
+        const infoDiv = document.createElement('div');
+        infoDiv.className = 'selected-attachment-info';
+
+        const nameDiv = document.createElement('div');
+        nameDiv.className = 'selected-attachment-name';
+        nameDiv.title = file.name;
+        nameDiv.textContent = file.name;
+
+        const sizeDiv = document.createElement('div');
+        sizeDiv.className = 'selected-attachment-size';
+        sizeDiv.textContent = formatFileSize(file.size);
+
+        infoDiv.appendChild(nameDiv);
+        infoDiv.appendChild(sizeDiv);
+
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'btn-selected-attachment-remove';
+        removeBtn.title = 'Remove file';
+        removeBtn.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+        `;
+        removeBtn.onclick = (e) => {
+            e.preventDefault();
+            removeBrowserAttachment(index);
+        };
+
+        itemDiv.appendChild(infoDiv);
+        itemDiv.appendChild(removeBtn);
+
+        list.appendChild(itemDiv);
+    });
+
+    // 2. Render Native staged files
+    nativeFiles.forEach((file) => {
+        const itemDiv = document.createElement('div');
+        itemDiv.className = 'selected-attachment-item';
+
+        const infoDiv = document.createElement('div');
+        infoDiv.className = 'selected-attachment-info';
+
+        const nameDiv = document.createElement('div');
+        nameDiv.className = 'selected-attachment-name';
+        nameDiv.title = file.filename;
+        nameDiv.textContent = file.filename;
+
+        const sizeDiv = document.createElement('div');
+        sizeDiv.className = 'selected-attachment-size';
+        sizeDiv.textContent = formatFileSize(file.size || 0);
+
+        infoDiv.appendChild(nameDiv);
+        infoDiv.appendChild(sizeDiv);
+
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'btn-selected-attachment-remove';
+        removeBtn.title = 'Remove file';
+        removeBtn.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+        `;
+        removeBtn.onclick = (e) => {
+            e.preventDefault();
+            removeNativeAttachment(file.id);
+        };
+
+        itemDiv.appendChild(infoDiv);
+        itemDiv.appendChild(removeBtn);
+
+        list.appendChild(itemDiv);
+    });
+}
+
+function removeBrowserAttachment(index) {
+    const input = document.getElementById('attachments');
+    if (!input || !input.files) return;
+    const dt = new DataTransfer();
+    const files = input.files;
+    for (let i = 0; i < files.length; i++) {
+        if (i !== index) {
+            dt.items.add(files[i]);
+        }
+    }
+    input.files = dt.files;
+    updateAttachmentBadge();
+}
+
+async function removeNativeAttachment(id) {
+    try {
+        fetch(window.PARACCI_CONFIG?.cache_clear_url || '/api/sensitive-cache/clear', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ preview_ids: [], staged_attachment_ids: [id] })
+        }).catch(err => console.warn('[Paracci] Staged attachment cache clear failed:', err));
+    } catch (e) {
+        console.error('[Paracci] Error clearing attachment from backend:', e);
+    }
+
+    window.PARACCI_STAGED_ATTACHMENTS = (window.PARACCI_STAGED_ATTACHMENTS || [])
+        .filter(att => att.id !== id);
+
+    const hidden = document.getElementById('staged_attachment_ids');
+    if (hidden) {
+        hidden.value = window.PARACCI_STAGED_ATTACHMENTS.map(att => att.id).join(',');
+    }
+
+    updateAttachmentBadge();
 }
 
 function setupForms() {
