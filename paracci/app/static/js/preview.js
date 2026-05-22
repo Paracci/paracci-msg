@@ -530,15 +530,10 @@
         const code = document.createElement("code");
         const language = languageForCode();
 
-        if (highlight && window.hljs && language && window.hljs.getLanguage(language)) {
-            try {
-                code.className = `hljs language-${language}`;
-                code.innerHTML = window.hljs.highlight(displayText, { language, ignoreIllegals: true }).value;
-            } catch (error) {
-                code.textContent = displayText;
-            }
-        } else {
-            code.textContent = displayText;
+        code.textContent = displayText;
+        if (highlight) {
+            if (language) code.className = `language-${language}`;
+            hljs.highlightElement(code);
         }
 
         pre.appendChild(code);
@@ -616,12 +611,6 @@
 
     async function renderMarkdown() {
         const text = await fetchContent(true);
-        if (!window.marked || typeof window.marked.parse !== "function") {
-            renderTextPanel(text);
-            setDetails("Markdown renderer unavailable. Showing plain text.");
-            return;
-        }
-
         const { text: displayText, truncated } = truncateText(text);
         const body = document.createElement("article");
         body.className = "markdown-body";
@@ -632,16 +621,10 @@
             body.appendChild(notice);
         }
 
-        try {
-            const rendered = window.marked.parse(displayText);
-            const content = document.createElement("div");
-            content.innerHTML = sanitizeMarkdownHtml(rendered);
-            body.appendChild(content);
-        } catch (error) {
-            renderTextPanel(text);
-            setDetails("Markdown renderer unavailable. Showing plain text.");
-            return;
-        }
+        const rendered = marked.parse(displayText);
+        const content = document.createElement("div");
+        content.innerHTML = sanitizeMarkdownHtml(rendered);
+        body.appendChild(content);
 
         resetHost();
         host()?.appendChild(body);
