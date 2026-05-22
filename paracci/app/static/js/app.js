@@ -126,6 +126,10 @@ document.addEventListener('DOMContentLoaded', () => {
     bindGlobalShellControls();
     setupGlobalDropExperience();
 
+    // 3. Focus settings TOTP verification code input if present
+    const settingsCode = document.getElementById('authCodeInput');
+    if (settingsCode) settingsCode.focus();
+
     document.addEventListener('dragstart', e => e.preventDefault());
 });
 

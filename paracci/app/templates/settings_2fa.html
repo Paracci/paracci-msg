@@ -59,8 +59,8 @@
             <form method="POST" class="w-full" style="max-width: 320px;">
               <input type="hidden" name="action" value="confirm_setup">
               <div class="input-group mb-8">
-                <input type="text" name="code" class="apple-input auth-code-input text-center font-lg font-mono"
-                       placeholder="000000" maxlength="6" required autofocus
+                <input type="text" id="authCodeInput" name="code" class="apple-input auth-code-input text-center font-lg font-mono"
+                       placeholder="000000" maxlength="6" required
                        autocomplete="one-time-code">
               </div>
               <div class="flex justify-between gap-3">

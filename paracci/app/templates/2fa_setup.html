@@ -30,7 +30,7 @@
     <form method="POST" class="auth-form" id="authForm" data-armor-text="{{ _('base.argon_work_active') }}">
       <div class="input-group">
         <label class="input-label">{{ _('auth.verify_2fa_code') }}</label>
-        <input type="text" name="code" class="apple-input auth-code-input text-center font-lg font-mono" placeholder="000000" maxlength="6" autocomplete="one-time-code" required autofocus>
+        <input type="text" id="authCodeInput" name="code" class="apple-input auth-code-input text-center font-lg font-mono" placeholder="000000" maxlength="6" autocomplete="one-time-code" required>
       </div>
 
       <div class="form-actions mt-8 flex-column gap-3">
