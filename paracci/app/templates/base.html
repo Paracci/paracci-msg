@@ -95,7 +95,25 @@
       "drop_failed": _("session.drop_failed"),
       "argon_work_active": _("setup.argon_work_active"),
       "render_error": _("common.render_error"),
-      "marked_missing": _("common.marked_missing")
+      "marked_missing": _("common.marked_missing"),
+      "update_version_line": _("update.version_line", current="{current}", latest="{latest}"),
+      "update_size": _("update.size", size="{size}"),
+      "update_downloading": _("update.downloading"),
+      "update_verifying": _("update.verifying"),
+      "update_verified": _("update.verified"),
+      "update_ready": _("update.ready"),
+      "update_cancelled": _("update.cancelled"),
+      "update_update_now": _("update.update_now"),
+      "update_open_releases": _("update.open_releases"),
+      "update_install_now": _("update.install_now"),
+      "update_protocol_warning": _("update.protocol_warning"),
+      "update_protocol_unknown": _("update.protocol_unknown"),
+      "update_error_download_failed": _("update.error_download_failed"),
+      "update_error_checksum_missing": _("update.error_checksum_missing"),
+      "update_error_checksum_failed": _("update.error_checksum_failed"),
+      "update_error_size_mismatch": _("update.error_size_mismatch"),
+      "update_error_browser_open_failed": _("update.error_browser_open_failed"),
+      "update_error_installer_missing": _("update.error_installer_missing")
     } | tojson }}</template>
   <div id="global-drop-overlay" class="global-drop-overlay">
     <div class="drop-content">
@@ -134,6 +152,39 @@
       <div class="toast-action">{{ _('base.toast_action') }}</div>
     </div>
   </div>
+
+  <section id="update-banner" class="update-banner" role="status" aria-live="polite" hidden>
+    <div class="update-banner-head">
+      <div>
+        <div class="update-kicker">{{ _('update.available_title') }}</div>
+        <strong id="update-version-line"></strong>
+      </div>
+      <button id="update-dismiss-btn" type="button" class="btn btn-ghost btn-sm">{{ _('update.remind_later') }}</button>
+    </div>
+    <p id="update-release-notes" class="update-release-notes" hidden></p>
+    <div id="update-protocol-warning" class="update-protocol-warning" hidden>
+      <strong>{{ _('update.protocol_warning_title') }}</strong>
+      <p id="update-protocol-warning-text"></p>
+      <label class="update-acknowledge">
+        <input id="update-protocol-ack" type="checkbox">
+        <span>{{ _('update.acknowledge') }}</span>
+      </label>
+    </div>
+    <div id="update-progress-panel" class="update-progress-panel" hidden>
+      <div class="update-progress-track" aria-hidden="true">
+        <div id="update-progress-fill" class="update-progress-fill"></div>
+      </div>
+      <div class="update-progress-meta">
+        <span id="update-progress-percent">0%</span>
+        <span id="update-download-size"></span>
+      </div>
+    </div>
+    <p id="update-status-text" class="update-status-text" hidden></p>
+    <div class="update-actions">
+      <button id="update-primary-btn" type="button" class="btn btn-primary">{{ _('update.update_now') }}</button>
+      <button id="update-cancel-btn" type="button" class="btn btn-secondary" hidden>{{ _('common.cancel') }}</button>
+    </div>
+  </section>
 
   {% macro nav_icon(name) -%}
     {% if name == 'sessions' %}

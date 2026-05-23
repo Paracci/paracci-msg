@@ -427,6 +427,30 @@
     "1d": "1 Day",
     "30d": "30 Days"
   },
+  "update": {
+    "available_title": "Update available",
+    "version_line": "Current {current} - New {latest}",
+    "size": "Size: {size}",
+    "protocol_warning_title": "Session protocol change",
+    "protocol_warning": "This update changes the session protocol. After updating, you will need to establish new sessions with your contacts.",
+    "protocol_unknown": "This release does not provide session protocol compatibility information. After updating, you may need to establish new sessions with your contacts.",
+    "acknowledge": "I understand before continuing",
+    "update_now": "Update Now",
+    "open_releases": "View Download",
+    "remind_later": "Remind Me Later",
+    "downloading": "Downloading update...",
+    "verifying": "Verifying SHA-256 checksum...",
+    "verified": "Checksum verified.",
+    "ready": "Ready to install. The application will close.",
+    "install_now": "Install Update",
+    "cancelled": "Download cancelled.",
+    "error_download_failed": "Could not download the update. Try again later.",
+    "error_checksum_missing": "The release checksum entry is missing. Installation was stopped.",
+    "error_checksum_failed": "Checksum verification failed. The downloaded installer was deleted.",
+    "error_size_mismatch": "The downloaded file size did not match the release asset. Installation was stopped.",
+    "error_browser_open_failed": "Could not open the releases page.",
+    "error_installer_missing": "The verified installer is no longer available."
+  },
   "error": {
     "404_title": "Page not found.",
     "404_btn": "Return to home"

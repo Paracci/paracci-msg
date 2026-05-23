@@ -8,7 +8,7 @@
         return;
     }
     try {
-        window.PARACCI_I18N = JSON.parse(source.textContent || '{}');
+        window.PARACCI_I18N = JSON.parse(source.content?.textContent || source.textContent || '{}');
     } catch (err) {
         console.error('[Paracci] Failed to parse i18n payload:', err);
         window.PARACCI_I18N = window.PARACCI_I18N || {};
@@ -125,6 +125,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initSidebarCollapse();
     bindGlobalShellControls();
     setupGlobalDropExperience();
+    initUpdateBanner();
 
     // 3. Focus settings TOTP verification code input if present
     const settingsCode = document.getElementById('authCodeInput');
@@ -491,7 +492,183 @@ function handleToastClick() {
     }
 }
 
-// 4. Argon2id Work Overlay Helpers
+// 4. Process-local application update notification and progress banner
+let _updateStatus = null;
+let _updatePollTimer = null;
+let _updateAckVersion = '';
+
+function updateString(key, fallback, values = {}) {
+    let result = window.PARACCI_I18N?.[key] || fallback;
+    Object.entries(values).forEach(([name, value]) => {
+        result = result.replace(`{${name}}`, value);
+    });
+    return result;
+}
+
+function formatUpdateSize(rawSize) {
+    const bytes = Number(rawSize);
+    if (!Number.isFinite(bytes) || bytes <= 0) return '';
+    if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${bytes} B`;
+}
+
+function scheduleUpdatePoll(delay = 1000) {
+    clearTimeout(_updatePollTimer);
+    _updatePollTimer = setTimeout(fetchUpdateStatus, delay);
+}
+
+async function fetchUpdateStatus() {
+    try {
+        const response = await fetch('/api/update/status', { cache: 'no-store' });
+        if (!response.ok) return;
+        const status = await response.json();
+        renderUpdateBanner(status);
+        if (['checking', 'downloading', 'verifying'].includes(status.state)) {
+            scheduleUpdatePoll();
+        }
+    } catch (_err) {
+        // Startup checks intentionally remain silent when the local shell is closing.
+    }
+}
+
+async function postUpdateAction(path, payload = {}) {
+    try {
+        const response = await fetch(path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const status = await response.json();
+        if (!response.ok) {
+            if (status.error_code === 'protocol_ack_required') return;
+            showNotification(updateString('update_error_download_failed', 'Could not start the update.'), 'error');
+            return;
+        }
+        renderUpdateBanner(status);
+        if (['downloading', 'verifying'].includes(status.state)) scheduleUpdatePoll(250);
+    } catch (_err) {
+        showNotification(updateString('update_error_download_failed', 'Could not start the update.'), 'error');
+    }
+}
+
+function updateStatusMessage(status) {
+    const errors = {
+        download_failed: ['update_error_download_failed', 'Could not download the update. Try again later.'],
+        checksum_missing: ['update_error_checksum_missing', 'The release checksum entry is missing. Installation was stopped.'],
+        checksum_failed: ['update_error_checksum_failed', 'Checksum verification failed. The downloaded installer was deleted.'],
+        size_mismatch: ['update_error_size_mismatch', 'The downloaded file size did not match the release asset. Installation was stopped.'],
+        browser_open_failed: ['update_error_browser_open_failed', 'Could not open the releases page.'],
+        installer_missing: ['update_error_installer_missing', 'The verified installer is no longer available.']
+    };
+    if (status.error_code && errors[status.error_code]) {
+        return updateString(...errors[status.error_code]);
+    }
+    if (status.state === 'downloading') return updateString('update_downloading', 'Downloading update...');
+    if (status.state === 'verifying') return updateString('update_verifying', 'Verifying SHA-256 checksum...');
+    if (status.state === 'ready') {
+        return `${updateString('update_verified', 'Checksum verified.')} ${updateString('update_ready', 'Ready to install. The application will close.')}`;
+    }
+    if (status.state === 'cancelled') return updateString('update_cancelled', 'Download cancelled.');
+    return '';
+}
+
+function renderUpdateBanner(status) {
+    _updateStatus = status;
+    const banner = document.getElementById('update-banner');
+    if (!banner) return;
+    if (!status?.visible) {
+        banner.hidden = true;
+        clearTimeout(_updatePollTimer);
+        return;
+    }
+    banner.hidden = false;
+    const versionLine = document.getElementById('update-version-line');
+    const notes = document.getElementById('update-release-notes');
+    const warning = document.getElementById('update-protocol-warning');
+    const warningText = document.getElementById('update-protocol-warning-text');
+    const ack = document.getElementById('update-protocol-ack');
+    const primary = document.getElementById('update-primary-btn');
+    const cancel = document.getElementById('update-cancel-btn');
+    const progressPanel = document.getElementById('update-progress-panel');
+    const progressFill = document.getElementById('update-progress-fill');
+    const progressPercent = document.getElementById('update-progress-percent');
+    const size = document.getElementById('update-download-size');
+    const statusText = document.getElementById('update-status-text');
+
+    versionLine.textContent = updateString(
+        'update_version_line',
+        'Current {current} - New {latest}',
+        { current: status.current_version, latest: status.latest_version }
+    );
+    notes.textContent = status.release_notes || '';
+    notes.hidden = !status.release_notes;
+
+    if (_updateAckVersion !== status.latest_version) {
+        ack.checked = false;
+        _updateAckVersion = status.latest_version;
+    }
+    warning.hidden = !status.protocol_warning;
+    warningText.textContent = status.protocol_unknown
+        ? updateString('update_protocol_unknown', 'This release does not provide session protocol compatibility information. After updating, you may need to establish new sessions with your contacts.')
+        : updateString('update_protocol_warning', 'This update changes the session protocol. After updating, you will need to establish new sessions with your contacts.');
+
+    const busy = ['downloading', 'verifying', 'installing'].includes(status.state);
+    const hasProgress = ['downloading', 'verifying', 'ready'].includes(status.state);
+    progressPanel.hidden = !hasProgress;
+    progressFill.style.width = `${Number(status.progress_percent || 0)}%`;
+    progressPercent.textContent = `${Number(status.progress_percent || 0)}%`;
+    const formattedSize = formatUpdateSize(status.size_bytes);
+    size.textContent = formattedSize
+        ? updateString('update_size', 'Size: {size}', { size: formattedSize })
+        : '';
+
+    const message = updateStatusMessage(status);
+    statusText.textContent = message;
+    statusText.hidden = !message;
+    statusText.classList.toggle('error', Boolean(status.error_code));
+
+    primary.hidden = busy;
+    cancel.hidden = !['downloading', 'verifying'].includes(status.state);
+    if (status.state === 'ready') {
+        primary.textContent = updateString('update_install_now', 'Install Update');
+    } else if (status.action === 'browser') {
+        primary.textContent = updateString('update_open_releases', 'View Download');
+    } else {
+        primary.textContent = updateString('update_update_now', 'Update Now');
+    }
+    primary.disabled = status.protocol_warning && !ack.checked;
+}
+
+function initUpdateBanner() {
+    const banner = document.getElementById('update-banner');
+    if (!banner) return;
+    document.getElementById('update-protocol-ack')?.addEventListener('change', () => {
+        if (_updateStatus) renderUpdateBanner(_updateStatus);
+    });
+    document.getElementById('update-dismiss-btn')?.addEventListener('click', () => {
+        postUpdateAction('/api/update/dismiss');
+    });
+    document.getElementById('update-cancel-btn')?.addEventListener('click', () => {
+        postUpdateAction('/api/update/cancel');
+    });
+    document.getElementById('update-primary-btn')?.addEventListener('click', async () => {
+        if (_updateStatus?.state === 'ready') {
+            if (window.pywebview?.api?.install_verified_update) {
+                await window.pywebview.api.install_verified_update();
+            } else {
+                showNotification(updateString('update_error_installer_missing', 'Installer launch is unavailable.'), 'error');
+            }
+            return;
+        }
+        await postUpdateAction('/api/update/download', {
+            acknowledge_protocol_warning: Boolean(document.getElementById('update-protocol-ack')?.checked)
+        });
+    });
+    fetchUpdateStatus();
+}
+
+// 5. Argon2id Work Overlay Helpers
 let _argonAnimationId = null;
 let _argonState = 'idle'; // 'idle', 'loading', 'finishing', 'fade-wait', 'fading'
 let _argonStartTime = 0;

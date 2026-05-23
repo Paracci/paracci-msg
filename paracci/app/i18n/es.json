@@ -427,6 +427,30 @@
     "1d": "1 día",
     "30d": "30 días"
   },
+  "update": {
+    "available_title": "Actualización disponible",
+    "version_line": "Actual {current} - Nueva {latest}",
+    "size": "Tamaño: {size}",
+    "protocol_warning_title": "Cambio del protocolo de sesión",
+    "protocol_warning": "Esta actualización cambia el protocolo de sesión. Después de actualizar, deberá establecer nuevas sesiones con sus contactos.",
+    "protocol_unknown": "Esta versión no proporciona información de compatibilidad del protocolo de sesión. Después de actualizar, puede necesitar nuevas sesiones.",
+    "acknowledge": "Lo entiendo antes de continuar",
+    "update_now": "Actualizar ahora",
+    "open_releases": "Ver descarga",
+    "remind_later": "Recordar más tarde",
+    "downloading": "Descargando actualización...",
+    "verifying": "Verificando suma SHA-256...",
+    "verified": "Suma verificada.",
+    "ready": "Listo para instalar. La aplicación se cerrará.",
+    "install_now": "Instalar actualización",
+    "cancelled": "Descarga cancelada.",
+    "error_download_failed": "No se pudo descargar la actualización. Inténtelo más tarde.",
+    "error_checksum_missing": "Falta la suma de comprobación. La instalación se detuvo.",
+    "error_checksum_failed": "Falló la verificación de la suma. Se eliminó el instalador descargado.",
+    "error_size_mismatch": "El tamaño descargado no coincide con el recurso publicado. La instalación se detuvo.",
+    "error_browser_open_failed": "No se pudo abrir la página de versiones.",
+    "error_installer_missing": "El instalador verificado ya no está disponible."
+  },
   "error": {
     "404_title": "Página no encontrada.",
     "404_btn": "Volver al inicio"
