@@ -6,6 +6,7 @@ Usage:
     python build.py              # Build for the current OS
     python build.py --clean      # Clean previous build artifacts first
     python build.py --install    # Install/upgrade build dependencies first
+    python build.py --installer  # Build the Windows Inno Setup installer
     python build.py --clean --install  # Full fresh build
 
 Output structure:
@@ -23,6 +24,7 @@ from __future__ import annotations
 import argparse
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -38,6 +40,9 @@ WORK_DIR    = ROOT / "build_cache"   # PyInstaller work/ temp
 APP_NAME    = "Paracci"
 
 DEV_LOCK    = ROOT / "requirements-dev.lock"
+VERSION_INFO_FILE = ROOT / "file_version_info.txt"
+INSTALLER_SCRIPT = ROOT / "installer" / "windows" / "paracci.iss"
+WINDOWS_PAYLOAD_DIR = BUILD_DIR / "windows" / APP_NAME
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -183,6 +188,97 @@ def print_liboqs_env() -> None:
         print(f"    {name}: {os.environ.get(name) or '(not set)'}")
 
 
+def read_installer_version() -> str:
+    """Read MAJOR.MINOR.PATCH from the Windows product version resource."""
+    if not VERSION_INFO_FILE.exists():
+        raise ValueError(f"Version info file not found: {VERSION_INFO_FILE}")
+
+    text = VERSION_INFO_FILE.read_text(encoding="utf-8")
+    match = re.search(
+        r"StringStruct\('ProductVersion',\s*'(\d+\.\d+\.\d+)(?:\.0)?'\)",
+        text,
+    )
+    if not match:
+        raise ValueError(
+            "Expected ProductVersion in file_version_info.txt to be "
+            "MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH.0."
+        )
+    return match.group(1)
+
+
+def find_iscc() -> str | None:
+    """Locate the Inno Setup 6 compiler on PATH or in standard locations."""
+    for executable in ("ISCC.exe", "iscc.exe"):
+        path = shutil.which(executable)
+        if path:
+            return path
+
+    install_roots = [
+        os.environ.get("ProgramFiles(x86)"),
+        os.environ.get("ProgramFiles"),
+        os.environ.get("LOCALAPPDATA"),
+    ]
+    candidates = [
+        Path(install_roots[0]) / "Inno Setup 6" / "ISCC.exe"
+        if install_roots[0]
+        else None,
+        Path(install_roots[1]) / "Inno Setup 6" / "ISCC.exe"
+        if install_roots[1]
+        else None,
+        Path(install_roots[2]) / "Programs" / "Inno Setup 6" / "ISCC.exe"
+        if install_roots[2]
+        else None,
+    ]
+    for candidate in candidates:
+        if candidate and candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def run_installer_build(platform_id: str) -> int:
+    """Compile the Windows installer after the PyInstaller payload is ready."""
+    if platform_id != "windows":
+        print("\n  [WARN] --installer is only available on Windows; skipping installer build.")
+        return 0
+
+    if not INSTALLER_SCRIPT.exists():
+        print(f"\n  [ERROR] Inno Setup script not found: {INSTALLER_SCRIPT}")
+        return 1
+
+    iscc = find_iscc()
+    if not iscc:
+        print(
+            "\n  [WARN] Inno Setup compiler (ISCC.exe) was not found. "
+            "Skipping installer build; the portable payload is still available."
+        )
+        return 0
+
+    executable = WINDOWS_PAYLOAD_DIR / f"{APP_NAME}.exe"
+    if not executable.is_file():
+        print(f"\n  [ERROR] Windows installer payload not found: {executable}")
+        return 1
+
+    portable_marker = WINDOWS_PAYLOAD_DIR / "data"
+    if portable_marker.exists():
+        print(
+            f"\n  [ERROR] Refusing to build an installer from payload containing {portable_marker}. "
+            "Installed builds must use Standard Mode."
+        )
+        return 1
+
+    try:
+        app_version = read_installer_version()
+    except ValueError as exc:
+        print(f"\n  [ERROR] {exc}")
+        return 1
+
+    print(f"\n  [INSTALLER] Building Paracci Setup v{app_version}...")
+    return run(
+        [iscc, f"/DAppVersion={app_version}", str(INSTALLER_SCRIPT)],
+        cwd=str(ROOT),
+    )
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -197,6 +293,11 @@ def main() -> int:
         "--install",
         action="store_true",
         help="Install/upgrade build dependencies (pyinstaller) before building.",
+    )
+    parser.add_argument(
+        "--installer",
+        action="store_true",
+        help="Compile the Windows Inno Setup installer after the PyInstaller build.",
     )
     args = parser.parse_args()
 
@@ -230,6 +331,13 @@ def main() -> int:
 
     # Move outputs to builds/<platform>/
     move_outputs(platform_id)
+
+    if args.installer:
+        rc = run_installer_build(platform_id)
+        if rc != 0:
+            print(f"\n  [ERROR] Installer compilation exited with code {rc}.")
+            return rc
+
     print_summary(platform_id)
 
     return 0

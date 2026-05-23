@@ -183,7 +183,12 @@ python paracci\audits\guardian.py
 
 ## Build & Release
 
-Paracci compiles into single-file standalone executables. No Python environment is required to run the packaged application.
+Paracci is packaged as a self-contained application. No Python environment is required to run a packaged release.
+
+Windows releases provide two supported distribution modes:
+
+- `Paracci-Setup-v<version>.exe` installs Paracci per user under `%LOCALAPPDATA%\Programs\Paracci` and stores application data under `%LOCALAPPDATA%\Paracci`.
+- `Paracci-Portable-v<version>.zip` contains the complete application folder plus its portable `data` directory; extract the folder before running `Paracci.exe`.
 
 ### Local Compilation
 
@@ -194,6 +199,10 @@ python build.py --install --clean
 # Output: builds/windows/Paracci/ (folder containing Paracci.exe and dependencies)
 #         builds/macos/Paracci-macOS
 #         builds/linux/Paracci-Linux
+
+# Windows only, with Inno Setup 6 installed:
+python build.py --clean --installer
+# Installer output: builds/windows/Paracci-Setup-v<version>.exe
 ```
 
 ### Automated GitHub Release
@@ -205,7 +214,7 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-GitHub Actions builds Windows, macOS, and Linux binaries in parallel, signs them with Sigstore build provenance attestations, runs automated VirusTotal scans, and publishes them under GitHub Releases.
+GitHub Actions builds Windows, macOS, and Linux packages in parallel, creates the Windows installer and portable archive, signs release artifacts with Sigstore build provenance attestations, runs automated VirusTotal scans, and publishes them under GitHub Releases.
 
 > **Note on antivirus warnings:** PyInstaller bundles the Python runtime into the executable. Some heuristic antivirus engines flag self-extracting Python bundles as suspicious. The VirusTotal scan results and Sigstore attestations are published with every release for independent verification.
 

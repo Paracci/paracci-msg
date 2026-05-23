@@ -142,6 +142,11 @@ jobs:
       - name: Audit locked dependencies
         run: python -m pip_audit -r requirements.lock -r requirements-dev.lock
 
+      - name: Install Inno Setup 6.7.1
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install innosetup --version=6.7.1 --no-progress -y
+
       - name: Inject release version metadata
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
@@ -223,7 +228,14 @@ jobs:
           PY
 
       # ── 5. Build executable ────────────────────────────────────────────────
-      - name: Build executable
+      - name: Build executable and installer (Windows)
+        if: runner.os == 'Windows'
+        run: python build.py --clean --installer
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: Build executable (macOS and Linux)
+        if: runner.os != 'Windows'
         run: python build.py --clean
         env:
           QT_QPA_PLATFORM: offscreen   # suppress headless Qt warnings on Linux CI
@@ -381,9 +393,35 @@ jobs:
         shell: pwsh
         run: |
           $file = "builds\windows\Paracci\Paracci.exe"
+          $setups = @(Get-ChildItem "builds\windows\Paracci-Setup-v*.exe")
+          if ($setups.Count -ne 1) {
+            throw "Expected one Windows setup executable, found $($setups.Count)."
+          }
+
+          $setup = $setups[0]
+          if ($setup.BaseName -notmatch '^Paracci-Setup-v(.+)$') {
+            throw "Could not determine installer version from $($setup.Name)."
+          }
+          $version = $Matches[1]
+          $portableDir = "builds\windows\Paracci-Portable-v$version"
+          $portableZip = "builds\windows\Paracci-Portable-v$version.zip"
+
+          Copy-Item "builds\windows\Paracci" $portableDir -Recurse -Force
+          New-Item -Path (Join-Path $portableDir "data") -ItemType Directory -Force | Out-Null
+          Compress-Archive -Path $portableDir -DestinationPath $portableZip -Force
+          Remove-Item $portableDir -Recurse -Force
+
           $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
-          "$hash  Paracci-Windows.exe" | Out-File -Encoding utf8 "builds\windows\SHA256SUMS.txt"
-          Write-Host "SHA256: $hash"
+          $setupHash = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLower()
+          $portableHash = (Get-FileHash $portableZip -Algorithm SHA256).Hash.ToLower()
+          @(
+            "$hash  Paracci.exe"
+            "$setupHash  $($setup.Name)"
+            "$portableHash  $(Split-Path $portableZip -Leaf)"
+          ) | Out-File -Encoding utf8 "builds\windows\SHA256SUMS.txt"
+          Write-Host "SHA256 Paracci.exe: $hash"
+          Write-Host "SHA256 $($setup.Name): $setupHash"
+          Write-Host "SHA256 $(Split-Path $portableZip -Leaf): $portableHash"
 
       - name: Prepare asset (macOS)
         if: runner.os == 'macOS'
@@ -417,6 +455,18 @@ jobs:
         uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45  # v2
         with:
           subject-path: builds/windows/Paracci/Paracci.exe
+
+      - name: Attest Windows installer provenance
+        if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45  # v2
+        with:
+          subject-path: builds/windows/Paracci-Setup-v*.exe
+
+      - name: Attest Windows portable archive provenance
+        if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45  # v2
+        with:
+          subject-path: builds/windows/Paracci-Portable-v*.zip
 
       - name: Attest macOS build provenance
         if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/v')
@@ -502,7 +552,13 @@ jobs:
         id: resolve
         run: |
           WIN_FILE="release-assets/windows/Paracci/Paracci.exe"
+          WIN_SETUP_FILE="$(find release-assets/windows -maxdepth 1 -name 'Paracci-Setup-v*.exe' -print -quit)"
+          WIN_PORTABLE_FILE="$(find release-assets/windows -maxdepth 1 -name 'Paracci-Portable-v*.zip' -print -quit)"
           LINUX_FILE="release-assets/linux/Paracci-Linux"
+          if [ -z "$WIN_SETUP_FILE" ] || [ -z "$WIN_PORTABLE_FILE" ]; then
+            echo "Missing Windows setup or portable archive release file." >&2
+            exit 1
+          fi
           chmod +x "$LINUX_FILE"
 
           # macOS: .zip bundle or bare binary
@@ -514,6 +570,8 @@ jobs:
           fi
 
           echo "win_file=$WIN_FILE"     >> $GITHUB_OUTPUT
+          echo "win_setup_file=$WIN_SETUP_FILE" >> $GITHUB_OUTPUT
+          echo "win_portable_file=$WIN_PORTABLE_FILE" >> $GITHUB_OUTPUT
           echo "macos_file=$MACOS_FILE" >> $GITHUB_OUTPUT
           echo "linux_file=$LINUX_FILE" >> $GITHUB_OUTPUT
 
@@ -534,7 +592,9 @@ jobs:
 
             | Platform | File | Notes |
             |----------|------|-------|
-            | 🪟 Windows | `Paracci.exe` | Double-click to run — no Python needed |
+            | Windows installer | `Paracci-Setup-${{ github.ref_name }}.exe` | Standard Mode; per-user installation with uninstaller |
+            | Windows portable | `Paracci-Portable-${{ github.ref_name }}.zip` | Extract and run; keeps data beside the executable |
+            | Windows compatibility | `Paracci.exe` | Retained asset; use the installer or ZIP for the complete runtime |
             | 🍎 macOS | `Paracci-macOS.zip` | Unzip → drag to Applications |
             | 🐧 Linux | `Paracci-Linux` | `chmod +x Paracci-Linux && ./Paracci-Linux` |
 
@@ -545,15 +605,16 @@ jobs:
             #### SHA-256 Checksums
             Verify your download matches `SHA256SUMS.txt` (attached below):
             ```
-            # Windows (PowerShell):  Get-FileHash Paracci.exe -Algorithm SHA256
+            # Windows (PowerShell):  Get-FileHash Paracci-Setup-${{ github.ref_name }}.exe -Algorithm SHA256
+            # Windows portable:     Get-FileHash Paracci-Portable-${{ github.ref_name }}.zip -Algorithm SHA256
             # macOS / Linux:         sha256sum Paracci-Linux
             ```
 
             #### Build Provenance (Sigstore / SLSA Level 2)
-            Every binary in this release was cryptographically signed by GitHub Actions.
+            Each published application artifact has GitHub Actions build provenance.
             You can verify the attestation without trusting us:
             ```bash
-            gh attestation verify Paracci.exe \
+            gh attestation verify Paracci-Setup-${{ github.ref_name }}.exe \
               --repo ${{ github.repository }}
             ```
             Or browse the attestations tab:
@@ -571,6 +632,8 @@ jobs:
             > 🔍 Source code: All application logic is in this repository and open for audit.
           files: |
             ${{ steps.resolve.outputs.win_file }}
+            ${{ steps.resolve.outputs.win_setup_file }}
+            ${{ steps.resolve.outputs.win_portable_file }}
             ${{ steps.resolve.outputs.macos_file }}
             ${{ steps.resolve.outputs.linux_file }}
             SHA256SUMS.txt
@@ -579,7 +642,7 @@ jobs:
 
   # ═══════════════════════════════════════════════════════════════════════════
   # JOB 4 — VirusTotal Scan
-  # Runs after the Release is published. Submits all 3 binaries to VT and
+  # Runs after the Release is published. Submits published packages to VT and
   # appends the scan report URLs to the release body automatically.
   #
   # SETUP REQUIRED:
@@ -615,8 +678,10 @@ jobs:
       # Rename files to clean names for VT display
       - name: Normalize filenames for VT
         run: |
-          mv vt-scan/windows/Paracci/Paracci.exe        vt-scan/Paracci-Windows.exe || true
-          mv vt-scan/linux/Paracci-Linux         vt-scan/Paracci-Linux       || true
+          mv vt-scan/windows/Paracci/Paracci.exe            vt-scan/Paracci-Windows.exe || true
+          mv vt-scan/windows/Paracci-Setup-v*.exe           vt-scan/Paracci-Windows-Setup.exe || true
+          mv vt-scan/windows/Paracci-Portable-v*.zip        vt-scan/Paracci-Windows-Portable.zip || true
+          mv vt-scan/linux/Paracci-Linux                    vt-scan/Paracci-Linux || true
 
           # macOS: prefer .zip, fall back to bare binary
           if [ -f "vt-scan/macos/Paracci-macOS.zip" ]; then
@@ -637,6 +702,8 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           files: |
             vt-scan/Paracci-Windows.exe
+            vt-scan/Paracci-Windows-Setup.exe
+            vt-scan/Paracci-Windows-Portable.zip
             vt-scan/Paracci-macOS.zip
             vt-scan/Paracci-macOS
             vt-scan/Paracci-Linux
