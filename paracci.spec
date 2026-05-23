@@ -239,29 +239,60 @@ a = Analysis(
 
 pyz = PYZ(a.pure)
 
-# ── Single-file executable ─────────────────────────────────────────────────────
-exe = EXE(
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.datas,
-    [],
-    name="Paracci",
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=False,
-    upx_exclude=[],
-    runtime_tmpdir=None,
-    console=False,          # No console window (GUI app)
-    disable_windowed_traceback=False,
-    argv_emulation=False,   # macOS only — keep False for pywebview
-    target_arch=None,       # None = current machine arch
-    codesign_identity=None,
-    entitlements_file=None,
-    version=str(ROOT / "file_version_info.txt"),
-    icon=app_icon,
-)
+# ── Windows Onedir / Other Platforms Onefile Setup ────────────────────────────
+if sys.platform == "win32":
+    exe = EXE(
+        pyz,
+        a.scripts,
+        exclude_binaries=True,
+        name="Paracci",
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,
+        console=False,          # No console window (GUI app)
+        disable_windowed_traceback=False,
+        argv_emulation=False,   # macOS only — keep False for pywebview
+        target_arch='x86_64',
+        codesign_identity=None,
+        entitlements_file=None,
+        version=str(ROOT / "file_version_info.txt"),
+        icon=app_icon,
+    )
+    coll = COLLECT(
+        exe,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        strip=False,
+        upx=False,
+        upx_exclude=[],
+        name="Paracci",
+    )
+else:
+    exe = EXE(
+        pyz,
+        a.scripts,
+        a.binaries,
+        a.datas,
+        [],
+        name="Paracci",
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,
+        upx_exclude=[],
+        runtime_tmpdir=None,
+        console=False,          # No console window (GUI app)
+        disable_windowed_traceback=False,
+        argv_emulation=False,   # macOS only — keep False for pywebview
+        target_arch=None,       # None = current machine arch
+        codesign_identity=None,
+        entitlements_file=None,
+        version=str(ROOT / "file_version_info.txt"),
+        icon=app_icon,
+    )
+
 
 # ── macOS .app Bundle ─────────────────────────────────────────────────────────
 # Only generated when building on macOS.

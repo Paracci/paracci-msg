@@ -10,7 +10,7 @@ Usage:
 
 Output structure:
     builds/
-    ├── windows/   → Paracci.exe
+    ├── windows/   → Paracci/ (folder containing Paracci.exe)
     ├── macos/     → Paracci.app  (or Paracci binary)
     └── linux/     → Paracci
 
@@ -125,11 +125,11 @@ def move_outputs(platform_id: str) -> None:
     moved = False
 
     if platform_id == "windows":
-        src = DIST_DIR / f"{APP_NAME}.exe"
-        if src.exists():
-            dst = out_dir / f"{APP_NAME}.exe"
+        src = DIST_DIR / APP_NAME
+        if src.exists() and src.is_dir():
+            dst = out_dir / APP_NAME
             shutil.move(str(src), str(dst))
-            print(f"\n  [OK] Windows build ready: {dst}")
+            print(f"\n  [OK] Windows build ready: {dst / f'{APP_NAME}.exe'}")
             moved = True
 
     elif platform_id == "macos":
