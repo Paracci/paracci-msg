@@ -29,10 +29,19 @@ class ParacciConfig:
         self.load()
         
         # Determine downloads path dynamically:
-        # Standard Mod: If storing database in hidden OS AppData, place downloaded files in user's standard Downloads/Paracci
+        # Standard Mod: If storing database in standard OS app data, place downloaded files in user's standard Downloads/Paracci
         # Portable Mod: If running self-contained, store downloads inside the local data/downloads directory next to the executable
         data_dir_lower = self.data_dir.lower()
-        if "appdata" in data_dir_lower or "application support" in data_dir_lower or ".config" in data_dir_lower:
+        xdg_data_root = Path(
+            os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share"))
+        ).expanduser()
+        standard_xdg_data_dir = xdg_data_root / "paracci"
+        if (
+            "appdata" in data_dir_lower
+            or "application support" in data_dir_lower
+            or ".config" in data_dir_lower
+            or Path(self.data_dir).expanduser() == standard_xdg_data_dir
+        ):
             self.full_downloads_path = str(Path.home() / "Downloads" / "Paracci")
         else:
             self.full_downloads_path = os.path.join(self.data_dir, self.get("downloads_dir"))

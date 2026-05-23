@@ -169,8 +169,10 @@ class WindowsShield(BaseShield):
             return False
 
     def get_default_data_dir(self, app_name: str) -> str:
-        base = os.getenv('APPDATA') or os.path.expanduser('~')
-        return str(Path(base) / app_name)
+        base = os.getenv('LOCALAPPDATA')
+        if base:
+            return str(Path(base) / app_name)
+        return str(Path.home() / "AppData" / "Local" / app_name)
 
     def secure_delete(self, file_path: str) -> bool:
         """Best-effort overwrite/delete; SSDs, journals, snapshots, and sync may retain data."""
