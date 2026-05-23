@@ -12,6 +12,7 @@ from typing import Any
 
 from desktop.device_key_binding import DeviceBindingError
 from desktop.services import AttachmentPayload, MessageServiceError, NativeServices, OpenedMessage, SessionServiceError
+from core.sanitizer import build_no_download_image_preview
 
 logger = logging.getLogger(__name__)
 
@@ -301,8 +302,18 @@ class UIApi:
         response = self._attachment_meta(attachment, attachment_id)
         if not attachment.allow_download:
             if attachment.is_image:
-                response["preview_kind"] = "image_base64"
-                response["content_base64"] = base64.b64encode(attachment.content).decode("ascii")
+                preview_data = build_no_download_image_preview(
+                    attachment.content,
+                    attachment.mime_type,
+                )
+                if preview_data:
+                    preview_content, preview_mime = preview_data
+                    response["preview_kind"] = "image_base64"
+                    response["mime_type"] = preview_mime
+                    response["content_base64"] = base64.b64encode(preview_content).decode("ascii")
+                else:
+                    response["preview_kind"] = "unsupported"
+                    response["message"] = NO_DOWNLOAD_BINARY_PREVIEW_MESSAGE
             else:
                 response["preview_kind"] = "unsupported"
                 response["message"] = (

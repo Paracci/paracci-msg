@@ -514,7 +514,33 @@ def test_flask_open_uses_bound_header_policy_over_package_metadata(tmp_path, mon
     payload = opened.get_json()
     assert payload["allow_download"] is False
     assert len(payload["attachments"]) == 1
-    assert routes_module.PREVIEW_CACHE[payload["attachments"][0]["pid"]]["allow_download"] is False
+    attachment_ref = payload["attachments"][0]["pid"]
+    assert routes_module.PREVIEW_CACHE[attachment_ref]["allow_download"] is False
+
+    prepared = client.post(
+        "/api/prepare-preview",
+        base_url=ORIGIN,
+        json={"attachment_ref": attachment_ref},
+        headers=auth_headers(client),
+    )
+    assert prepared.status_code == 200
+    preview_token = prepared.get_json()["preview_token"]
+
+    inline_response = client.get(
+        f"/preview/{preview_token}/content",
+        base_url=ORIGIN,
+        headers={"Host": HOST},
+    )
+    forged_download_response = client.get(
+        f"/preview/{preview_token}/content?download=1",
+        base_url=ORIGIN,
+        headers={"Host": HOST},
+    )
+
+    assert inline_response.status_code == 415
+    assert inline_response.data != b"original bytes"
+    assert forged_download_response.status_code == 403
+    assert forged_download_response.data != b"original bytes"
 
 
 @oqs_required
