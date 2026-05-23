@@ -247,7 +247,7 @@ jobs:
 
           runner_os = os.environ["RUNNER_OS"]
           if runner_os == "Windows":
-              executable = Path("builds/windows/Paracci.exe")
+              executable = Path("builds/windows/Paracci/Paracci.exe")
           elif runner_os == "macOS":
               app_executable = Path("builds/macos/Paracci.app/Contents/MacOS/Paracci")
               executable = app_executable if app_executable.exists() else Path("builds/macos/Paracci")
@@ -380,7 +380,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $file = "builds\windows\Paracci.exe"
+          $file = "builds\windows\Paracci\Paracci.exe"
           $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
           "$hash  Paracci-Windows.exe" | Out-File -Encoding utf8 "builds\windows\SHA256SUMS.txt"
           Write-Host "SHA256: $hash"
@@ -416,7 +416,7 @@ jobs:
         if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/v')
         uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45  # v2
         with:
-          subject-path: builds/windows/Paracci.exe
+          subject-path: builds/windows/Paracci/Paracci.exe
 
       - name: Attest macOS build provenance
         if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/v')
@@ -501,7 +501,7 @@ jobs:
       - name: Resolve release files
         id: resolve
         run: |
-          WIN_FILE="release-assets/windows/Paracci.exe"
+          WIN_FILE="release-assets/windows/Paracci/Paracci.exe"
           LINUX_FILE="release-assets/linux/Paracci-Linux"
           chmod +x "$LINUX_FILE"
 
@@ -615,7 +615,7 @@ jobs:
       # Rename files to clean names for VT display
       - name: Normalize filenames for VT
         run: |
-          mv vt-scan/windows/Paracci.exe        vt-scan/Paracci-Windows.exe || true
+          mv vt-scan/windows/Paracci/Paracci.exe        vt-scan/Paracci-Windows.exe || true
           mv vt-scan/linux/Paracci-Linux         vt-scan/Paracci-Linux       || true
 
           # macOS: prefer .zip, fall back to bare binary

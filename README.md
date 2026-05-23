@@ -191,7 +191,7 @@ To compile the application locally using [build.py](build.py):
 
 ```powershell
 python build.py --install --clean
-# Output: builds/windows/Paracci.exe
+# Output: builds/windows/Paracci/ (folder containing Paracci.exe and dependencies)
 #         builds/macos/Paracci-macOS
 #         builds/linux/Paracci-Linux
 ```
