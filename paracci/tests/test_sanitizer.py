@@ -5,11 +5,12 @@ from pathlib import Path
 
 import pytest
 from flask import g
+from PIL import Image
 from werkzeug.datastructures import FileStorage
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core.sanitizer import SanitizationError, sanitize_image
+from core.sanitizer import SanitizationError, build_no_download_image_preview, sanitize_image
 
 
 TOKEN = "test-loopback-token"
@@ -44,6 +45,27 @@ def test_sanitize_image_leaves_non_image_bytes_unchanged():
     original = b"not an image but not a supported image extension"
 
     assert sanitize_image(original, "note.txt") == original
+
+
+def test_build_no_download_image_preview_returns_lossy_bounded_jpeg():
+    source = io.BytesIO()
+    Image.new("RGBA", (1400, 900), (14, 80, 130, 255)).save(source, format="PNG")
+    original = source.getvalue()
+
+    preview_data = build_no_download_image_preview(original, "image/png")
+
+    assert preview_data is not None
+    preview_bytes, preview_mime = preview_data
+    assert preview_mime == "image/jpeg"
+    assert preview_bytes != original
+    preview = Image.open(io.BytesIO(preview_bytes))
+    assert preview.width <= 1024
+    assert preview.height <= 1024
+
+
+def test_build_no_download_image_preview_fails_closed_for_invalid_or_non_image_content():
+    assert build_no_download_image_preview(b"not a valid png", "image/png") is None
+    assert build_no_download_image_preview(b"private text", "text/plain") is None
 
 
 def test_gather_attachments_returns_localized_sanitization_error(tmp_path, monkeypatch):

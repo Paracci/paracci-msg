@@ -130,6 +130,31 @@ def test_preview_template_hides_download_for_non_downloadable_token(tmp_path, mo
     assert response.status_code == 200
     assert 'data-allow-download="false"' in html
     assert 'id="downloadBtn"' not in html
+    assert 'data-content-url=""' in html
+    assert 'data-media-url=""' in html
+    assert f"/preview/{token}/content" not in html
+    assert f"/preview/{token}/content?download=1" not in html
+
+
+def test_preview_template_advertises_degraded_content_for_non_downloadable_image(tmp_path, monkeypatch):
+    flask_app = make_flask_app(tmp_path, monkeypatch)
+    store = fresh_preview_store(monkeypatch)
+    token = store.generate_token(
+        b"degraded-on-fetch",
+        "private.png",
+        "image/png",
+        allow_download=False,
+    )
+
+    response = flask_app.test_client().get(
+        f"/preview/{token}",
+        base_url=ORIGIN,
+        headers={"Host": HOST},
+    )
+
+    html = response.data.decode("utf-8")
+    assert response.status_code == 200
+    assert f"/preview/{token}/content" in html
     assert f"/preview/{token}/content?download=1" not in html
 
 
@@ -144,6 +169,7 @@ def test_preview_runtime_uses_custom_media_controls():
     assert "customMediaPlayer" in preview_js
     assert "download-success-toast" in preview_css
     assert "showDownloadSuccess" in preview_js
+    assert "if (config.token) return `/preview/${encodeURIComponent(config.token)}/content`;" not in preview_js
     assert "This file cannot be previewed here." not in preview_js
     assert "Preview not available for this file type when downloading is disabled." not in preview_js
     assert "▶" in preview_js

@@ -23,7 +23,6 @@ import pyotp
 import qrcode
 import base64
 from io import BytesIO
-from PIL import Image, ImageDraw, ImageOps, UnidentifiedImageError
 from werkzeug.exceptions import SecurityError
 
 import app as ag_app
@@ -44,7 +43,11 @@ from core.package import (
     sanitize_attachment_filename,
 )
 from core.crypto import wipe
-from core.sanitizer import SanitizationError, sanitize_image
+from core.sanitizer import (
+    SanitizationError,
+    build_no_download_image_preview,
+    sanitize_image,
+)
 from core.security_utils import scan_text_for_security
 from core.burn import (
     is_device_initialized, DeviceError,
@@ -108,10 +111,6 @@ NATIVE_FILE_REF_CACHE = {}
 # ── Security Configuration ──
 MAX_ATTACHMENT_SIZE = 50 * 1024 * 1024  # 50MB
 MAX_ATTACHMENT_COUNT = 10
-NO_DOWNLOAD_PREVIEW_MAX_DIMENSION = 1024
-NO_DOWNLOAD_PREVIEW_JPEG_QUALITY = 60
-NO_DOWNLOAD_PREVIEW_WATERMARK = "PARACCI PREVIEW"
-
 DANGEROUS_EXTENSIONS = {
     '.exe', '.msi', '.bat', '.cmd', '.ps1', '.vbs', '.pif', '.scr', 
     '.reg', '.com', '.jar', '.vbe', '.jse', '.wsf', '.wsh', '.hta'
@@ -324,63 +323,6 @@ def _valid_preview_access_request() -> bool:
     expected = file_data.get("access_token") if file_data else None
     supplied = request.args.get("preview_token") or request.headers.get("X-Paracci-Preview-Token")
     return _token_matches(supplied, expected)
-
-
-def _build_no_download_image_preview(file_data):
-    """Build a degraded image preview for no-download attachments."""
-    if not file_data or not str(file_data.get("mime", "")).startswith("image/"):
-        return None
-
-    # No-download is a UX-level hint, not DRM; this only closes the raw-original bypass.
-    try:
-        with Image.open(io.BytesIO(file_data["content"])) as image:
-            image = ImageOps.exif_transpose(image)
-            image.thumbnail(
-                (NO_DOWNLOAD_PREVIEW_MAX_DIMENSION, NO_DOWNLOAD_PREVIEW_MAX_DIMENSION)
-            )
-
-            has_alpha = image.mode in ("RGBA", "LA") or (
-                image.mode == "P" and "transparency" in image.info
-            )
-            if has_alpha:
-                rgba = image.convert("RGBA")
-                background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
-                background.alpha_composite(rgba)
-                image = background.convert("RGB")
-            else:
-                image = image.convert("RGB")
-
-            draw = ImageDraw.Draw(image)
-            text = NO_DOWNLOAD_PREVIEW_WATERMARK
-            try:
-                left, top, right, bottom = draw.textbbox((0, 0), text)
-                text_width = right - left
-                text_height = bottom - top
-            except AttributeError:
-                text_width, text_height = draw.textsize(text)
-
-            margin = max(12, min(image.size) // 40)
-            pad = 6
-            x = max(margin, image.width - text_width - margin)
-            y = max(margin, image.height - text_height - margin)
-            draw.rectangle(
-                [x - pad, y - pad, x + text_width + pad, y + text_height + pad],
-                fill=(255, 255, 255),
-                outline=(30, 30, 30),
-            )
-            draw.text((x, y), text, fill=(30, 30, 30))
-
-            output = io.BytesIO()
-            image.save(
-                output,
-                format="JPEG",
-                quality=NO_DOWNLOAD_PREVIEW_JPEG_QUALITY,
-                optimize=True,
-            )
-            return output.getvalue(), "image/jpeg"
-    except (UnidentifiedImageError, OSError, ValueError, KeyError) as exc:
-        logger.warning("Could not build no-download image preview: %s", exc)
-        return None
 
 
 def _clear_staged_attachment_cache(ids=None):
@@ -2134,8 +2076,10 @@ def _get_preview_token_response_data(entry: PreviewEntry):
     """Render token-based preview metadata without exposing file bytes to Jinja."""
     filename = sanitize_attachment_filename(entry.filename or "attachment.bin")
     mime = entry.mime_type or "application/octet-stream"
-    content_url = url_for("main.preview_content", preview_token=entry.token)
     allow_download = entry.allow_download is True
+    content_url = ""
+    if allow_download or mime.lower().startswith("image/"):
+        content_url = url_for("main.preview_content", preview_token=entry.token)
 
     return render_template(
         "preview.html",
@@ -2180,7 +2124,10 @@ def preview(pid: str):
         return _mark_sensitive_no_store(response)
 
     if request.args.get("variant") == "preview":
-        preview_data = _build_no_download_image_preview(file_data)
+        preview_data = build_no_download_image_preview(
+            file_data.get("content", b""),
+            file_data.get("mime", ""),
+        )
         if not preview_data:
             abort(415)
         preview_content, preview_mime = preview_data
@@ -2213,11 +2160,14 @@ def preview_content(preview_token: str):
         if download_requested:
             abort(403)
 
+        preview_data = build_no_download_image_preview(entry.file_bytes, mime_type)
+        if not preview_data:
+            abort(415)
+        preview_content, preview_mime = preview_data
         response = send_file(
-            io.BytesIO(entry.file_bytes),
-            mimetype=mime_type,
+            io.BytesIO(preview_content),
+            mimetype=preview_mime,
             as_attachment=False,
-            download_name=filename,
         )
         return _mark_sensitive_no_store(response)
 

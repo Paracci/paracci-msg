@@ -1,4 +1,5 @@
 import base64
+import io
 import json
 import os
 import subprocess
@@ -6,6 +7,7 @@ import sys
 import time
 from pathlib import Path
 import pytest
+from PIL import Image
 
 from conftest import oqs_required
 
@@ -44,6 +46,13 @@ def cache_open_attachment(api: UIApi, attachment: AttachmentPayload, open_id: st
         opened_at=int(time.time()),
     )
     return open_id
+
+
+def png_bytes(size=(1400, 900), color=(14, 80, 130, 255)):
+    image = Image.new("RGBA", size, color)
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    return output.getvalue()
 
 
 def test_ui_api_device_settings_and_profile(tmp_path):
@@ -225,7 +234,7 @@ def test_ui_api_non_downloadable_binary_preview_returns_policy_message(tmp_path)
 
 def test_ui_api_non_downloadable_image_preview_remains_available(tmp_path):
     api = make_api(tmp_path / "native-preview-image")
-    image_bytes = b"\x89PNG\r\npreview-bytes"
+    image_bytes = png_bytes()
     open_id = cache_open_attachment(
         api,
         AttachmentPayload(
@@ -242,6 +251,56 @@ def test_ui_api_non_downloadable_image_preview_remains_available(tmp_path):
     )
 
     assert preview["preview_kind"] == "image_base64"
+    assert preview["mime_type"] == "image/jpeg"
+    preview_bytes = base64.b64decode(preview["content_base64"])
+    assert preview_bytes != image_bytes
+    rendered = Image.open(io.BytesIO(preview_bytes))
+    assert rendered.width <= 1024
+    assert rendered.height <= 1024
+
+
+def test_ui_api_non_downloadable_invalid_image_preview_exposes_no_bytes(tmp_path):
+    api = make_api(tmp_path / "native-preview-invalid-image")
+    open_id = cache_open_attachment(
+        api,
+        AttachmentPayload(
+            filename="preview.png",
+            content=b"\x89PNG\r\nnot-a-real-image",
+            mime_type="image/png",
+            allow_download=False,
+        ),
+    )
+
+    preview = api.dispatch(
+        "attachment_preview",
+        {"open_id": open_id, "attachment_id": "0"},
+    )
+
+    assert preview["preview_kind"] == "unsupported"
+    assert preview["message"] == "Preview not available for this file type when downloading is disabled."
+    assert "content_base64" not in preview
+
+
+def test_ui_api_downloadable_image_preview_returns_original_bytes(tmp_path):
+    api = make_api(tmp_path / "native-preview-downloadable-image")
+    image_bytes = png_bytes()
+    open_id = cache_open_attachment(
+        api,
+        AttachmentPayload(
+            filename="preview.png",
+            content=image_bytes,
+            mime_type="image/png",
+            allow_download=True,
+        ),
+    )
+
+    preview = api.dispatch(
+        "attachment_preview",
+        {"open_id": open_id, "attachment_id": "0"},
+    )
+
+    assert preview["preview_kind"] == "image_base64"
+    assert preview["mime_type"] == "image/png"
     assert base64.b64decode(preview["content_base64"]) == image_bytes
 
 

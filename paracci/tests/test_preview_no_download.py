@@ -101,7 +101,7 @@ def get(client, path):
     return client.get(path, base_url=ORIGIN, headers={"Host": HOST})
 
 
-def test_no_download_token_image_content_is_inline_only(tmp_path, monkeypatch):
+def test_no_download_token_image_content_is_degraded_preview_only(tmp_path, monkeypatch):
     client = auth_client(tmp_path, monkeypatch)
     store = fresh_preview_store(monkeypatch)
     original = png_bytes()
@@ -116,16 +116,18 @@ def test_no_download_token_image_content_is_inline_only(tmp_path, monkeypatch):
     download_response = get(client, f"/preview/{token}/content?download=1")
 
     assert inline_response.status_code == 200
-    assert inline_response.data == original
-    assert inline_response.mimetype == "image/png"
-    disposition = inline_response.headers["Content-Disposition"].lower()
-    assert disposition.startswith("inline")
+    assert inline_response.data != original
+    assert inline_response.mimetype == "image/jpeg"
+    preview = Image.open(io.BytesIO(inline_response.data))
+    assert preview.width <= 1024
+    assert preview.height <= 1024
+    disposition = inline_response.headers.get("Content-Disposition", "").lower()
     assert "attachment" not in disposition
     assert download_response.status_code == 403
     assert download_response.data != original
 
 
-def test_no_download_token_text_content_is_inline_only(tmp_path, monkeypatch):
+def test_no_download_token_text_content_is_not_exposed_inline(tmp_path, monkeypatch):
     client = auth_client(tmp_path, monkeypatch)
     store = fresh_preview_store(monkeypatch)
     token = store.generate_token(
@@ -138,13 +140,13 @@ def test_no_download_token_text_content_is_inline_only(tmp_path, monkeypatch):
     inline_response = get(client, f"/preview/{token}/content")
     download_response = get(client, f"/preview/{token}/content?download=1")
 
-    assert inline_response.status_code == 200
-    assert inline_response.data == b"private text"
+    assert inline_response.status_code == 415
+    assert inline_response.data != b"private text"
     assert download_response.status_code == 403
     assert download_response.data != b"private text"
 
 
-def test_no_download_token_pdf_content_is_inline_only(tmp_path, monkeypatch):
+def test_no_download_token_pdf_content_is_not_exposed_inline(tmp_path, monkeypatch):
     client = auth_client(tmp_path, monkeypatch)
     store = fresh_preview_store(monkeypatch)
     token = store.generate_token(
@@ -157,13 +159,13 @@ def test_no_download_token_pdf_content_is_inline_only(tmp_path, monkeypatch):
     inline_response = get(client, f"/preview/{token}/content")
     download_response = get(client, f"/preview/{token}/content?download=1")
 
-    assert inline_response.status_code == 200
-    assert inline_response.data == b"%PDF-private"
+    assert inline_response.status_code == 415
+    assert inline_response.data != b"%PDF-private"
     assert download_response.status_code == 403
     assert download_response.data != b"%PDF-private"
 
 
-def test_no_download_token_video_content_is_inline_only(tmp_path, monkeypatch):
+def test_no_download_token_video_content_is_not_exposed_inline(tmp_path, monkeypatch):
     client = auth_client(tmp_path, monkeypatch)
     store = fresh_preview_store(monkeypatch)
     token = store.generate_token(
@@ -176,10 +178,27 @@ def test_no_download_token_video_content_is_inline_only(tmp_path, monkeypatch):
     inline_response = get(client, f"/preview/{token}/content")
     download_response = get(client, f"/preview/{token}/content?download=1")
 
-    assert inline_response.status_code == 200
-    assert inline_response.data == b"private-video-bytes"
+    assert inline_response.status_code == 415
+    assert inline_response.data != b"private-video-bytes"
     assert download_response.status_code == 403
     assert download_response.data != b"private-video-bytes"
+
+
+def test_no_download_token_invalid_image_content_fails_closed(tmp_path, monkeypatch):
+    client = auth_client(tmp_path, monkeypatch)
+    store = fresh_preview_store(monkeypatch)
+    original = b"\x89PNG\r\nnot-a-real-image"
+    token = store.generate_token(
+        original,
+        "preview.png",
+        "image/png",
+        allow_download=False,
+    )
+
+    response = get(client, f"/preview/{token}/content")
+
+    assert response.status_code == 415
+    assert response.data != original
 
 
 def test_no_download_raw_preview_rejects_original_bytes(tmp_path, monkeypatch):
@@ -218,6 +237,28 @@ def test_allow_download_raw_and_attachment_download_return_original_bytes(tmp_pa
 
     assert raw_response.status_code == 200
     assert raw_response.data == original
+    assert download_response.status_code == 200
+    assert download_response.data == original
+    assert "attachment" in download_response.headers["Content-Disposition"]
+
+
+def test_allow_download_token_content_and_download_return_original_bytes(tmp_path, monkeypatch):
+    client = auth_client(tmp_path, monkeypatch)
+    store = fresh_preview_store(monkeypatch)
+    original = png_bytes()
+    token = store.generate_token(
+        original,
+        "preview.png",
+        "image/png",
+        allow_download=True,
+    )
+
+    inline_response = get(client, f"/preview/{token}/content")
+    download_response = get(client, f"/preview/{token}/content?download=1")
+
+    assert inline_response.status_code == 200
+    assert inline_response.data == original
+    assert inline_response.mimetype == "image/png"
     assert download_response.status_code == 200
     assert download_response.data == original
     assert "attachment" in download_response.headers["Content-Disposition"]

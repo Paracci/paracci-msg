@@ -150,7 +150,7 @@ def test_preview_content_download_sets_attachment_disposition(tmp_path, monkeypa
     assert "report.txt" in response.headers["Content-Disposition"]
 
 
-def test_preview_content_download_rejects_non_downloadable_token(tmp_path, monkeypatch):
+def test_preview_content_rejects_non_downloadable_non_image_token_bytes(tmp_path, monkeypatch):
     _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
     _routes, store = fresh_preview_store(monkeypatch)
     token = store.generate_token(
@@ -171,8 +171,8 @@ def test_preview_content_download_rejects_non_downloadable_token(tmp_path, monke
         headers={"Host": HOST},
     )
 
-    assert inline_response.status_code == 200
-    assert inline_response.data == b"do not download"
+    assert inline_response.status_code == 415
+    assert inline_response.data != b"do not download"
     assert download_response.status_code == 403
 
 

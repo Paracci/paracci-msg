@@ -78,7 +78,6 @@
     function contentUrl() {
         if (config.contentUrl) return config.contentUrl;
         if (config.mediaUrl) return config.mediaUrl;
-        if (config.token) return `/preview/${encodeURIComponent(config.token)}/content`;
         return "";
     }
 
