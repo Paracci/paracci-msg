@@ -1,4 +1,5 @@
 import importlib
+import io
 import sys
 import time
 from pathlib import Path
@@ -409,6 +410,16 @@ def _make_unverified_handshake():
     return meta_x, meta_y, get_session_safety_code(meta_x)
 
 
+def _make_active_handshake():
+    from core.session import confirm_safety_code
+
+    meta_x, meta_y, safety_code = _make_unverified_handshake()
+    return (
+        confirm_safety_code(meta_x, safety_code),
+        confirm_safety_code(meta_y, safety_code),
+    )
+
+
 @oqs_required
 def test_flask_seal_rejects_unconfirmed_safety_code(tmp_path, monkeypatch):
     ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
@@ -429,6 +440,81 @@ def test_flask_seal_rejects_unconfirmed_safety_code(tmp_path, monkeypatch):
     restored = _load_meta(ag_app, meta_x)
     assert restored.safety_confirmed is False
     assert restored.state == "unverified"
+
+
+@pytest.mark.parametrize("allow_download", [False, True])
+@oqs_required
+def test_flask_seal_binds_download_policy_in_envelope_header(tmp_path, monkeypatch, allow_download):
+    from core.envelope import FLAG_ALLOW_DOWNLOAD, FLAG_HAS_DOWNLOAD_POLICY
+
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    client = flask_app.test_client()
+    bootstrap(client)
+    _unlock_test_client(ag_app, client)
+    meta_x, _meta_y = _make_active_handshake()
+    _save_meta(ag_app, meta_x)
+    data = {"message": "bound policy", "ttl_seconds": "0"}
+    if allow_download:
+        data["allow_download"] = "on"
+
+    response = client.post(
+        f"/session/{meta_x.session_id.hex()}/seal",
+        base_url=ORIGIN,
+        data=data,
+        headers=auth_headers(client),
+    )
+
+    assert response.status_code == 200
+    flags = response.data[39]
+    assert bool(flags & FLAG_HAS_DOWNLOAD_POLICY) is True
+    assert bool(flags & FLAG_ALLOW_DOWNLOAD) is allow_download
+
+
+@oqs_required
+def test_flask_open_uses_bound_header_policy_over_package_metadata(tmp_path, monkeypatch):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    import app.routes as routes_module
+    from core.package import create_package
+
+    client = flask_app.test_client()
+    bootstrap(client)
+    _unlock_test_client(ag_app, client)
+    meta_x, meta_y = _make_active_handshake()
+    _save_meta(ag_app, meta_x)
+    routes_module.PREVIEW_CACHE.clear()
+    monkeypatch.setattr(
+        routes_module,
+        "create_package",
+        lambda text, files, allow_download: create_package(text, files, allow_download=True),
+    )
+
+    sealed = client.post(
+        f"/session/{meta_x.session_id.hex()}/seal",
+        base_url=ORIGIN,
+        data={
+            "message": "header protected",
+            "ttl_seconds": "0",
+            "attachments": (io.BytesIO(b"original bytes"), "secret.txt"),
+        },
+        headers=auth_headers(client),
+        content_type="multipart/form-data",
+    )
+    assert sealed.status_code == 200
+
+    _save_meta(ag_app, meta_y)
+    opened = client.post(
+        f"/session/{meta_y.session_id.hex()}/open?ajax=1",
+        base_url=ORIGIN,
+        data={"paracci_file": (io.BytesIO(sealed.data), "message.paracci")},
+        headers=auth_headers(client, **{"X-Requested-With": "XMLHttpRequest"}),
+        content_type="multipart/form-data",
+    )
+
+    assert opened.status_code == 200
+    payload = opened.get_json()
+    assert payload["allow_download"] is False
+    assert len(payload["attachments"]) == 1
+    assert routes_module.PREVIEW_CACHE[payload["attachments"][0]["pid"]]["allow_download"] is False
 
 
 @oqs_required
@@ -470,4 +556,3 @@ def test_favicon_route(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.mimetype == "image/vnd.microsoft.icon"
     assert len(response.data) > 0
-

@@ -29,11 +29,11 @@ def _zip_bytes(entries, compression=zipfile.ZIP_DEFLATED):
     return buffer.getvalue()
 
 
-def _metadata(attachments=None, allow_download=False):
-    return json.dumps({
-        "allow_download": allow_download,
-        "attachments": attachments or [],
-    }).encode("utf-8")
+def _metadata(attachments=None, allow_download=False, include_allow_download=True):
+    metadata = {"attachments": attachments or []}
+    if include_allow_download:
+        metadata["allow_download"] = allow_download
+    return json.dumps(metadata).encode("utf-8")
 
 
 def test_extract_package_round_trips_normal_package_with_limits():
@@ -46,6 +46,28 @@ def test_extract_package_round_trips_normal_package_with_limits():
     assert len(package.attachments) == 1
     assert package.attachments[0].filename == "note.txt"
     assert package.attachments[0].content == b"attachment text"
+
+
+def test_extract_package_missing_download_policy_uses_explicit_default_only():
+    blob = _zip_bytes([
+        ("message.md", b"legacy"),
+        ("metadata.json", _metadata(include_allow_download=False)),
+    ])
+
+    assert extract_package(blob).allow_download is False
+    assert extract_package(blob, default_allow_download=True).allow_download is True
+
+
+@pytest.mark.parametrize("allow_download", [False, True])
+def test_extract_package_explicit_download_policy_overrides_legacy_default(allow_download):
+    blob = _zip_bytes([
+        ("message.md", b"legacy"),
+        ("metadata.json", _metadata(allow_download=allow_download)),
+    ])
+
+    package = extract_package(blob, default_allow_download=not allow_download)
+
+    assert package.allow_download is allow_download
 
 
 def test_extract_package_rejects_metadata_over_limit_before_parsing():
