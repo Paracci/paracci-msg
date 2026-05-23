@@ -49,7 +49,11 @@ else:
     elif sys.platform == "darwin":
         DATA_DIR = Path.home() / "Library" / "Application Support" / "Paracci"
     else:
-        DATA_DIR = Path.home() / ".config" / "paracci"
+        xdg_data_root = os.environ.get("XDG_DATA_HOME")
+        if xdg_data_root:
+            DATA_DIR = Path(xdg_data_root) / "paracci"
+        else:
+            DATA_DIR = Path.home() / ".local" / "share" / "paracci"
 
 # Set in os.environ so all other core modules automatically use the same persistent path
 os.environ["DATA_DIR"] = str(DATA_DIR)
