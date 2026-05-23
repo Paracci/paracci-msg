@@ -4,7 +4,13 @@ Paracci envelope protocol.
 The public API is intentionally small because both the legacy Flask layer and
 the native desktop layer depend on this module:
 
-    seal_envelope(payload_bytes, session, single_use=True, ttl_seconds=0)
+    seal_envelope(
+        payload_bytes,
+        session,
+        single_use=True,
+        ttl_seconds=0,
+        allow_download=False,
+    )
     open_envelope(file_bytes, session)
 
 The active v2 on-disk format is:
@@ -53,6 +59,8 @@ DIR_X_TO_Y = 0x01
 DIR_Y_TO_X = 0x02
 FLAG_SINGLE_USE = 0x01
 FLAG_HAS_TTL = 0x02
+FLAG_ALLOW_DOWNLOAD = 0x04
+FLAG_HAS_DOWNLOAD_POLICY = 0x08
 
 HEADER_SIZE = 52
 LEGACY_SEAL_SIZE = 16
@@ -68,6 +76,8 @@ class EnvelopeHeader(NamedTuple):
     msg_id: bytes
     direction: int
     flags: int
+    allow_download: bool
+    has_download_policy: bool
     evo_step: int
     expire_at: int
 
@@ -82,6 +92,8 @@ class OpenedEnvelope(NamedTuple):
     evo_step: int
     expire_at: int
     single_use: bool
+    allow_download: bool
+    has_download_policy: bool
     sync_data: dict
     bond_nonce: Optional[bytes]
     next_seed: bytes
@@ -108,6 +120,7 @@ def _build_header(
     msg_id: bytes,
     direction: int,
     single_use: bool,
+    allow_download: bool,
     evo_step: int,
     expire_at: int,
 ) -> bytes:
@@ -116,6 +129,9 @@ def _build_header(
         flags |= FLAG_SINGLE_USE
     if expire_at > 0:
         flags |= FLAG_HAS_TTL
+    flags |= FLAG_HAS_DOWNLOAD_POLICY
+    if allow_download:
+        flags |= FLAG_ALLOW_DOWNLOAD
 
     return (
         MAGIC_BYTES
@@ -166,6 +182,8 @@ def _parse_header(data: bytes) -> EnvelopeHeader:
         msg_id=msg_id,
         direction=direction,
         flags=flags,
+        allow_download=bool(flags & FLAG_ALLOW_DOWNLOAD),
+        has_download_policy=bool(flags & FLAG_HAS_DOWNLOAD_POLICY),
         evo_step=evo_step,
         expire_at=expire_at,
     )
@@ -254,6 +272,8 @@ def seal_envelope(
     session: SessionMeta,
     single_use: bool = True,
     ttl_seconds: int = 0,
+    *,
+    allow_download: bool = False,
 ) -> SealedEnvelope:
     """Encrypts a payload into a .paracci message envelope."""
     if isinstance(payload_bytes, str):
@@ -271,6 +291,7 @@ def seal_envelope(
         msg_id,
         direction,
         single_use,
+        allow_download,
         step,
         expire_at,
     )
@@ -342,6 +363,8 @@ def open_envelope(file_bytes: bytes, session: SessionMeta) -> OpenedEnvelope:
         evo_step=header.evo_step,
         expire_at=header.expire_at,
         single_use=bool(header.flags & FLAG_SINGLE_USE),
+        allow_download=header.allow_download,
+        has_download_policy=header.has_download_policy,
         sync_data=sync_data,
         bond_nonce=bond_nonce,
         next_seed=next_seed,

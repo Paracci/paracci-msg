@@ -165,14 +165,14 @@ def create_package(text: str, files: List[Tuple[str, bytes]], allow_download: bo
         
     return buffer.getvalue()
 
-def extract_package(blob: bytes) -> Package:
+def extract_package(blob: bytes, *, default_allow_download: bool = False) -> Package:
     """
     Extracts the components of the decrypted package blob.
     """
     buffer = io.BytesIO(blob)
     text = ""
     attachments = []
-    allow_download = False
+    allow_download = default_allow_download
     
     try:
         with zipfile.ZipFile(buffer, "r") as zf:
@@ -225,7 +225,7 @@ def extract_package(blob: bytes) -> Package:
                 meta_obj = json.loads(metadata_raw.decode("utf-8"))
                 if not isinstance(meta_obj, dict):
                     raise PackageLimitError("Package metadata is malformed.")
-                allow_download = meta_obj.get("allow_download", False)
+                allow_download = meta_obj.get("allow_download", default_allow_download)
                 meta_list = meta_obj.get("attachments", [])
                 if not isinstance(meta_list, list):
                     raise PackageLimitError("Package metadata is malformed.")

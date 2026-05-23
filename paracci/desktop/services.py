@@ -654,6 +654,7 @@ class MessageService:
             meta,
             single_use=True,
             ttl_seconds=ttl_seconds,
+            allow_download=allow_download,
         )
         self.sessions.save(meta._replace(tx_count=meta.tx_count + 1, send_seed=sealed.next_seed))
         return sealed.file_bytes, f"msg_{sealed.msg_id.hex()[:12]}.paracci"
@@ -706,22 +707,30 @@ class MessageService:
             raise MessageServiceError(str(exc)) from exc
 
         try:
-            package = extract_package(opened.payload)
+            package = extract_package(
+                opened.payload,
+                default_allow_download=not opened.has_download_policy,
+            )
         except PackageLimitError as exc:
             raise MessageServiceError(str(exc)) from exc
+        effective_allow_download = (
+            opened.allow_download
+            if opened.has_download_policy
+            else package.allow_download
+        )
         attachments = [
             AttachmentPayload(
                 filename=att.filename,
                 content=att.content,
                 mime_type=att.mime_type,
-                allow_download=package.allow_download,
+                allow_download=effective_allow_download,
             )
             for att in package.attachments
         ]
         return OpenedMessage(
             text=package.text,
             attachments=attachments,
-            allow_download=package.allow_download,
+            allow_download=effective_allow_download,
             msg_id_hex=opened.msg_id.hex(),
             evo_step=opened.evo_step,
             expire_at=opened.expire_at,

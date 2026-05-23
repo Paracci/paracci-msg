@@ -37,6 +37,8 @@ from core.envelope import (
     LEGACY_SEAL_SIZE,
     DIR_X_TO_Y,
     DIR_Y_TO_X,
+    FLAG_ALLOW_DOWNLOAD,
+    FLAG_HAS_DOWNLOAD_POLICY,
 )
 from core import envelope as envelope_module
 
@@ -119,6 +121,7 @@ def test_v1_legacy_envelope_opens_correctly():
     assert opened.payload == payload_bytes
     assert opened.msg_id == msg_id
     assert opened.evo_step == step
+    assert opened.has_download_policy is False
 
 @oqs_required
 def test_v2_envelope_opens_correctly():
@@ -129,6 +132,32 @@ def test_v2_envelope_opens_correctly():
     
     opened = open_envelope(sealed.file_bytes, meta_y)
     assert opened.text == text
+
+@pytest.mark.parametrize("allow_download", [False, True])
+@oqs_required
+def test_v2_download_policy_flag_round_trips(allow_download):
+    meta_x, meta_y = _establish_bonded_pair()
+    sealed = seal_envelope("Policy-bound message", meta_x, allow_download=allow_download)
+
+    flags = sealed.file_bytes[39]
+    assert bool(flags & FLAG_HAS_DOWNLOAD_POLICY) is True
+    assert bool(flags & FLAG_ALLOW_DOWNLOAD) is allow_download
+
+    opened = open_envelope(sealed.file_bytes, meta_y)
+    assert opened.has_download_policy is True
+    assert opened.allow_download is allow_download
+
+@pytest.mark.parametrize("flag", [FLAG_ALLOW_DOWNLOAD, FLAG_HAS_DOWNLOAD_POLICY])
+@oqs_required
+def test_aad_binding_tampered_download_policy_flag_rejected(flag):
+    meta_x, meta_y = _establish_bonded_pair()
+    sealed = seal_envelope("Policy-bound message", meta_x, allow_download=False)
+    raw = bytearray(sealed.file_bytes)
+    raw[39] ^= flag
+
+    with pytest.raises(EnvelopeError) as exc_info:
+        open_envelope(bytes(raw), meta_y)
+    assert "decryption failed" in str(exc_info.value).lower()
 
 @oqs_required
 def test_aad_binding_tampered_session_id_rejected():

@@ -1757,7 +1757,13 @@ def session_seal(sid: str):
     package_blob = b""
     try:
         package_blob = create_package(text, files, allow_download=allow_download)
-        sealed = seal_envelope(package_blob, meta, single_use=True, ttl_seconds=ttl_seconds)
+        sealed = seal_envelope(
+            package_blob,
+            meta,
+            single_use=True,
+            ttl_seconds=ttl_seconds,
+            allow_download=allow_download,
+        )
         updated = meta._replace(tx_count=meta.tx_count + 1, send_seed=sealed.next_seed)
         _save_session(updated)
         return send_file(io.BytesIO(sealed.file_bytes), mimetype="application/octet-stream", as_attachment=True, download_name=f"msg_{sealed.msg_id.hex()[:12]}.paracci")
@@ -1787,13 +1793,21 @@ def _prepare_open_response(meta, opened, sid, is_ajax):
             safety_code = None
     evo_info = {"tx_count": updated_meta.tx_count, "bonded": updated_meta.is_bonded, "secs_remaining": seconds_until_expiry(updated_meta.evo_config)} if updated_meta.keys else None
 
-    package = extract_package(opened.payload)
+    package = extract_package(
+        opened.payload,
+        default_allow_download=not opened.has_download_policy,
+    )
+    effective_allow_download = (
+        opened.allow_download
+        if opened.has_download_policy
+        else package.allow_download
+    )
     security_report = scan_text_for_security(package.text)
 
     attachments = []
     for att in package.attachments:
         safe_name = sanitize_attachment_filename(att.filename)
-        pid = _add_to_preview_cache(safe_name, att.content, att.mime_type, package.allow_download)
+        pid = _add_to_preview_cache(safe_name, att.content, att.mime_type, effective_allow_download)
         attachments.append({
             "pid": pid,
             "filename": safe_name,
@@ -1805,9 +1819,9 @@ def _prepare_open_response(meta, opened, sid, is_ajax):
         })
 
     if is_ajax:
-        return jsonify({"success": True, "text": package.text, "attachments": attachments, "allow_download": package.allow_download, "time_left": _fmt_time_left(opened.expire_at), "expire_at": opened.expire_at, "evo_step": opened.evo_step, "single_use": opened.single_use, "msg_id_hex": opened.msg_id.hex(), "safety_code": safety_code, "rx_count": updated_meta.rx_count, "security_report": security_report})
+        return jsonify({"success": True, "text": package.text, "attachments": attachments, "allow_download": effective_allow_download, "time_left": _fmt_time_left(opened.expire_at), "expire_at": opened.expire_at, "evo_step": opened.evo_step, "single_use": opened.single_use, "msg_id_hex": opened.msg_id.hex(), "safety_code": safety_code, "rx_count": updated_meta.rx_count, "security_report": security_report})
 
-    return render_template("session.html", meta=updated_meta, sid=sid, evo_info=evo_info, now=int(time.time()), safety_code=safety_code, opened_msg={"text": package.text, "attachments": attachments, "allow_download": package.allow_download, "time_left": _fmt_time_left(opened.expire_at), "expire_at": opened.expire_at, "evo_step": opened.evo_step, "single_use": opened.single_use, "msg_id_hex": opened.msg_id.hex(), "security_report": security_report})
+    return render_template("session.html", meta=updated_meta, sid=sid, evo_info=evo_info, now=int(time.time()), safety_code=safety_code, opened_msg={"text": package.text, "attachments": attachments, "allow_download": effective_allow_download, "time_left": _fmt_time_left(opened.expire_at), "expire_at": opened.expire_at, "evo_step": opened.evo_step, "single_use": opened.single_use, "msg_id_hex": opened.msg_id.hex(), "security_report": security_report})
 
 @bp.route("/session/<sid>/open", methods=["POST"])
 def session_open(sid: str):

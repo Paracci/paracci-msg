@@ -1,6 +1,8 @@
+import io
 import json
 import os
 import sys
+import zipfile
 from pathlib import Path
 import pytest
 
@@ -10,7 +12,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from desktop import services as service_module
 from desktop.services import NativeServices, configure_data_dir
+from core import envelope as envelope_module
 from core.burn import BurnDB
+from core.package import create_package
 
 
 def make_services(path: Path) -> NativeServices:
@@ -21,8 +25,7 @@ def make_services(path: Path) -> NativeServices:
     return svc
 
 
-@oqs_required
-def test_native_services_full_message_roundtrip(tmp_path):
+def make_active_services_pair(tmp_path):
     x = make_services(tmp_path / "x")
     y = make_services(tmp_path / "y")
 
@@ -31,13 +34,85 @@ def test_native_services_full_message_roundtrip(tmp_path):
     finalized = x.sessions.import_handshake(imported.auto_export_bytes, "unused")
     x.sessions.confirm_safety(finalized.session_id_hex, finalized.safety_code)
     y.sessions.confirm_safety(imported.session_id_hex, imported.safety_code)
+    return x, y, finalized.session_id_hex, imported.session_id_hex
 
-    msg_bytes, _ = x.messages.seal_message(finalized.session_id_hex, "Hello **Y**", [], False, 0)
-    opened = y.messages.open_message(imported.session_id_hex, msg_bytes)
+
+def legacy_package(text: str, allow_download):
+    metadata = {"attachments": []}
+    if allow_download is not None:
+        metadata["allow_download"] = allow_download
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("message.md", text.encode("utf-8"))
+        zf.writestr("metadata.json", json.dumps(metadata).encode("utf-8"))
+    return buffer.getvalue()
+
+
+@oqs_required
+def test_native_services_full_message_roundtrip(tmp_path):
+    x, y, x_session_id, y_session_id = make_active_services_pair(tmp_path)
+
+    msg_bytes, _ = x.messages.seal_message(x_session_id, "Hello **Y**", [], False, 0)
+    opened = y.messages.open_message(y_session_id, msg_bytes)
 
     assert opened.text == "Hello **Y**"
     assert opened.single_use is True
     assert opened.allow_download is False
+
+
+@oqs_required
+def test_native_bound_header_policy_overrides_package_metadata(tmp_path, monkeypatch):
+    x, y, x_session_id, y_session_id = make_active_services_pair(tmp_path)
+    attachment_path = tmp_path / "secret.txt"
+    attachment_path.write_bytes(b"original bytes")
+
+    monkeypatch.setattr(
+        service_module,
+        "create_package",
+        lambda text, files, allow_download: create_package(text, files, allow_download=True),
+    )
+    msg_bytes, _ = x.messages.seal_message(
+        x_session_id,
+        "Header policy wins",
+        [attachment_path],
+        False,
+        0,
+    )
+    opened = y.messages.open_message(y_session_id, msg_bytes)
+
+    assert opened.allow_download is False
+    assert len(opened.attachments) == 1
+    assert opened.attachments[0].allow_download is False
+
+
+@pytest.mark.parametrize("legacy_v1", [False, True])
+@pytest.mark.parametrize("metadata_allow_download", [False, True, None])
+@oqs_required
+def test_native_marker_free_legacy_envelope_uses_package_policy(
+    tmp_path,
+    monkeypatch,
+    legacy_v1,
+    metadata_allow_download,
+):
+    x, y, x_session_id, y_session_id = make_active_services_pair(tmp_path)
+    with monkeypatch.context() as patch:
+        patch.setattr(envelope_module, "FLAG_HAS_DOWNLOAD_POLICY", 0)
+        if legacy_v1:
+            patch.setattr(envelope_module, "FILE_VERSION", envelope_module.LEGACY_FILE_VERSION)
+        patch.setattr(
+            service_module,
+            "create_package",
+            lambda text, files, allow_download: legacy_package(text, metadata_allow_download),
+        )
+        msg_bytes, _ = x.messages.seal_message(x_session_id, "Legacy policy", [], False, 0)
+
+    if legacy_v1:
+        msg_bytes += b"\xff" * envelope_module.LEGACY_SEAL_SIZE
+
+    opened = y.messages.open_message(y_session_id, msg_bytes)
+    expected = True if metadata_allow_download is None else metadata_allow_download
+
+    assert opened.allow_download is expected
 
 
 def test_2fa_secret_is_upgraded_to_encrypted_metadata(tmp_path):
