@@ -421,6 +421,114 @@ def _make_active_handshake():
 
 
 @oqs_required
+def test_file_activation_queues_native_message_after_unlock(tmp_path, monkeypatch):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    client = flask_app.test_client()
+    bootstrap(client)
+    _unlock_test_client(ag_app, client)
+    import app.routes as routes_module
+
+    meta_x, _meta_y = _make_active_handshake()
+    _save_meta(ag_app, meta_x)
+    selected = tmp_path / "incoming.paracci"
+    selected.write_bytes(b"queued only")
+    native_ref = routes_module.register_native_file_path(selected)
+    target = f"/session/{meta_x.session_id.hex()}?native_file_id={native_ref['id']}"
+    unlocked_key = ag_app.device_key
+    ag_app.device_key = None
+    ag_app.active_client_id = None
+
+    locked = client.get(target, base_url=ORIGIN, headers={"Host": HOST})
+    assert locked.status_code == 302
+    assert locked.headers["Location"].endswith("/unlock")
+
+    monkeypatch.setattr(routes_module, "unlock_device_with_binding", lambda _db, _pin: unlocked_key)
+    unlocked = client.post(
+        "/unlock",
+        base_url=ORIGIN,
+        data={"pin": "Correct-Horse-95175328"},
+        headers=auth_headers(client),
+    )
+    assert unlocked.status_code == 302
+    assert unlocked.headers["Location"] == target
+
+    page = client.get(target, base_url=ORIGIN, headers={"Host": HOST})
+    assert page.status_code == 200
+    assert f'value="{native_ref["id"]}"'.encode("utf-8") in page.data
+    assert b"incoming.paracci" in page.data
+
+
+@oqs_required
+def test_file_activation_queues_native_message_after_2fa_unlock(tmp_path, monkeypatch):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    client = flask_app.test_client()
+    bootstrap(client)
+    _unlock_test_client(ag_app, client)
+    import app.routes as routes_module
+
+    meta_x, _meta_y = _make_active_handshake()
+    _save_meta(ag_app, meta_x)
+    selected = tmp_path / "incoming-2fa.paracci"
+    selected.write_bytes(b"queued only")
+    native_ref = routes_module.register_native_file_path(selected)
+    target = f"/session/{meta_x.session_id.hex()}?native_file_id={native_ref['id']}"
+    secret = pyotp.random_base32()
+    unlocked_key = ag_app.device_key
+    ag_app.db.set_2fa_secret(secret, unlocked_key)
+    ag_app.db.set_2fa_enabled(True)
+    ag_app.device_key = None
+    ag_app.active_client_id = None
+
+    assert client.get(target, base_url=ORIGIN, headers={"Host": HOST}).status_code == 302
+    monkeypatch.setattr(routes_module, "unlock_device_with_binding", lambda _db, _pin: unlocked_key)
+    first_step = client.post(
+        "/unlock",
+        base_url=ORIGIN,
+        data={"pin": "Correct-Horse-95175328"},
+        headers=auth_headers(client),
+    )
+    assert first_step.headers["Location"].endswith("/unlock/2fa/verify")
+
+    second_step = client.post(
+        "/unlock/2fa/verify",
+        base_url=ORIGIN,
+        data={"code": pyotp.TOTP(secret).now()},
+        headers=auth_headers(client),
+    )
+    assert second_step.status_code == 302
+    assert second_step.headers["Location"] == target
+
+
+def test_file_activation_unknown_session_notice_survives_unlock_without_identifier(tmp_path, monkeypatch):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    client = flask_app.test_client()
+    bootstrap(client)
+    from core.burn import init_device
+    import app.routes as routes_module
+
+    unlocked_key = init_device(ag_app.db, "Correct-Horse-95175328")
+    with client.session_transaction(base_url=ORIGIN) as sess:
+        sess["locale"] = "en"
+
+    locked = client.get("/?file_activation_error=1", base_url=ORIGIN, headers={"Host": HOST})
+    assert locked.status_code == 302
+    assert locked.headers["Location"].endswith("/unlock")
+
+    monkeypatch.setattr(routes_module, "unlock_device_with_binding", lambda _db, _pin: unlocked_key)
+    response = client.post(
+        "/unlock",
+        base_url=ORIGIN,
+        data={"pin": "Correct-Horse-95175328"},
+        headers=auth_headers(client),
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert b"This message file does not match any session on this device." in response.data
+    assert b"00112233445566778899aabbccddeeff" not in response.data
+
+
+@oqs_required
 def test_flask_seal_rejects_unconfirmed_safety_code(tmp_path, monkeypatch):
     ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
     client = flask_app.test_client()

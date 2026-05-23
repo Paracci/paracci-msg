@@ -251,6 +251,7 @@
     "x_finalize_success": "Session activated! Bond established.",
     "initiator_file_prefix": "Initiator:",
     "filename_pattern": "session_init_{id}.paracci",
+    "file_activation_no_match": "This message file does not match any session on this device.",
     "error_session_not_found_id": "No session found for this responder file. (ID: {id}...)",
     "error_role_mismatch": "This responder file is not for you. (Current Role: {role})",
     "error_x_only_responder": "Only the initiator (X) can upload a responder file.",

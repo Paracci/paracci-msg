@@ -251,6 +251,7 @@
     "x_finalize_success": "Oturum aktifleşti! Bağ kuruldu.",
     "initiator_file_prefix": "Başlatıcı:",
     "filename_pattern": "session_init_{id}.paracci",
+    "file_activation_no_match": "Bu mesaj dosyası bu cihazdaki hiçbir oturumla eşleşmiyor.",
     "error_session_not_found_id": "Bu responder dosyasına karşılık gelen oturum bulunamadı. (ID: {id}...)",
     "error_role_mismatch": "Bu responder dosyası senin için değil. (Mevcut Rol: {role})",
     "error_x_only_responder": "Sadece oturumu başlatan (X) yanıt dosyası yükleyebilir.",

@@ -251,6 +251,7 @@
     "x_finalize_success": "Sitzung aktiviert! Bindung hergestellt.",
     "initiator_file_prefix": "Initiator:",
     "filename_pattern": "sitzung_init_{id}.paracci",
+    "file_activation_no_match": "Diese Nachrichtendatei stimmt mit keiner Sitzung auf diesem Gerät überein.",
     "error_session_not_found_id": "Keine Sitzung für diese Responder-Datei gefunden. (ID: {id}...)",
     "error_role_mismatch": "Diese Responder-Datei ist nicht für Sie bestimmt. (Aktuelle Rolle: {role})",
     "error_x_only_responder": "Nur der Initiator (X) kann eine Responder-Datei hochladen.",

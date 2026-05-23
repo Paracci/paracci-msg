@@ -328,16 +328,16 @@
     </div>
     <div class="card-body">
       <form id="open-message-form" enctype="multipart/form-data" novalidate>
-        <input type="hidden" name="native_file_id" id="open-native-file-id">
+        <input type="hidden" name="native_file_id" id="open-native-file-id" value="{{ open_native_file_id|default('', true) }}">
         <div id="session-drop-zone" class="card drop-zone attachment-drop-box mb-4" data-drop-target="open">
             <span class="file-icon-lg font-lg mb-2 block text-center">
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="24" height="24" class="mx-auto">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
               </svg>
             </span>
-            <strong id="file-label">{{ _('session.open_file_not_selected') }}</strong>
+            <strong id="file-label">{{ open_native_filename|default(_('session.open_file_not_selected'), true) }}</strong>
             <p class="font-xs text-dim mt-2">{{ _('session.open_file_hint') }}</p>
-            <input type="file" id="paracci_file" name="paracci_file" accept=".paracci" required class="hidden">
+            <input type="file" id="paracci_file" name="paracci_file" accept=".paracci" {% if not open_native_file_id %}required{% endif %} class="hidden">
         </div>
         <button type="submit" class="btn btn-secondary" id="btn-open-msg">
           {{ _('session.open_btn') }}
