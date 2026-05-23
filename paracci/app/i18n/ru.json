@@ -251,6 +251,7 @@
     "x_finalize_success": "Сессия активирована! Связь установлена.",
     "initiator_file_prefix": "Инициатор:",
     "filename_pattern": "session_init_{id}.paracci",
+    "file_activation_no_match": "Этот файл сообщения не соответствует ни одной сессии на этом устройстве.",
     "error_session_not_found_id": "Сессия для этого ответного файла не найдена. (ID: {id}...)",
     "error_role_mismatch": "Этот ответный файл не для вас. (Текущая роль: {role})",
     "error_x_only_responder": "Только инициатор (X) может загрузить ответный файл.",

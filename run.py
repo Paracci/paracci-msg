@@ -25,6 +25,11 @@ sys.path.insert(0, str(Path(__file__).parent / "paracci"))
 # core.shields import
 from core.shields import shield
 from core.preview_store import preview_store
+from desktop.file_activation import (
+    FileActivationBroker,
+    LaunchFileCandidate,
+    inspect_launch_file,
+)
 
 import threading
 import socket
@@ -37,6 +42,7 @@ _preview_windows: dict[str, webview.Window] = {}
 _preview_windows_lock = threading.Lock()
 _preview_loopback_host = "127.0.0.1"
 _preview_loopback_port: int | None = None
+_FILE_ACTIVATION_ERROR_TARGET = "/?file_activation_error=1"
 
 # ── Preview-close guard ────────────────────────────────────────────────────
 # pywebview 6.x has a known multi-window event propagation bug: destroying
@@ -114,6 +120,58 @@ def get_free_port():
     port = s.getsockname()[1]
     s.close()
     return port
+
+
+def _file_activation_target(candidate: LaunchFileCandidate | None, db) -> str:
+    """Return a local route for a validated message activation."""
+    if candidate is None:
+        return "/"
+    if not db.session_exists(candidate.session_id):
+        return _FILE_ACTIVATION_ERROR_TARGET
+
+    from app.routes import register_native_file_path
+
+    file_ref = register_native_file_path(candidate.path)
+    return (
+        f"/session/{candidate.session_id.hex()}"
+        f"?native_file_id={quote(file_ref['id'], safe='')}"
+    )
+
+
+def _bootstrap_url(loopback_host: str, port: int, loopback_token: str, target: str = "/") -> str:
+    """Create the one-time authorized entrypoint for an internal local target."""
+    return (
+        f"http://{loopback_host}:{port}/__paracci_bootstrap"
+        f"?token={quote(loopback_token, safe='')}&next={quote(target, safe='/')}"
+    )
+
+
+def _foreground_main_window(window) -> None:
+    """Restore and reveal an existing application window."""
+    for operation in ("restore", "show"):
+        try:
+            getattr(window, operation)()
+        except (AttributeError, RuntimeError) as exc:
+            logger.warning("Main-window foreground error (%s): %s", operation, exc)
+        except (MemoryError, KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as exc:
+            logger.exception("Unexpected main-window foreground error (%s): %s", operation, exc)
+
+
+def _activate_main_window(window, raw_path: str | None, db, loopback_host: str, port: int) -> str | None:
+    """Handle one authenticated activation request in the primary process."""
+    _foreground_main_window(window)
+    if raw_path is None:
+        return None
+
+    candidate = inspect_launch_file(raw_path)
+    if candidate is None:
+        return None
+
+    target = _file_activation_target(candidate, db)
+    window.load_url(f"http://{loopback_host}:{port}{target}")
+    return target
 
 
 def _configure_preview_window_context(host: str, port: int) -> None:
@@ -512,7 +570,7 @@ def clear_recent_docs():
     if shield.clear_recent_documents():
         print(f"  [SHIELD] Anti-Forensics: {shield.get_os_name()} traces cleared.")
 
-def run_auto_cleanup():
+def run_auto_cleanup(protected_path: Path | None = None):
     """Cleans message files older than the specified duration."""
     import time
     from core.config import ParacciConfig
@@ -533,6 +591,11 @@ def run_auto_cleanup():
             if fname.endswith(".paracci"):
                 path = os.path.join(target_dir, fname)
                 if os.path.isfile(path):
+                    if protected_path is not None:
+                        current = os.path.normcase(os.path.abspath(path))
+                        protected = os.path.normcase(os.path.abspath(str(protected_path)))
+                        if current == protected:
+                            continue
                     f_age = now - os.path.getmtime(path)
                     if f_age > max_age:
                         os.remove(path)
@@ -545,8 +608,17 @@ def run_auto_cleanup():
         print(f"  [!] Auto-Cleanup error: {e}")
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Paracci Desktop App")
+    parser.add_argument("--port", type=int, help="Fixed port (default: random)")
+    parser.add_argument("--user", type=str, choices=['x', 'y'], help="Quick profile select")
+    parser.add_argument("--no-gui", action="store_true", help="Run only as web server")
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode and inspector")
+    parser.add_argument("open_file", nargs="?", help="Associated .paracci message file to open")
+    args = parser.parse_args()
+    launch_candidate = inspect_launch_file(args.open_file) if not args.no_gui else None
+
     clear_recent_docs() # Clear Windows traces on startup
-    run_auto_cleanup()  # Clean up old files
+    run_auto_cleanup(launch_candidate.path if launch_candidate is not None else None)  # Clean up old files
     
     # Start hourly cleanup loop in the background
     def cleanup_loop():
@@ -557,13 +629,6 @@ if __name__ == "__main__":
     
     cleaner_thread = threading.Thread(target=cleanup_loop, daemon=True)
     cleaner_thread.start()
-
-    parser = argparse.ArgumentParser(description="Paracci Desktop App")
-    parser.add_argument("--port", type=int, help="Fixed port (default: random)")
-    parser.add_argument("--user", type=str, choices=['x', 'y'], help="Quick profile select")
-    parser.add_argument("--no-gui", action="store_true", help="Run only as web server")
-    parser.add_argument("--debug", action="store_true", help="Enable debug mode and inspector")
-    args = parser.parse_args()
 
     # Automatically set DATA_DIR if a user profile is selected
     if args.user:
@@ -588,14 +653,48 @@ if __name__ == "__main__":
     os.environ["PARACCI_LOOPBACK_PORT"] = str(port)
     os.environ["PARACCI_NO_GUI"] = "1" if args.no_gui else "0"
 
-    bootstrap_url = (
-        f"http://{loopback_host}:{port}/__paracci_bootstrap"
-        f"?token={quote(loopback_token, safe='')}&next=/"
-    )
-
     # App initialization (must be imported after DATA_DIR and loopback security are set)
-    from app import create_app
-    app = create_app()
+    import app as ag_app
+
+    activation_state = {
+        "window": None,
+        "ready": False,
+        "pending": [],
+    }
+    activation_state_lock = threading.Lock()
+
+    def on_external_activation(raw_path):
+        with activation_state_lock:
+            if not activation_state["ready"] or activation_state["window"] is None:
+                activation_state["pending"].append(raw_path)
+                return
+            main_window = activation_state["window"]
+        _activate_main_window(main_window, raw_path, ag_app.db, loopback_host, port)
+
+    activation_broker = None
+    if not args.no_gui:
+        activation_path = str(launch_candidate.path) if launch_candidate is not None else None
+        activation_broker, forwarded = FileActivationBroker.claim_or_forward(
+            ag_app.DATA_DIR,
+            activation_path,
+            on_external_activation,
+        )
+        if forwarded:
+            sys.exit(0)
+
+    app = ag_app.create_app()
+    if not args.no_gui:
+        with activation_state_lock:
+            queued_before_start = activation_state["pending"]
+            activation_state["pending"] = []
+        for queued_path in queued_before_start:
+            queued_candidate = inspect_launch_file(queued_path) if queued_path is not None else None
+            if queued_candidate is not None:
+                launch_candidate = queued_candidate
+        initial_target = _file_activation_target(launch_candidate, ag_app.db)
+    else:
+        initial_target = "/"
+    bootstrap_url = _bootstrap_url(loopback_host, port, loopback_token, initial_target)
     data_dir = os.environ.get('DATA_DIR', 'data (default)')
 
     print("\n  [o] Paracci Desktop")
@@ -636,6 +735,30 @@ if __name__ == "__main__":
             js_api=pro_api
         )
         pro_api.bind_window(window)
+        with activation_state_lock:
+            activation_state["window"] = window
+
+        def activate_when_loaded(*_args):
+            with activation_state_lock:
+                activation_state["ready"] = True
+                pending = activation_state["pending"]
+                activation_state["pending"] = []
+            for pending_path in pending:
+                _activate_main_window(window, pending_path, ag_app.db, loopback_host, port)
+
+        try:
+            if hasattr(window.events, 'loaded'):
+                window.events.loaded += activate_when_loaded
+            else:
+                activate_when_loaded()
+        except AttributeError as exc:
+            logger.warning("Activation event binding error (attribute): %s", exc)
+            activate_when_loaded()
+        except (MemoryError, KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as exc:
+            logger.exception("Unexpected activation event binding error: %s", exc)
+            activate_when_loaded()
         
         # ── Security Shield (Chromium Hardening) ───────────────
         navigation_guard_script = _build_main_navigation_guard_script(loopback_host, port)
@@ -774,5 +897,7 @@ if __name__ == "__main__":
         
         # Forcefully close Flask thread and the entire process when the app closes
         _close_all_preview_windows()
+        if activation_broker is not None:
+            activation_broker.close()
         print("\n  [o] Paracci closed. Cleaning up processes...")
         os._exit(0)

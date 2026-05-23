@@ -251,6 +251,7 @@
     "x_finalize_success": "¡Sesión activada! Vínculo establecido.",
     "initiator_file_prefix": "Iniciador:",
     "filename_pattern": "sesion_init_{id}.paracci",
+    "file_activation_no_match": "Este archivo de mensaje no coincide con ninguna sesión en este dispositivo.",
     "error_session_not_found_id": "No se encontró ninguna sesión para este archivo de respuesta. (ID: {id}...)",
     "error_role_mismatch": "Este archivo de respuesta no es para ti. (Rol actual: {role})",
     "error_x_only_responder": "Solo el iniciador (X) puede subir un archivo de respuesta.",

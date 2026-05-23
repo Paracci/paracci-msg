@@ -251,6 +251,7 @@
     "x_finalize_success": "Session activée ! Liaison établie.",
     "initiator_file_prefix": "Initiateur :",
     "filename_pattern": "session_init_{id}.paracci",
+    "file_activation_no_match": "Ce fichier de message ne correspond à aucune session sur cet appareil.",
     "error_session_not_found_id": "Aucune session trouvée pour ce fichier de réponse. (ID : {id}...)",
     "error_role_mismatch": "Ce fichier de réponse ne vous est pas destiné. (Rôle actuel : {role})",
     "error_x_only_responder": "Seul l'initiateur (X) peut télécharger un fichier de réponse.",

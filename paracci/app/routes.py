@@ -496,6 +496,41 @@ def _safe_local_next(value: str | None) -> str | None:
     return value
 
 
+_FILE_ACTIVATION_NEXT_KEY = "file_activation_next"
+_FILE_ACTIVATION_ERROR_ARG = "file_activation_error"
+
+
+def _file_activation_continuation() -> str | None:
+    """Return a narrowly scoped activation path that may survive device unlock."""
+    if request.method != "GET":
+        return None
+    if request.endpoint == "main.index" and request.args.get(_FILE_ACTIVATION_ERROR_ARG) == "1":
+        return url_for("main.index", file_activation_error="1")
+    if request.endpoint != "main.session_detail":
+        return None
+
+    sid = str((request.view_args or {}).get("sid", "")).strip()
+    native_file_id = request.args.get("native_file_id", "").strip()
+    try:
+        valid_sid = len(bytes.fromhex(sid)) == 16
+    except ValueError:
+        valid_sid = False
+    if not valid_sid or not native_file_id or _resolve_native_file_ref(native_file_id) is None:
+        return None
+    return url_for("main.session_detail", sid=sid, native_file_id=native_file_id)
+
+
+def _remember_file_activation_continuation() -> None:
+    target = _file_activation_continuation()
+    if target is not None:
+        session[_FILE_ACTIVATION_NEXT_KEY] = target
+
+
+def _post_unlock_target() -> str:
+    target = _safe_local_next(session.pop(_FILE_ACTIVATION_NEXT_KEY, None))
+    return target or url_for("main.index")
+
+
 def _reject_security(reason: str):
     """Fail closed for loopback auth violations."""
     logger.warning("Loopback request rejected: %s", reason)
@@ -702,12 +737,14 @@ def check_lock():
 
     # 1. Device not initialized yet?
     if not is_device_initialized(ag_app.db):
+        _remember_file_activation_continuation()
         _clear_preview_cache()
         _clear_staged_attachment_cache()
         return redirect(url_for("main.unlock"))
 
     # 2. Device key not in memory? (Locked)
     if ag_app.device_key is None:
+        _remember_file_activation_continuation()
         _clear_preview_cache()
         _clear_staged_attachment_cache()
         return redirect(url_for("main.unlock"))
@@ -810,7 +847,7 @@ def unlock():
                 ag_app.device_key = device_key
                 ag_app.active_client_id = session.get("paracci_client_id")
                 flash(_('auth.unlock_success'), "success")
-                return redirect(url_for("main.index"))
+                return redirect(_post_unlock_target())
                 
         except DeviceLockedError as e:
             flash(str(e), "error")
@@ -843,7 +880,7 @@ def unlock_2fa_setup():
             session.pop('setup_in_progress', None)
             session.pop('2fa_setup_secret', None)
             flash(_('auth.init_success'), "success")
-            return redirect(url_for("main.index"))
+            return redirect(_post_unlock_target())
         
         # 2FA Activation
         code = request.form.get("code")
@@ -855,7 +892,7 @@ def unlock_2fa_setup():
                 session.pop('unlock_id', None)
                 session.pop('2fa_setup_secret', None)
                 flash(_('auth.2fa_enabled_success'), "success")
-                return redirect(url_for("main.index"))
+                return redirect(_post_unlock_target())
             else:
                 flash("Critical Error: Device key lost during 2FA setup.", "error")
                 return redirect(url_for("main.unlock"))
@@ -909,7 +946,7 @@ def unlock_2fa_verify():
             ag_app.active_client_id = session.get("paracci_client_id")
             session.pop('unlock_id', None)
             flash(_('auth.unlock_success'), "success")
-            return redirect(url_for("main.index"))
+            return redirect(_post_unlock_target())
         else:
             # Re-insert into pending to allow retry? 
             # Better to force restart unlock for security?
@@ -1168,6 +1205,10 @@ def add_security_headers(response):
 @bp.route("/")
 def index():
     """Home page: Lists all saved sessions."""
+    if request.args.get(_FILE_ACTIVATION_ERROR_ARG) == "1":
+        flash(_('session.file_activation_no_match'), "error")
+        return redirect(url_for("main.index"))
+
     db, _device_key = _get_db_and_key()
     sessions = db.list_sessions()
     detailed_sessions = []
@@ -1516,6 +1557,10 @@ def session_detail(sid: str):
     meta = _load_session(sid)
     if meta is None:
         abort(404)
+    native_file_id = request.args.get("native_file_id", "").strip()
+    native_ref = _resolve_native_file_ref(native_file_id)
+    open_native_file_id = native_file_id if native_ref else ""
+    open_native_filename = native_ref["filename"] if native_ref else ""
 
     safety_code = None
     if meta.peer_pub:
@@ -1540,6 +1585,8 @@ def session_detail(sid: str):
             meta=meta, sid=sid, evo_info=evo_info,
             now=int(time.time()), auto_download=True,
             safety_code=safety_code,
+            open_native_file_id=open_native_file_id,
+            open_native_filename=open_native_filename,
         )
 
     return render_template(
@@ -1547,6 +1594,8 @@ def session_detail(sid: str):
         meta=meta, sid=sid, evo_info=evo_info,
         now=int(time.time()),
         safety_code=safety_code,
+        open_native_file_id=open_native_file_id,
+        open_native_filename=open_native_filename,
     )
 
 

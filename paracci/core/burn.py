@@ -368,6 +368,17 @@ class BurnDB:
         finally:
             conn.close()
 
+    def session_exists(self, session_id: bytes) -> bool:
+        """Return whether a plaintext session identifier is present locally."""
+        conn = self._connect()
+        try:
+            return conn.execute(
+                "SELECT 1 FROM sessions WHERE session_id=? LIMIT 1",
+                (session_id,),
+            ).fetchone() is not None
+        finally:
+            conn.close()
+
     def list_sessions(self) -> list[dict]:
         """Lists all sessions."""
         conn = self._connect()
