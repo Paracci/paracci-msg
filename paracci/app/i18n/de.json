@@ -427,6 +427,30 @@
     "1d": "1 Tag",
     "30d": "30 Tage"
   },
+  "update": {
+    "available_title": "Update verfügbar",
+    "version_line": "Aktuell {current} - Neu {latest}",
+    "size": "Größe: {size}",
+    "protocol_warning_title": "Änderung des Sitzungsprotokolls",
+    "protocol_warning": "Dieses Update ändert das Sitzungsprotokoll. Nach dem Update müssen Sie neue Sitzungen mit Ihren Kontakten einrichten.",
+    "protocol_unknown": "Diese Version enthält keine Informationen zur Kompatibilität des Sitzungsprotokolls. Nach dem Update müssen Sie möglicherweise neue Sitzungen einrichten.",
+    "acknowledge": "Ich habe dies verstanden",
+    "update_now": "Jetzt aktualisieren",
+    "open_releases": "Download anzeigen",
+    "remind_later": "Später erinnern",
+    "downloading": "Update wird heruntergeladen...",
+    "verifying": "SHA-256-Prüfsumme wird geprüft...",
+    "verified": "Prüfsumme bestätigt.",
+    "ready": "Installationsbereit. Die Anwendung wird geschlossen.",
+    "install_now": "Update installieren",
+    "cancelled": "Download abgebrochen.",
+    "error_download_failed": "Das Update konnte nicht heruntergeladen werden. Versuchen Sie es später erneut.",
+    "error_checksum_missing": "Der Prüfsummeneintrag fehlt. Die Installation wurde gestoppt.",
+    "error_checksum_failed": "Die Prüfsummenprüfung ist fehlgeschlagen. Das Installationsprogramm wurde gelöscht.",
+    "error_size_mismatch": "Die Dateigröße stimmt nicht mit dem Release überein. Die Installation wurde gestoppt.",
+    "error_browser_open_failed": "Die Release-Seite konnte nicht geöffnet werden.",
+    "error_installer_missing": "Das geprüfte Installationsprogramm ist nicht mehr verfügbar."
+  },
   "error": {
     "404_title": "Seite nicht gefunden.",
     "404_btn": "Zur Startseite zurückkehren"

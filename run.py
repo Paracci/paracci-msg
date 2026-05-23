@@ -15,6 +15,7 @@ import argparse
 import logging
 import secrets
 import json
+import subprocess
 from pathlib import Path
 from urllib.parse import quote
 
@@ -34,6 +35,7 @@ from desktop.file_activation import (
 import threading
 import socket
 import webview
+from werkzeug.serving import make_server
 
 logger = logging.getLogger(__name__)
 
@@ -337,8 +339,10 @@ def _safe_native_download_filename(filename) -> str:
 class ProApi:
     """Privileged API exposed only to the trusted main pywebview window."""
 
-    def __init__(self):
+    def __init__(self, update_manager=None):
         self._window = None
+        self._update_manager = update_manager
+        self.installer_to_launch: Path | None = None
 
     def bind_window(self, window):
         self._window = window
@@ -454,6 +458,17 @@ class ProApi:
     def open_preview_window(self, token, filename, mime_type, file_size):
         open_preview_window(token, filename, mime_type, file_size)
 
+    def install_verified_update(self):
+        """Close the application only for a verified updater-owned installer."""
+        if self._update_manager is None:
+            return {"success": False, "error": "Update installer is unavailable."}
+        installer = self._update_manager.prepare_installer_launch()
+        if installer is None:
+            return {"success": False, "error": "Update installer is not verified."}
+        self.installer_to_launch = installer
+        self.close()
+        return {"success": True}
+
 
 def _build_main_navigation_guard_script(loopback_host: str, port: int) -> str:
     return f"""
@@ -564,6 +579,27 @@ def _close_all_preview_windows() -> None:
 
 def _on_main_window_closed(*_args) -> None:
     _close_all_preview_windows()
+
+
+def _shutdown_desktop_runtime(
+    server,
+    server_thread,
+    activation_broker,
+    update_manager,
+    installer_path: Path | None,
+) -> None:
+    """Close background resources, then hand a verified installer to the OS."""
+    _close_all_preview_windows()
+    if update_manager is not None:
+        update_manager.close(preserve_handoff=installer_path is not None)
+    server.shutdown()
+    server_thread.join(timeout=2.0)
+    server.server_close()
+    if activation_broker is not None:
+        activation_broker.close()
+    if installer_path is not None:
+        subprocess.Popen([str(installer_path)], close_fds=True)
+
 
 def clear_recent_docs():
     """Clears the system 'Recent Documents' list (Anti-Forensics)."""
@@ -683,6 +719,12 @@ if __name__ == "__main__":
             sys.exit(0)
 
     app = ag_app.create_app()
+    update_manager = None
+    if not args.no_gui:
+        from desktop.updater import UpdateManager
+
+        update_manager = UpdateManager(distribution_mode=ag_app.DATA_MODE)
+        app.extensions["paracci_updater"] = update_manager
     if not args.no_gui:
         with activation_state_lock:
             queued_before_start = activation_state["pending"]
@@ -712,17 +754,14 @@ if __name__ == "__main__":
     else:
         print("  Mode: Desktop App")
         
-        # Start Flask in the background (Thread)
-        def start_flask():
-            # reloader conflicts with GUI, disabling it.
-            app.run(host=loopback_host, port=port, debug=False, use_reloader=False)
-
-        server_thread = threading.Thread(target=start_flask)
+        # Retain a stoppable loopback server so installer handoff can be clean.
+        server = make_server(loopback_host, port, app, threaded=True)
+        server_thread = threading.Thread(target=server.serve_forever)
         server_thread.daemon = True
         server_thread.start()
 
         # Main Window (WebView)
-        pro_api = ProApi()
+        pro_api = ProApi(update_manager=update_manager)
         window = webview.create_window(
             title="Paracci Secure Messaging",
             url=bootstrap_url,
@@ -735,6 +774,7 @@ if __name__ == "__main__":
             js_api=pro_api
         )
         pro_api.bind_window(window)
+        update_manager.start_check()
         with activation_state_lock:
             activation_state["window"] = window
 
@@ -895,9 +935,11 @@ if __name__ == "__main__":
                 storage_path=storage_path
             )
         
-        # Forcefully close Flask thread and the entire process when the app closes
-        _close_all_preview_windows()
-        if activation_broker is not None:
-            activation_broker.close()
+        _shutdown_desktop_runtime(
+            server,
+            server_thread,
+            activation_broker,
+            update_manager,
+            pro_api.installer_to_launch,
+        )
         print("\n  [o] Paracci closed. Cleaning up processes...")
-        os._exit(0)

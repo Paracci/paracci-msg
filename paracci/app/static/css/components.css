@@ -933,6 +933,112 @@ input[type="checkbox"] {
   font-weight: 650;
 }
 
+.update-banner {
+  position: fixed;
+  top: calc(var(--titlebar-height) + 14px);
+  left: 50%;
+  width: min(580px, calc(100vw - 40px));
+  padding: var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--material-popover);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  color: var(--text-primary);
+  transform: translateX(-50%);
+  z-index: 10003;
+}
+
+.update-banner[hidden],
+.update-banner [hidden] {
+    display: none !important;
+}
+
+.update-banner-head,
+.update-actions,
+.update-progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.update-kicker {
+  margin-bottom: 3px;
+  color: var(--accent-secondary);
+  font-size: var(--text-caption);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.update-release-notes,
+.update-status-text {
+  margin: var(--space-3) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-body-sm);
+  line-height: 1.45;
+}
+
+.update-status-text.error {
+  color: var(--state-error);
+}
+
+.update-protocol-warning {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--state-error-border);
+  border-radius: var(--radius-md);
+  background: var(--state-error-soft);
+  font-size: var(--text-body-sm);
+}
+
+.update-protocol-warning p {
+  margin: var(--space-2) 0;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.update-acknowledge {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.update-progress-panel {
+  margin-top: var(--space-3);
+}
+
+.update-progress-track {
+  height: 7px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--material-fill);
+}
+
+.update-progress-fill {
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: var(--accent-primary);
+  transition: width var(--duration-sm) var(--ease);
+}
+
+.update-progress-meta {
+  margin-top: var(--space-2);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+}
+
+.update-actions {
+  justify-content: flex-end;
+  margin-top: var(--space-4);
+}
+
 .p-modal-overlay {
   position: fixed;
   inset: 0;

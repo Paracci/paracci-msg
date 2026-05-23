@@ -427,6 +427,30 @@
     "1d": "1 jour",
     "30d": "30 jours"
   },
+  "update": {
+    "available_title": "Mise à jour disponible",
+    "version_line": "Actuelle {current} - Nouvelle {latest}",
+    "size": "Taille : {size}",
+    "protocol_warning_title": "Changement du protocole de session",
+    "protocol_warning": "Cette mise à jour modifie le protocole de session. Après la mise à jour, vous devrez établir de nouvelles sessions avec vos contacts.",
+    "protocol_unknown": "Cette version ne fournit pas d'informations de compatibilité du protocole de session. Après la mise à jour, de nouvelles sessions peuvent être nécessaires.",
+    "acknowledge": "Je comprends avant de continuer",
+    "update_now": "Mettre à jour",
+    "open_releases": "Voir le téléchargement",
+    "remind_later": "Me le rappeler plus tard",
+    "downloading": "Téléchargement de la mise à jour...",
+    "verifying": "Vérification de la somme SHA-256...",
+    "verified": "Somme vérifiée.",
+    "ready": "Prêt pour l'installation. L'application va se fermer.",
+    "install_now": "Installer la mise à jour",
+    "cancelled": "Téléchargement annulé.",
+    "error_download_failed": "Impossible de télécharger la mise à jour. Réessayez plus tard.",
+    "error_checksum_missing": "La somme de contrôle est absente. L'installation a été arrêtée.",
+    "error_checksum_failed": "La vérification a échoué. L'installateur téléchargé a été supprimé.",
+    "error_size_mismatch": "La taille téléchargée ne correspond pas à la version publiée. L'installation a été arrêtée.",
+    "error_browser_open_failed": "Impossible d'ouvrir la page des versions.",
+    "error_installer_missing": "L'installateur vérifié n'est plus disponible."
+  },
   "error": {
     "404_title": "Page non trouvée.",
     "404_btn": "Retour à l'accueil"

@@ -106,8 +106,67 @@ def test_main_pro_api_exposes_expected_methods():
         "open_file_location",
         "copy_and_clear",
         "open_preview_window",
+        "install_verified_update",
     ]:
         assert callable(getattr(api, method))
+
+
+def test_install_update_bridge_closes_only_after_verified_path(tmp_path):
+    class VerifiedUpdate:
+        def prepare_installer_launch(self):
+            return tmp_path / "Paracci-Setup-v1.4.2.exe"
+
+    window = FakeMainWindow(RecordingEventHook())
+    api = run.ProApi(update_manager=VerifiedUpdate()).bind_window(window)
+
+    result = api.install_verified_update()
+
+    assert result == {"success": True}
+    assert api.installer_to_launch == tmp_path / "Paracci-Setup-v1.4.2.exe"
+    assert window.destroyed is True
+
+
+def test_desktop_shutdown_launches_installer_after_resource_cleanup(tmp_path, monkeypatch):
+    operations = []
+    installer = tmp_path / "Paracci-Setup-v1.4.2.exe"
+
+    class Server:
+        def shutdown(self):
+            operations.append("server_shutdown")
+
+        def server_close(self):
+            operations.append("server_close")
+
+    class Thread:
+        def join(self, timeout):
+            operations.append(("thread_join", timeout))
+
+    class Broker:
+        def close(self):
+            operations.append("broker_close")
+
+    class Manager:
+        def close(self, *, preserve_handoff):
+            operations.append(("manager_close", preserve_handoff))
+
+    monkeypatch.setattr(run, "_close_all_preview_windows", lambda: operations.append("previews_close"))
+    monkeypatch.setattr(
+        run.subprocess,
+        "Popen",
+        lambda args, close_fds: operations.append(("launch", args, close_fds)),
+    )
+
+    run._shutdown_desktop_runtime(Server(), Thread(), Broker(), Manager(), installer)
+
+    assert operations == [
+        "previews_close",
+        ("manager_close", True),
+        "server_shutdown",
+        ("thread_join", 2.0),
+        "server_close",
+        "broker_close",
+        ("launch", [str(installer)], True),
+    ]
 
 
 def test_session_markdown_uses_fragment_only_uri_policy():

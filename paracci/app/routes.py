@@ -59,6 +59,7 @@ from desktop.device_key_binding import (
     initialize_device_with_binding,
     unlock_device_with_binding,
 )
+from desktop.updater import UpdateActionError
 from core.session import (
     deserialize_session_meta, serialize_session_meta,
     create_initiator_session, accept_initiator_and_create_responder,
@@ -730,7 +731,21 @@ def check_lock():
     """Checks if the application is locked; redirects to the unlock page if locked."""
 
     # Routes exempt from locking
-    if request.endpoint in ["main.loopback_bootstrap", "main.unlock", "main.set_locale", "static", "main.unlock_2fa_setup", "main.unlock_2fa_verify", "main.favicon", "main.api_capabilities", "main.api_benchmark_results"]:
+    if request.endpoint in [
+        "main.loopback_bootstrap",
+        "main.unlock",
+        "main.set_locale",
+        "static",
+        "main.unlock_2fa_setup",
+        "main.unlock_2fa_verify",
+        "main.favicon",
+        "main.api_capabilities",
+        "main.api_benchmark_results",
+        "main.api_update_status",
+        "main.api_update_dismiss",
+        "main.api_update_download",
+        "main.api_update_cancel",
+    ]:
         return
     if _preview_store_request_token():
         return
@@ -1351,6 +1366,71 @@ def api_capabilities():
         "has_native_window": not ag_app.no_gui_mode,
     })
     return _mark_sensitive_no_store(response)
+
+
+def _update_manager():
+    """Return the process-local update manager, if desktop startup registered one."""
+    return current_app.extensions.get("paracci_updater")
+
+
+def _no_update_status() -> dict:
+    return {
+        "state": "no_update",
+        "visible": False,
+        "current_version": "",
+        "latest_version": "",
+        "release_notes": "",
+        "protocol_warning": False,
+        "protocol_unknown": False,
+        "action": "none",
+        "size_bytes": None,
+        "downloaded_bytes": 0,
+        "progress_percent": None,
+        "verification_status": "",
+        "error_code": "",
+    }
+
+
+@bp.route("/api/update/status", methods=["GET"])
+def api_update_status():
+    """Report sanitized, memory-only update notification state."""
+    manager = _update_manager()
+    status = manager.public_status() if manager is not None else _no_update_status()
+    return _mark_sensitive_no_store(jsonify(status))
+
+
+@bp.route("/api/update/dismiss", methods=["POST"])
+def api_update_dismiss():
+    """Dismiss the current update notification for this process only."""
+    manager = _update_manager()
+    status = manager.dismiss() if manager is not None else _no_update_status()
+    return _mark_sensitive_no_store(jsonify(status))
+
+
+@bp.route("/api/update/download", methods=["POST"])
+def api_update_download():
+    """Begin a user-confirmed installer download or fixed release-page action."""
+    if not request.is_json:
+        return _mark_sensitive_no_store(jsonify({"error_code": "json_required"})), 415
+    manager = _update_manager()
+    if manager is None:
+        return _mark_sensitive_no_store(jsonify({"error_code": "update_not_available"})), 409
+    payload = request.get_json(silent=True) or {}
+    try:
+        status = manager.begin_update(
+            acknowledged_warning=payload.get("acknowledge_protocol_warning") is True,
+        )
+    except UpdateActionError as exc:
+        return _mark_sensitive_no_store(jsonify({"error_code": exc.code})), 409
+    return _mark_sensitive_no_store(jsonify(status))
+
+
+@bp.route("/api/update/cancel", methods=["POST"])
+def api_update_cancel():
+    """Cancel the current installer download, if one is running."""
+    manager = _update_manager()
+    status = manager.cancel_download() if manager is not None else _no_update_status()
+    return _mark_sensitive_no_store(jsonify(status))
 
 
 @bp.route("/api/prepare-preview", methods=["POST"])

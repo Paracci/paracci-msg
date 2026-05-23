@@ -186,6 +186,11 @@ jobs:
           text = replace_once(text, r'"CFBundleShortVersionString":\s*"[^"]*"', f'"CFBundleShortVersionString": "{version}"', "CFBundleShortVersionString")
           spec.write_text(text, encoding="utf-8")
 
+          build_info = Path("paracci/app/build_info.py")
+          text = build_info.read_text(encoding="utf-8")
+          text = replace_once(text, r'APP_VERSION\s*=\s*"[^"]*"', f'APP_VERSION = "{version}"', "APP_VERSION")
+          build_info.write_text(text, encoding="utf-8")
+
           print(f"Injected Paracci version {version}")
           PY
 
@@ -196,7 +201,7 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           python - <<'PY'
-          import os
+          import os, re
           from pathlib import Path
 
           tag = os.environ["RELEASE_TAG"]
@@ -215,6 +220,9 @@ jobs:
                   f'"CFBundleVersion": "{version}"',
                   f'"CFBundleShortVersionString": "{version}"',
               ],
+              "paracci/app/build_info.py": [
+                  f'APP_VERSION = "{version}"',
+              ],
           }
 
           missing = []
@@ -224,6 +232,14 @@ jobs:
 
           if missing:
               raise SystemExit("Version injection verification failed:\n" + "\n".join(missing))
+          build_info = Path("paracci/app/build_info.py").read_text(encoding="utf-8")
+          protocol_match = re.search(r"SESSION_PROTOCOL_VERSION\s*=\s*(\d+)", build_info)
+          if not protocol_match:
+              raise SystemExit("SESSION_PROTOCOL_VERSION is missing from build_info.py")
+          marker = f'<!-- paracci-update: {{"protocol_version": {protocol_match.group(1)}}} -->'
+          workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+          if marker not in workflow:
+              raise SystemExit(f"Release protocol marker is not synchronized: {marker}")
           print(f"Verified injected version {version}")
           PY
 
@@ -587,6 +603,7 @@ jobs:
           generate_release_notes: true
           body: |
             ## Paracci ${{ github.ref_name }}
+            <!-- paracci-update: {"protocol_version": 3} -->
 
             ### 📦 Download
 

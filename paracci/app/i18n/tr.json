@@ -427,6 +427,30 @@
     "1d": "1 Gün",
     "30d": "30 Gün"
   },
+  "update": {
+    "available_title": "Güncelleme mevcut",
+    "version_line": "Mevcut {current} - Yeni {latest}",
+    "size": "Boyut: {size}",
+    "protocol_warning_title": "Oturum protokolü değişikliği",
+    "protocol_warning": "Bu güncelleme oturum protokolünü değiştirir. Güncellemeden sonra kişilerinizle yeni oturumlar kurmanız gerekecektir.",
+    "protocol_unknown": "Bu sürüm oturum protokolü uyumluluk bilgisi sağlamıyor. Güncellemeden sonra kişilerinizle yeni oturumlar kurmanız gerekebilir.",
+    "acknowledge": "Devam etmeden önce anlıyorum",
+    "update_now": "Şimdi Güncelle",
+    "open_releases": "İndirmeyi Görüntüle",
+    "remind_later": "Daha Sonra Hatırlat",
+    "downloading": "Güncelleme indiriliyor...",
+    "verifying": "SHA-256 sağlama toplamı doğrulanıyor...",
+    "verified": "Sağlama toplamı doğrulandı.",
+    "ready": "Kuruluma hazır. Uygulama kapanacak.",
+    "install_now": "Güncellemeyi Kur",
+    "cancelled": "İndirme iptal edildi.",
+    "error_download_failed": "Güncelleme indirilemedi. Daha sonra tekrar deneyin.",
+    "error_checksum_missing": "Sürüm sağlama toplamı kaydı eksik. Kurulum durduruldu.",
+    "error_checksum_failed": "Sağlama toplamı doğrulaması başarısız. İndirilen kurucu silindi.",
+    "error_size_mismatch": "İndirilen dosya boyutu sürüm varlığıyla eşleşmedi. Kurulum durduruldu.",
+    "error_browser_open_failed": "Sürümler sayfası açılamadı.",
+    "error_installer_missing": "Doğrulanmış kurucu artık kullanılamıyor."
+  },
   "error": {
     "404_title": "Sayfa bulunamadı.",
     "404_btn": "Ana sayfaya dön"

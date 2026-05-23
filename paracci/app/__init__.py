@@ -36,9 +36,12 @@ local_data_dir = EXE_DIR / "data"
 
 if env_data_dir:
     DATA_DIR = Path(env_data_dir).absolute()
+    DATA_MODE = "override"
 elif local_data_dir.exists() and local_data_dir.is_dir():
     DATA_DIR = local_data_dir
+    DATA_MODE = "portable"
 else:
+    DATA_MODE = "standard"
     # OS AppData
     if sys.platform == "win32":
         appdata_root = os.environ.get("LOCALAPPDATA")
