@@ -16,7 +16,7 @@ Output structure:
     builds/
     ├── windows/   → Paracci/ (folder containing Paracci.exe)
     ├── macos/     → Paracci.app  (or Paracci binary)
-    └── linux/     → Paracci
+    └── linux/     → Paracci/ (folder containing Paracci and _internal/)
 
 GitHub Actions uses this script on 3 separate runners (win/mac/linux)
 and uploads each platform's builds/ subfolder as a release asset.

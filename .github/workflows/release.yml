@@ -120,16 +120,12 @@ jobs:
             libgirepository1.0-dev gcc libcairo2-dev \
             pkg-config python3-dev libglib2.0-dev \
             libegl1 libxcb-cursor0 libxcb-xinerama0 \
-            dpkg desktop-file-utils shared-mime-info xvfb
+            dpkg desktop-file-utils shared-mime-info xvfb zip
 
       - name: Download pinned Linux packaging tools
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          curl -fsSLo "$RUNNER_TEMP/linuxdeploy.AppImage" \
-            "https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage"
-          echo "c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d  $RUNNER_TEMP/linuxdeploy.AppImage" | sha256sum -c -
-
           curl -fsSLo "$RUNNER_TEMP/appimagetool.AppImage" \
             "https://github.com/AppImage/appimagetool/releases/download/1.9.0/appimagetool-x86_64.AppImage"
           echo "46fdd785094c7f6e545b61afcfb0f3d98d8eab243f644b4b17698c01d06083d1  $RUNNER_TEMP/appimagetool.AppImage" | sha256sum -c -
@@ -138,9 +134,8 @@ jobs:
             "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64"
           echo "a2419dce47568395ae79c01ffa9a5a341dd339581352ff104d073527543177e5  $RUNNER_TEMP/runtime-x86_64" | sha256sum -c -
 
-          chmod +x "$RUNNER_TEMP/linuxdeploy.AppImage" "$RUNNER_TEMP/appimagetool.AppImage"
+          chmod +x "$RUNNER_TEMP/appimagetool.AppImage"
           {
-            echo "LINUXDEPLOY=$RUNNER_TEMP/linuxdeploy.AppImage"
             echo "APPIMAGETOOL=$RUNNER_TEMP/appimagetool.AppImage"
             echo "APPIMAGE_RUNTIME_FILE=$RUNNER_TEMP/runtime-x86_64"
           } >> "$GITHUB_ENV"
@@ -315,7 +310,7 @@ jobs:
               app_executable = Path("builds/macos/Paracci.app/Contents/MacOS/Paracci")
               executable = app_executable if app_executable.exists() else Path("builds/macos/Paracci")
           else:
-              executable = Path("builds/linux/Paracci")
+              executable = Path("builds/linux/Paracci/Paracci")
 
           if not executable.exists():
               raise SystemExit(f"Packaged executable not found: {executable}")
@@ -558,10 +553,13 @@ jobs:
           debs=(builds/linux/paracci_*_amd64.deb)
           [ "${#appimages[@]}" -eq 1 ] && [ -f "${appimages[0]}" ]
           [ "${#debs[@]}" -eq 1 ] && [ -f "${debs[0]}" ]
-          chmod +x builds/linux/Paracci "${appimages[0]}"
+          test -x builds/linux/Paracci/Paracci
+          chmod +x builds/linux/Paracci/Paracci "${appimages[0]}"
           cd builds/linux
-          mv Paracci Paracci-Linux
-          sha256sum Paracci-Linux Paracci-*-x86_64.AppImage paracci_*_amd64.deb > SHA256SUMS.txt
+          zip -qr Paracci-Linux.zip Paracci
+          zip -T Paracci-Linux.zip
+          sha256sum Paracci-Linux.zip Paracci-*-x86_64.AppImage paracci_*_amd64.deb > SHA256SUMS.txt
+          rm -rf Paracci
           
       # ── 7. GitHub Build Provenance Attestation (Sigstore / SLSA L2) ────────
       #    Generates a cryptographically signed attestation that this binary
@@ -597,11 +595,11 @@ jobs:
         with:
           subject-path: builds/macos/Paracci-*-macOS.dmg
 
-      - name: Attest Linux build provenance
+      - name: Attest Linux portable archive provenance
         if: runner.os == 'Linux' && startsWith(github.ref, 'refs/tags/v')
         uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45  # v2
         with:
-          subject-path: builds/linux/Paracci-Linux
+          subject-path: builds/linux/Paracci-Linux.zip
 
       - name: Attest Linux AppImage provenance
         if: runner.os == 'Linux' && startsWith(github.ref, 'refs/tags/v')
@@ -690,17 +688,18 @@ jobs:
           WIN_FILE="release-assets/windows/Paracci/Paracci.exe"
           WIN_SETUP_FILE="$(find release-assets/windows -maxdepth 1 -name 'Paracci-Setup-v*.exe' -print -quit)"
           WIN_PORTABLE_FILE="$(find release-assets/windows -maxdepth 1 -name 'Paracci-Portable-v*.zip' -print -quit)"
-          LINUX_FILE="release-assets/linux/Paracci-Linux"
+          LINUX_ZIP_FILE="$(find release-assets/linux -maxdepth 1 -name 'Paracci-Linux.zip' -print -quit)"
           LINUX_APPIMAGE_FILE="$(find release-assets/linux -maxdepth 1 -name 'Paracci-*-x86_64.AppImage' -print -quit)"
           LINUX_DEB_FILE="$(find release-assets/linux -maxdepth 1 -name 'paracci_*_amd64.deb' -print -quit)"
           MACOS_DMG_FILE="$(find release-assets/macos -maxdepth 1 -name 'Paracci-*-macOS.dmg' -print -quit)"
           if [ -z "$WIN_SETUP_FILE" ] || [ -z "$WIN_PORTABLE_FILE" ] || \
-             [ -z "$LINUX_APPIMAGE_FILE" ] || [ -z "$LINUX_DEB_FILE" ] || \
+             [ -z "$LINUX_ZIP_FILE" ] || [ -z "$LINUX_APPIMAGE_FILE" ] || \
+             [ -z "$LINUX_DEB_FILE" ] || \
              [ -z "$MACOS_DMG_FILE" ]; then
             echo "Missing one or more required distribution package release files." >&2
             exit 1
           fi
-          chmod +x "$LINUX_FILE" "$LINUX_APPIMAGE_FILE"
+          chmod +x "$LINUX_APPIMAGE_FILE"
 
           # macOS: .zip bundle or bare binary
           if [ -f "release-assets/macos/Paracci-macOS.zip" ]; then
@@ -715,7 +714,7 @@ jobs:
           echo "win_portable_file=$WIN_PORTABLE_FILE" >> $GITHUB_OUTPUT
           echo "macos_file=$MACOS_FILE" >> $GITHUB_OUTPUT
           echo "macos_dmg_file=$MACOS_DMG_FILE" >> $GITHUB_OUTPUT
-          echo "linux_file=$LINUX_FILE" >> $GITHUB_OUTPUT
+          echo "linux_zip_file=$LINUX_ZIP_FILE" >> $GITHUB_OUTPUT
           echo "linux_appimage_file=$LINUX_APPIMAGE_FILE" >> $GITHUB_OUTPUT
           echo "linux_deb_file=$LINUX_DEB_FILE" >> $GITHUB_OUTPUT
           echo "package_version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
@@ -745,7 +744,7 @@ jobs:
             | macOS compatibility | `Paracci-macOS.zip` | Retained bundle archive |
             | Linux AppImage | `Paracci-${{ steps.resolve.outputs.package_version }}-x86_64.AppImage` | Universal package; run `chmod +x` after download |
             | Linux Debian/Ubuntu | `paracci_${{ steps.resolve.outputs.package_version }}_amd64.deb` | Installs desktop and `.paracci` MIME registration |
-            | Linux compatibility | `Paracci-Linux` | Retained raw executable |
+            | Linux compatibility | `Paracci-Linux.zip` | Retained complete onedir archive |
 
             ---
 
@@ -757,7 +756,7 @@ jobs:
             # Windows (PowerShell):  Get-FileHash Paracci-Setup-${{ github.ref_name }}.exe -Algorithm SHA256
             # Windows portable:     Get-FileHash Paracci-Portable-${{ github.ref_name }}.zip -Algorithm SHA256
             # macOS:                 shasum -a 256 Paracci-${{ steps.resolve.outputs.package_version }}-macOS.dmg
-            # Linux:                 sha256sum Paracci-${{ steps.resolve.outputs.package_version }}-x86_64.AppImage paracci_${{ steps.resolve.outputs.package_version }}_amd64.deb
+            # Linux:                 sha256sum Paracci-Linux.zip Paracci-${{ steps.resolve.outputs.package_version }}-x86_64.AppImage paracci_${{ steps.resolve.outputs.package_version }}_amd64.deb
             ```
 
             The macOS DMG is intentionally distributed without Apple notarization.
@@ -791,7 +790,7 @@ jobs:
             ${{ steps.resolve.outputs.win_portable_file }}
             ${{ steps.resolve.outputs.macos_file }}
             ${{ steps.resolve.outputs.macos_dmg_file }}
-            ${{ steps.resolve.outputs.linux_file }}
+            ${{ steps.resolve.outputs.linux_zip_file }}
             ${{ steps.resolve.outputs.linux_appimage_file }}
             ${{ steps.resolve.outputs.linux_deb_file }}
             SHA256SUMS.txt
@@ -839,7 +838,7 @@ jobs:
           mv vt-scan/windows/Paracci/Paracci.exe            vt-scan/Paracci-Windows.exe || true
           mv vt-scan/windows/Paracci-Setup-v*.exe           vt-scan/Paracci-Windows-Setup.exe || true
           mv vt-scan/windows/Paracci-Portable-v*.zip        vt-scan/Paracci-Windows-Portable.zip || true
-          mv vt-scan/linux/Paracci-Linux                    vt-scan/Paracci-Linux || true
+          mv vt-scan/linux/Paracci-Linux.zip                vt-scan/Paracci-Linux.zip || true
           mv vt-scan/linux/Paracci-*-x86_64.AppImage        vt-scan/Paracci-Linux.AppImage || true
           mv vt-scan/linux/paracci_*_amd64.deb              vt-scan/Paracci-Linux.deb || true
           mv vt-scan/macos/Paracci-*-macOS.dmg              vt-scan/Paracci-macOS.dmg || true
@@ -867,6 +866,6 @@ jobs:
             vt-scan/Paracci-Windows-Portable.zip
             vt-scan/Paracci-macOS.zip
             vt-scan/Paracci-macOS.dmg
-            vt-scan/Paracci-Linux
+            vt-scan/Paracci-Linux.zip
             vt-scan/Paracci-Linux.AppImage
             vt-scan/Paracci-Linux.deb
