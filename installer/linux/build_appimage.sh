@@ -72,7 +72,7 @@ DESKTOP_FILE="$ROOT/installer/linux/paracci.desktop"
 MIME_FILE="$ROOT/installer/linux/application-x-paracci.xml"
 ICON_FILE="$ROOT/paracci_icon.png"
 
-[[ -f "$PAYLOAD" ]] || fail "Linux payload not found: $PAYLOAD"
+[[ -d "$PAYLOAD" ]] || fail "Linux payload not found: $PAYLOAD"
 [[ -f "$DESKTOP_FILE" ]] || fail "Desktop entry not found: $DESKTOP_FILE"
 [[ -f "$MIME_FILE" ]] || fail "MIME definition not found: $MIME_FILE"
 [[ -f "$ICON_FILE" ]] || fail "Application icon not found: $ICON_FILE"
@@ -85,7 +85,8 @@ mkdir -p \
     "$APPDIR/usr/share/icons/hicolor/256x256/apps" \
     "$APPDIR/usr/share/mime/packages"
 
-install -m 0755 "$PAYLOAD" "$APPDIR/usr/lib/paracci/Paracci"
+cp -r "$PAYLOAD/." "$APPDIR/usr/lib/paracci/"
+chmod 0755 "$APPDIR/usr/lib/paracci/Paracci"
 install -m 0644 "$DESKTOP_FILE" "$APPDIR/usr/share/applications/paracci.desktop"
 install -m 0644 "$MIME_FILE" "$APPDIR/usr/share/mime/packages/application-x-paracci.xml"
 
