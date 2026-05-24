@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if ! command -v convert &> /dev/null; then
+    sudo apt-get install -y imagemagick
+fi
+
 warn() {
     printf '[WARN] %s\n' "$*" >&2
 }
@@ -84,13 +88,18 @@ mkdir -p \
 install -m 0755 "$PAYLOAD" "$APPDIR/usr/lib/paracci/Paracci"
 install -m 0644 "$DESKTOP_FILE" "$APPDIR/usr/share/applications/paracci.desktop"
 install -m 0644 "$MIME_FILE" "$APPDIR/usr/share/mime/packages/application-x-paracci.xml"
-install -m 0644 "$ICON_FILE" "$APPDIR/usr/share/icons/hicolor/256x256/apps/paracci.png"
+
+# Resize icon to a linuxdeploy-compatible resolution
+ICON_512="$(mktemp --suffix=.png)"
+convert "$ROOT/paracci_icon.png" -resize 512x512 "$ICON_512"
+
+install -m 0644 "$ICON_512" "$APPDIR/usr/share/icons/hicolor/256x256/apps/paracci.png"
 
 deploy_args=(
     --appdir "$APPDIR"
     --executable "$APPDIR/usr/lib/paracci/Paracci"
     --desktop-file "$DESKTOP_FILE"
-    --icon-file "$ICON_FILE"
+    --icon-file "$ICON_512"
 )
 
 # GTK, WebKit and GStreamer load parts of their runtime dynamically rather
