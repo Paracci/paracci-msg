@@ -866,7 +866,6 @@ jobs:
             vt-scan/Paracci-Windows-Setup.exe
             vt-scan/Paracci-Windows-Portable.zip
             vt-scan/Paracci-macOS.zip
-            vt-scan/Paracci-macOS
             vt-scan/Paracci-macOS.dmg
             vt-scan/Paracci-Linux
             vt-scan/Paracci-Linux.AppImage
