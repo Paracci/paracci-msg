@@ -269,7 +269,7 @@ if sys.platform == "win32":
         upx_exclude=[],
         name="Paracci",
     )
-else:
+elif sys.platform == "darwin":
     exe = EXE(
         pyz,
         a.scripts,
@@ -292,6 +292,36 @@ else:
         version=str(ROOT / "file_version_info.txt"),
         icon=app_icon,
     )
+else:
+    exe = EXE(
+        pyz,
+        a.scripts,
+        exclude_binaries=True,
+        name="Paracci",
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,
+        console=False,          # No console window (GUI app)
+        disable_windowed_traceback=False,
+        argv_emulation=False,   # macOS only — keep False for pywebview
+        target_arch=None,       # None = current machine arch
+        codesign_identity=None,
+        entitlements_file=None,
+        version=str(ROOT / "file_version_info.txt"),
+        icon=app_icon,
+    )
+    coll = COLLECT(
+        exe,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        strip=False,
+        upx=False,
+        upx_exclude=[],
+        name="Paracci",
+    )
+
 
 
 # ── macOS .app Bundle ─────────────────────────────────────────────────────────

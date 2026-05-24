@@ -165,7 +165,10 @@ def move_outputs(platform_id: str) -> None:
             dst = out_dir / APP_NAME
             shutil.move(str(src), str(dst))
             # Make executable
-            dst.chmod(0o755)
+            if dst.is_dir():
+                (dst / APP_NAME).chmod(0o755)
+            else:
+                dst.chmod(0o755)
             print(f"\n  [OK] Linux build ready: {dst}")
             moved = True
 
@@ -180,6 +183,7 @@ def print_summary(platform_id: str) -> None:
     print(f"  BUILD COMPLETE — {platform_id.upper()}")
     print("=" * 60)
     print(f"  Output directory : {out_dir}")
+
     for f in sorted(out_dir.rglob("*")):
         if f.is_file():
             size_mb = f.stat().st_size / (1024 * 1024)
