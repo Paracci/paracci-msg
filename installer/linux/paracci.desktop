@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Paracci
+Comment=Offline secure messaging
+Exec=paracci %f
+Icon=paracci
+Terminal=false
+Categories=Utility;Security;
+MimeType=application/x-paracci;

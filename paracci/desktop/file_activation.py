@@ -8,6 +8,7 @@ import logging
 import os
 import secrets
 import socket
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ _DESCRIPTOR_FILENAME = ".file_activation.json"
 _LOCK_FILENAME = ".file_activation.lock"
 _MAX_REQUEST_BYTES = 64 * 1024
 _MAX_PATH_CHARS = 32768
+_MACOS_DELEGATE_CLASS = None
 
 
 @dataclass(frozen=True)
@@ -61,6 +63,52 @@ def inspect_launch_file(argument: str | None) -> LaunchFileCandidate | None:
     if header.msg_type != TYPE_MESSAGE:
         return None
     return LaunchFileCandidate(path=path, session_id=header.session_id)
+
+
+def install_macos_file_open_handler(
+    on_activation: Callable[[str | None], None],
+    cocoa_module=None,
+) -> bool:
+    """Route Finder document-open events through the existing activation callback."""
+    global _MACOS_DELEGATE_CLASS
+
+    if cocoa_module is None:
+        if sys.platform != "darwin":
+            return False
+        try:
+            from webview.platforms import cocoa as cocoa_module
+        except ImportError:
+            logger.exception("Could not install macOS document activation support.")
+            return False
+
+    browser_view = cocoa_module.BrowserView
+    base_delegate = browser_view.AppDelegate
+    if getattr(base_delegate, "_paracci_file_open_handler", False):
+        return True
+
+    appkit = getattr(cocoa_module, "AppKit", None)
+    reply_success = getattr(appkit, "NSApplicationDelegateReplySuccess", 0)
+    reply_failure = getattr(appkit, "NSApplicationDelegateReplyFailure", 1)
+
+    class ParacciAppDelegate(base_delegate):
+        _paracci_file_open_handler = True
+
+        def application_openFiles_(self, application, filenames):
+            reply = reply_success
+            try:
+                for path in filenames or ():
+                    on_activation(str(path))
+            except (MemoryError, KeyboardInterrupt, SystemExit):
+                raise
+            except Exception:
+                reply = reply_failure
+                logger.exception("macOS document activation callback failed.")
+            if hasattr(application, "replyToOpenOrPrint_"):
+                application.replyToOpenOrPrint_(reply)
+
+    browser_view.AppDelegate = ParacciAppDelegate
+    _MACOS_DELEGATE_CLASS = ParacciAppDelegate
+    return True
 
 
 class FileActivationBroker:

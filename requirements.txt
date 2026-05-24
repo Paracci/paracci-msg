@@ -5,6 +5,8 @@ Flask>=3.1.1
 
 # Native desktop window wrapper
 pywebview>=5.0.0
+PyGObject==3.48.2; sys_platform == "linux"
+pycairo>=1.26.0; sys_platform == "linux"
 
 # Cryptography primitives
 cryptography>=44.0.1

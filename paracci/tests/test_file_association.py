@@ -5,6 +5,7 @@ import socket
 import struct
 import sys
 import threading
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -23,7 +24,11 @@ from core.envelope import (
     MAGIC_BYTES,
     TYPE_MESSAGE,
 )
-from desktop.file_activation import FileActivationBroker, inspect_launch_file
+from desktop.file_activation import (
+    FileActivationBroker,
+    inspect_launch_file,
+    install_macos_file_open_handler,
+)
 
 
 SESSION_ID = bytes.fromhex("00112233445566778899aabbccddeeff")
@@ -208,6 +213,66 @@ def test_window_activation_foregrounds_and_navigates_only_for_valid_files(tmp_pa
     assert window.calls == ["restore", "show", "restore", "show"]
     assert len(window.urls) == 1
     assert str(message_path) not in window.urls[0]
+
+
+def test_macos_file_open_delegate_forwards_finder_paths_to_activation_callback():
+    class BaseDelegate:
+        pass
+
+    class BrowserView:
+        AppDelegate = BaseDelegate
+
+    class FakeApplication:
+        def __init__(self):
+            self.replies = []
+
+        def replyToOpenOrPrint_(self, reply):
+            self.replies.append(reply)
+
+    cocoa = SimpleNamespace(
+        BrowserView=BrowserView,
+        AppKit=SimpleNamespace(
+            NSApplicationDelegateReplySuccess=7,
+            NSApplicationDelegateReplyFailure=8,
+        ),
+    )
+    received = []
+
+    assert install_macos_file_open_handler(received.append, cocoa) is True
+
+    application = FakeApplication()
+    delegate = cocoa.BrowserView.AppDelegate()
+    delegate.application_openFiles_(application, ["/Inbox/first.paracci", "/Inbox/second.paracci"])
+
+    assert received == ["/Inbox/first.paracci", "/Inbox/second.paracci"]
+    assert application.replies == [7]
+    assert issubclass(cocoa.BrowserView.AppDelegate, BaseDelegate)
+
+
+def test_macos_file_open_delegate_reports_failed_activation():
+    class BaseDelegate:
+        pass
+
+    class BrowserView:
+        AppDelegate = BaseDelegate
+
+    application = SimpleNamespace(replies=[])
+    application.replyToOpenOrPrint_ = application.replies.append
+    cocoa = SimpleNamespace(
+        BrowserView=BrowserView,
+        AppKit=SimpleNamespace(
+            NSApplicationDelegateReplySuccess=7,
+            NSApplicationDelegateReplyFailure=8,
+        ),
+    )
+
+    def reject(_path):
+        raise RuntimeError("invalid activation")
+
+    assert install_macos_file_open_handler(reject, cocoa) is True
+    cocoa.BrowserView.AppDelegate().application_openFiles_(application, ["/Inbox/bad.paracci"])
+
+    assert application.replies == [8]
 
 
 def test_activation_broker_forwards_to_existing_instance(tmp_path):

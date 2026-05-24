@@ -30,6 +30,7 @@ from desktop.file_activation import (
     FileActivationBroker,
     LaunchFileCandidate,
     inspect_launch_file,
+    install_macos_file_open_handler,
 )
 
 import threading
@@ -709,6 +710,7 @@ if __name__ == "__main__":
 
     activation_broker = None
     if not args.no_gui:
+        install_macos_file_open_handler(on_external_activation)
         activation_path = str(launch_candidate.path) if launch_candidate is not None else None
         activation_broker, forwarded = FileActivationBroker.claim_or_forward(
             ag_app.DATA_DIR,
