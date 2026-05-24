@@ -225,14 +225,14 @@ To compile the application locally using [build.py](build.py):
 python build.py --install --clean
 # Output: builds/windows/Paracci/ (folder containing Paracci.exe and dependencies)
 #         builds/macos/Paracci-macOS
-#         builds/linux/Paracci-Linux
+#         builds/linux/Paracci/ (folder containing Paracci and _internal/)
 
 # Windows only, with Inno Setup 6 installed:
 python build.py --clean --installer
 # Installer output: builds/windows/Paracci-Setup-v<version>.exe
 ```
 
-On Linux, with `linuxdeploy`, `appimagetool`, an AppImage runtime file, and `dpkg-deb` available:
+On Linux, with `appimagetool`, an AppImage runtime file, and `dpkg-deb` available:
 
 ```bash
 python build.py --clean --appimage --deb
