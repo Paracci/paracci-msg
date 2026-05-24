@@ -7,6 +7,9 @@ Usage:
     python build.py --clean      # Clean previous build artifacts first
     python build.py --install    # Install/upgrade build dependencies first
     python build.py --installer  # Build the Windows Inno Setup installer
+    python build.py --appimage   # Build the Linux AppImage package
+    python build.py --deb        # Build the Linux Debian package
+    python build.py --dmg        # Build the macOS disk image
     python build.py --clean --install  # Full fresh build
 
 Output structure:
@@ -41,7 +44,11 @@ APP_NAME    = "Paracci"
 
 DEV_LOCK    = ROOT / "requirements-dev.lock"
 VERSION_INFO_FILE = ROOT / "file_version_info.txt"
+BUILD_INFO_FILE = ROOT / "paracci" / "app" / "build_info.py"
 INSTALLER_SCRIPT = ROOT / "installer" / "windows" / "paracci.iss"
+LINUX_APPIMAGE_SCRIPT = ROOT / "installer" / "linux" / "build_appimage.sh"
+LINUX_DEB_SCRIPT = ROOT / "installer" / "linux" / "build_deb.sh"
+MACOS_DMG_SCRIPT = ROOT / "installer" / "macos" / "build_dmg.sh"
 WINDOWS_PAYLOAD_DIR = BUILD_DIR / "windows" / APP_NAME
 
 
@@ -206,6 +213,18 @@ def read_installer_version() -> str:
     return match.group(1)
 
 
+def read_package_version() -> str:
+    """Read MAJOR.MINOR.PATCH from the injected runtime build metadata."""
+    if not BUILD_INFO_FILE.exists():
+        raise ValueError(f"Build metadata file not found: {BUILD_INFO_FILE}")
+
+    text = BUILD_INFO_FILE.read_text(encoding="utf-8")
+    match = re.search(r'^APP_VERSION\s*=\s*"(\d+\.\d+\.\d+)"\s*$', text, re.MULTILINE)
+    if not match:
+        raise ValueError('Expected APP_VERSION = "MAJOR.MINOR.PATCH" in build_info.py.')
+    return match.group(1)
+
+
 def find_iscc() -> str | None:
     """Locate the Inno Setup 6 compiler on PATH or in standard locations."""
     for executable in ("ISCC.exe", "iscc.exe"):
@@ -279,6 +298,31 @@ def run_installer_build(platform_id: str) -> int:
     )
 
 
+def run_native_package_build(
+    platform_id: str,
+    expected_platform: str,
+    script: Path,
+    package_name: str,
+) -> int:
+    """Run a platform package script after its PyInstaller payload is ready."""
+    if platform_id != expected_platform:
+        print(
+            f"\n  [WARN] {package_name} packaging is only available on "
+            f"{expected_platform}; skipping."
+        )
+        return 0
+    if not script.exists():
+        print(f"\n  [ERROR] {package_name} build script not found: {script}")
+        return 1
+    try:
+        app_version = read_package_version()
+    except ValueError as exc:
+        print(f"\n  [ERROR] {exc}")
+        return 1
+    print(f"\n  [PACKAGE] Building {package_name} v{app_version}...")
+    return run(["bash", str(script), app_version], cwd=str(ROOT))
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -298,6 +342,21 @@ def main() -> int:
         "--installer",
         action="store_true",
         help="Compile the Windows Inno Setup installer after the PyInstaller build.",
+    )
+    parser.add_argument(
+        "--appimage",
+        action="store_true",
+        help="Build a Linux AppImage after the PyInstaller build.",
+    )
+    parser.add_argument(
+        "--deb",
+        action="store_true",
+        help="Build a Linux Debian package after the PyInstaller build.",
+    )
+    parser.add_argument(
+        "--dmg",
+        action="store_true",
+        help="Build a macOS disk image after the PyInstaller build.",
     )
     args = parser.parse_args()
 
@@ -336,6 +395,19 @@ def main() -> int:
         rc = run_installer_build(platform_id)
         if rc != 0:
             print(f"\n  [ERROR] Installer compilation exited with code {rc}.")
+            return rc
+
+    package_requests = [
+        (args.appimage, "linux", LINUX_APPIMAGE_SCRIPT, "AppImage"),
+        (args.deb, "linux", LINUX_DEB_SCRIPT, "Debian package"),
+        (args.dmg, "macos", MACOS_DMG_SCRIPT, "DMG"),
+    ]
+    for requested, expected_platform, script, package_name in package_requests:
+        if not requested:
+            continue
+        rc = run_native_package_build(platform_id, expected_platform, script, package_name)
+        if rc != 0:
+            print(f"\n  [ERROR] {package_name} packaging exited with code {rc}.")
             return rc
 
     print_summary(platform_id)

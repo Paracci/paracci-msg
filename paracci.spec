@@ -309,5 +309,25 @@ if sys.platform == "darwin":
             "NSHighResolutionCapable": True,
             "NSRequiresAquaSystemAppearance": False,  # Dark mode support
             "LSMinimumSystemVersion": "11.0",
+            "CFBundleDocumentTypes": [
+                {
+                    "CFBundleTypeName": "Paracci Encrypted Message",
+                    "CFBundleTypeRole": "Viewer",
+                    "LSHandlerRank": "Owner",
+                    "LSItemContentTypes": ["com.paracci.message"],
+                    "CFBundleTypeExtensions": ["paracci"],
+                }
+            ],
+            "UTExportedTypeDeclarations": [
+                {
+                    "UTTypeIdentifier": "com.paracci.message",
+                    "UTTypeDescription": "Paracci Encrypted Message",
+                    "UTTypeConformsTo": ["public.data"],
+                    "UTTypeTagSpecification": {
+                        "public.filename-extension": ["paracci"],
+                        "public.mime-type": ["application/x-paracci"],
+                    },
+                }
+            ],
         },
     )

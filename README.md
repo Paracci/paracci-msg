@@ -190,6 +190,33 @@ Windows releases provide two supported distribution modes:
 - `Paracci-Setup-v<version>.exe` installs Paracci per user under `%LOCALAPPDATA%\Programs\Paracci` and stores application data under `%LOCALAPPDATA%\Paracci`.
 - `Paracci-Portable-v<version>.zip` contains the complete application folder plus its portable `data` directory; extract the folder before running `Paracci.exe`.
 
+Linux releases provide native downloads:
+
+- `Paracci-<version>-x86_64.AppImage` is the portable option for modern x86_64 Linux distributions. After downloading, run:
+
+  ```bash
+  chmod +x Paracci-<version>-x86_64.AppImage
+  ./Paracci-<version>-x86_64.AppImage
+  ```
+
+  The AppImage includes `.paracci` MIME metadata. Double-click file association becomes available after the desktop environment or an AppImage integration tool registers the AppImage; downloading the file alone does not change MIME defaults.
+
+- `paracci_<version>_amd64.deb` installs on Debian, Ubuntu, and derivatives:
+
+  ```bash
+  sudo apt install ./paracci_<version>_amd64.deb
+  sudo apt remove paracci
+  ```
+
+  The package registers `.paracci` files with the desktop environment and installs the application under `/opt/paracci`. Removing the package does not remove application data stored in `~/.local/share/paracci`.
+
+macOS releases provide `Paracci-<version>-macOS.dmg`. Open the disk image, drag `Paracci.app` to `Applications`, and launch it there. The DMG is not notarized because this project does not use a paid Apple Developer account. Gatekeeper can therefore block the first launch:
+
+- macOS Ventura and later: open `System Settings > Privacy & Security`, then select `Open Anyway`.
+- Older macOS: open `System Preferences > Security & Privacy > General`, then select `Open Anyway`.
+
+The DMG includes `GatekeeperNote.txt` with the same steps.
+
 ### Local Compilation
 
 To compile the application locally using [build.py](build.py):
@@ -205,6 +232,21 @@ python build.py --clean --installer
 # Installer output: builds/windows/Paracci-Setup-v<version>.exe
 ```
 
+On Linux, with `linuxdeploy`, `appimagetool`, an AppImage runtime file, and `dpkg-deb` available:
+
+```bash
+python build.py --clean --appimage --deb
+# Output: builds/linux/Paracci-<version>-x86_64.AppImage
+#         builds/linux/paracci_<version>_amd64.deb
+```
+
+On macOS, the system `hdiutil` command builds the drag-to-Applications disk image:
+
+```bash
+python build.py --clean --dmg
+# Output: builds/macos/Paracci-<version>-macOS.dmg
+```
+
 ### Automated GitHub Release
 
 Pushing a version tag triggers the multi-platform build pipeline:
@@ -214,7 +256,7 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-GitHub Actions builds Windows, macOS, and Linux packages in parallel, creates the Windows installer and portable archive, signs release artifacts with Sigstore build provenance attestations, runs automated VirusTotal scans, and publishes them under GitHub Releases.
+GitHub Actions builds Windows, macOS, and Linux packages in parallel, creates the Windows installer and portable archive, the macOS DMG, and Linux AppImage and Debian packages, signs release artifacts with Sigstore build provenance attestations, runs automated VirusTotal scans, and publishes them under GitHub Releases.
 
 > **Note on antivirus warnings:** PyInstaller bundles the Python runtime into the executable. Some heuristic antivirus engines flag self-extracting Python bundles as suspicious. The VirusTotal scan results and Sigstore attestations are published with every release for independent verification.
 

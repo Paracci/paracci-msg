@@ -1,0 +1,16 @@
+Paracci for macOS is distributed without Apple notarization.
+
+Because this project does not use a paid Apple Developer account, Gatekeeper may
+block the first launch after you copy Paracci.app to Applications.
+
+On macOS Ventura and later:
+1. Try to open Paracci once.
+2. Open System Settings > Privacy & Security.
+3. Select Open Anyway for Paracci and confirm the prompt.
+
+On older macOS versions:
+1. Try to open Paracci once.
+2. Open System Preferences > Security & Privacy > General.
+3. Select Open Anyway for Paracci and confirm the prompt.
+
+Only approve the app if you downloaded it from the official Paracci release.
