@@ -73,6 +73,7 @@ MIME_FILE="$ROOT/installer/linux/application-x-paracci.xml"
 ICON_FILE="$ROOT/paracci_icon.png"
 
 [[ -d "$PAYLOAD" ]] || fail "Linux payload not found: $PAYLOAD"
+[[ -x "$PAYLOAD/Paracci" ]] || fail "Linux executable not found: $PAYLOAD/Paracci"
 [[ -f "$DESKTOP_FILE" ]] || fail "Desktop entry not found: $DESKTOP_FILE"
 [[ -f "$MIME_FILE" ]] || fail "MIME definition not found: $MIME_FILE"
 [[ -f "$ICON_FILE" ]] || fail "Application icon not found: $ICON_FILE"
