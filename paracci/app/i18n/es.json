@@ -132,6 +132,8 @@
     "verify_2fa_title": "2FA Verification"
   },
   "settings": {
+    "updates_title": "Actualizaciones",
+    "updates_desc": "Compruebe actualizaciones y revise el historial de versiones.",
     "page_title": "Ajustes",
     "title": "ajustes",
     "subtitle": "Gestiona las preferencias de la aplicación y la configuración de seguridad.",
@@ -428,6 +430,19 @@
     "30d": "30 días"
   },
   "update": {
+    "page_title": "Actualizaciones",
+    "page_subtitle": "Compruebe nuevas versiones y revise las notas recientes.",
+    "installed_version": "Versión instalada",
+    "check_now": "Buscar actualizaciones",
+    "checking": "Buscando actualizaciones...",
+    "latest": "Está ejecutando la versión más reciente.",
+    "check_failed": "No se pueden comprobar las actualizaciones en este momento.",
+    "view_details": "Ver detalles",
+    "history_title": "Historial de actualizaciones",
+    "history_loading": "Cargando versiones recientes...",
+    "history_failed": "No se puede cargar el historial en este momento.",
+    "history_empty": "No hay historial de actualizaciones disponible.",
+    "published_on": "Publicada el {date}",
     "available_title": "Actualización disponible",
     "version_line": "Actual {current} - Nueva {latest}",
     "size": "Tamaño: {size}",

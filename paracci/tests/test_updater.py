@@ -17,6 +17,7 @@ from core.session import HANDSHAKE_VERSION
 from desktop.updater import (
     CHECKSUM_FILENAME,
     LATEST_RELEASE_URL,
+    RECENT_RELEASES_URL,
     UpdateManager,
     expected_checksum,
     extract_protocol_version,
@@ -41,7 +42,13 @@ class FakeResponse(io.BytesIO):
         return self._url
 
 
-def release_payload(*, body='<!-- paracci-update: {"protocol_version": 3} --> Notes', installer=True):
+def release_payload(
+    *,
+    body='<!-- paracci-update: {"protocol_version": 3} --> Notes',
+    installer=True,
+    version="1.4.2",
+    published_at="2026-05-20T10:00:00Z",
+):
     assets = []
     if installer:
         assets.append(
@@ -58,7 +65,14 @@ def release_payload(*, body='<!-- paracci-update: {"protocol_version": 3} --> No
                 "size": 100,
             }
         )
-    return {"tag_name": "v1.4.2", "assets": assets, "body": body}
+    return {
+        "tag_name": f"v{version}",
+        "assets": assets,
+        "body": body,
+        "published_at": published_at,
+        "draft": False,
+        "prerelease": False,
+    }
 
 
 def queued_urlopen(
@@ -104,8 +118,31 @@ def test_version_comparison(current, latest, expected):
 
 
 def test_build_protocol_version_tracks_active_handshake():
-    assert APP_VERSION
+    assert APP_VERSION == (REPO_ROOT / "VERSION").read_text(encoding="ascii").strip()
     assert SESSION_PROTOCOL_VERSION == HANDSHAKE_VERSION
+
+
+def test_installed_version_matching_latest_release_does_not_show_update():
+    manager = UpdateManager(
+        current_version=APP_VERSION,
+        urlopen=queued_urlopen(release_payload(version=APP_VERSION, installer=False)),
+    )
+    manager.check_now()
+    assert manager.public_status()["state"] == "no_update"
+    assert manager.public_status()["visible"] is False
+
+
+def test_release_notes_retain_markdown_but_remove_protocol_marker():
+    manager = UpdateManager(
+        current_version="1.4.0",
+        urlopen=queued_urlopen(
+            release_payload(body='<!-- paracci-update: {"protocol_version": 3} -->\n## Changes\n\n* Fixed updates')
+        ),
+    )
+    manager.check_now()
+    notes = manager.public_status()["release_notes"]
+    assert notes == "## Changes\n\n* Fixed updates"
+    assert "paracci-update" not in notes
 
 
 def test_protocol_marker_detection_and_warning_state():
@@ -210,6 +247,14 @@ def test_network_timeout_during_check_is_silent():
     assert manager.public_status()["error_code"] == ""
 
 
+def test_user_initiated_network_failure_is_reported():
+    manager = UpdateManager(urlopen=lambda _request, timeout: (_ for _ in ()).throw(TimeoutError()))
+    manager.check_now(user_initiated=True)
+    assert manager.public_status()["state"] == "check_failed"
+    assert manager.public_status()["visible"] is False
+    assert manager.public_status()["error_code"] == "check_failed"
+
+
 @pytest.mark.parametrize(("response_body", "status_code"), [(b"{invalid", 200), (b"{}", 503)])
 def test_malformed_or_error_response_during_check_is_silent(response_body, status_code):
     def opener(request, timeout):
@@ -305,6 +350,24 @@ def test_cancelled_download_removes_partial_temp_artifact(tmp_path):
     assert manager.prepare_installer_launch() is None
 
 
+def test_recent_release_history_filters_unstable_releases_and_exposes_full_notes():
+    releases = [
+        release_payload(body="## Latest", version="1.5.0", installer=False),
+        {**release_payload(body="beta", version="1.5.1", installer=False), "prerelease": True},
+        release_payload(body="## Earlier", version="1.4.2", installer=False),
+    ]
+
+    def opener(request, timeout):
+        assert timeout <= 5
+        assert request.full_url == RECENT_RELEASES_URL
+        return FakeResponse(json.dumps(releases).encode("utf-8"), request.full_url)
+
+    history = UpdateManager(urlopen=opener).recent_releases()
+    assert [item["version"] for item in history] == ["1.5.0", "1.4.2"]
+    assert history[0]["release_notes"] == "## Latest"
+    assert history[0]["published_at"] == "2026-05-20T10:00:00Z"
+
+
 def make_flask_app(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("PARACCI_LOOPBACK_TOKEN", TOKEN)
@@ -369,6 +432,37 @@ def test_update_routes_are_authenticated_but_available_while_device_locked(tmp_p
     assert download.status_code == 200
 
 
+def test_manual_check_and_history_routes_use_update_manager_while_locked(tmp_path, monkeypatch):
+    flask_app = make_flask_app(tmp_path, monkeypatch)
+
+    class RouteManager:
+        def __init__(self):
+            self.started = False
+
+        def start_check(self, *, user_initiated=False):
+            self.started = user_initiated
+            return True
+
+        def public_status(self):
+            return {"state": "checking", "current_version": APP_VERSION}
+
+        def recent_releases(self):
+            return [{"version": "1.5.0", "published_at": "2026-05-20T10:00:00Z", "release_notes": "## Notes"}]
+
+    manager = RouteManager()
+    flask_app.extensions["paracci_updater"] = manager
+    client = flask_app.test_client()
+    bootstrap(client)
+
+    check = client.post("/api/update/check", base_url=ORIGIN, json={}, headers=auth_headers(client))
+    history = client.get("/api/update/history", base_url=ORIGIN, headers=auth_headers(client))
+
+    assert check.status_code == 200
+    assert manager.started is True
+    assert history.status_code == 200
+    assert history.get_json()["releases"][0]["release_notes"] == "## Notes"
+
+
 def test_update_post_action_requires_csrf_while_locked(tmp_path, monkeypatch):
     flask_app = make_flask_app(tmp_path, monkeypatch)
     manager = UpdateManager(
@@ -387,8 +481,15 @@ def test_update_post_action_requires_csrf_while_locked(tmp_path, monkeypatch):
         json={},
         headers={"Host": HOST, "Origin": ORIGIN, "X-Paracci-Token": TOKEN},
     )
+    rejected_check = client.post(
+        "/api/update/check",
+        base_url=ORIGIN,
+        json={},
+        headers={"Host": HOST, "Origin": ORIGIN, "X-Paracci-Token": TOKEN},
+    )
 
     assert rejected.status_code == 403
+    assert rejected_check.status_code == 403
     assert manager.public_status()["visible"] is True
 
 
@@ -396,6 +497,9 @@ def test_update_banner_and_release_workflow_contracts_are_present():
     template = (PACKAGE_ROOT / "app" / "templates" / "base.html").read_text(encoding="utf-8")
     js = (PACKAGE_ROOT / "app" / "static" / "js" / "app.js").read_text(encoding="utf-8")
     css = (PACKAGE_ROOT / "app" / "static" / "css" / "components.css").read_text(encoding="utf-8")
+    updates_css = (PACKAGE_ROOT / "app" / "static" / "css" / "pages" / "updates.css").read_text(encoding="utf-8")
+    updates_template = (PACKAGE_ROOT / "app" / "templates" / "updates.html").read_text(encoding="utf-8")
+    runtime = (REPO_ROOT / "run.py").read_text(encoding="utf-8")
     workflow = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     for marker in (
         'id="update-banner"',
@@ -404,12 +508,24 @@ def test_update_banner_and_release_workflow_contracts_are_present():
         'id="update-cancel-btn"',
     ):
         assert marker in template
-    assert "notes.textContent = status.release_notes" in js
+    assert "renderUpdateMarkdown(notes, status.release_notes)" in js
+    assert "window.DOMPurify.sanitize" in js
+    assert "window.marked.parse" in js
+    assert "_updatesManualCheckPending" in js
     assert "source.content?.textContent" in js
     assert "This update changes the session protocol. After updating, you will need to establish new sessions with your contacts." in js
+    assert "function startUpdateStatusPollingWhenAuthorized()" in js
+    assert "window.ParacciSecurity?.getLoopbackToken?.()" in js
+    assert "window.addEventListener('pywebviewready', startUpdateStatusPollingWhenAuthorized)" in js
+    assert "window.addEventListener('paracci:loopback-token-ready', startUpdateStatusPollingWhenAuthorized)" in js
+    assert "window.dispatchEvent(new CustomEvent('paracci:loopback-token-ready'))" in runtime
     assert ".update-banner[hidden]" in css
+    assert "overflow-y: auto" in css
+    assert ".updates-page-actions [hidden]" in updates_css
     assert "/api/update/download" in js
-    assert 'APP_VERSION = "{version}"' in workflow
+    assert 'Path("VERSION").read_text' in workflow
+    assert 'id="updates-check-btn"' in updates_template
+    assert 'id="updates-history-list"' in updates_template
     assert '<!-- paracci-update: {"protocol_version": 3} -->' in workflow
 
 
@@ -421,3 +537,6 @@ def test_all_locales_contain_update_warning_text():
         payload = json.loads(locale_file.read_text(encoding="utf-8"))
         assert payload["update"]["update_now"]
         assert payload["update"]["protocol_warning"]
+        assert payload["update"]["check_now"]
+        assert payload["update"]["history_title"]
+        assert payload["settings"]["updates_title"]

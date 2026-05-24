@@ -221,6 +221,8 @@ The DMG includes `GatekeeperNote.txt` with the same steps.
 
 To compile the application locally using [build.py](build.py):
 
+The application version is defined only in the root [`VERSION`](VERSION) file. `build.py` generates platform metadata from that value; invoke `build.py` rather than running PyInstaller directly.
+
 ```powershell
 python build.py --install --clean
 # Output: builds/windows/Paracci/ (folder containing Paracci.exe and dependencies)
@@ -252,11 +254,12 @@ python build.py --clean --dmg
 Pushing a version tag triggers the multi-platform build pipeline:
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+# After setting VERSION to 1.5.0:
+git tag v1.5.0
+git push origin v1.5.0
 ```
 
-GitHub Actions builds Windows, macOS, and Linux packages in parallel, creates the Windows installer and portable archive, the macOS DMG, and Linux AppImage and Debian packages, signs release artifacts with Sigstore build provenance attestations, runs automated VirusTotal scans, and publishes them under GitHub Releases.
+GitHub Actions rejects a release tag that does not match `VERSION`, then builds Windows, macOS, and Linux packages in parallel, creates the Windows installer and portable archive, the macOS DMG, and Linux AppImage and Debian packages, signs release artifacts with Sigstore build provenance attestations, runs automated VirusTotal scans, and publishes them under GitHub Releases.
 
 > **Note on antivirus warnings:** PyInstaller bundles the Python runtime into the executable. Some heuristic antivirus engines flag self-extracting Python bundles as suspicious. The VirusTotal scan results and Sigstore attestations are published with every release for independent verification.
 

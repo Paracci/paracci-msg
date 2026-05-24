@@ -181,6 +181,12 @@ def test_session_markdown_uses_fragment_only_uri_policy():
     assert "const MARKDOWN_FRAGMENT_HREF_RE = /^#[^\\s\"'<>]*$/;" in session_js
 
 
+def test_vendored_dompurify_does_not_request_missing_source_map():
+    purify_js = (PACKAGE_ROOT / "app" / "static" / "js" / "lib" / "purify.min.js").read_text(encoding="utf-8")
+
+    assert "sourceMappingURL=purify.min.js.map" not in purify_js
+
+
 def test_save_file_silent_strips_path_traversal_filename(tmp_path, monkeypatch):
     from core.config import ParacciConfig
 

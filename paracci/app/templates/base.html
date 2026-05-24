@@ -46,6 +46,8 @@
       letter-spacing: 0;
     }
   </style>
+  <script src="{{ url_for('static', filename='js/lib/purify.min.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='js/lib/marked.min.js') }}" defer></script>
   <script src="{{ url_for('static', filename='js/app.js', v=range(1, 99999) | random) }}" defer></script>
 </head>
 <body class="paracci-liquid {{ 'is-auth-shell' if auth_shell else 'is-app-shell' }} {{ 'iar-signed-original' if not iar_tampered else 'iar-tampered-alert' }}"
@@ -96,6 +98,7 @@
       "argon_work_active": _("setup.argon_work_active"),
       "render_error": _("common.render_error"),
       "marked_missing": _("common.marked_missing"),
+      "update_available_title": _("update.available_title"),
       "update_version_line": _("update.version_line", current="{current}", latest="{latest}"),
       "update_size": _("update.size", size="{size}"),
       "update_downloading": _("update.downloading"),
@@ -113,7 +116,13 @@
       "update_error_checksum_failed": _("update.error_checksum_failed"),
       "update_error_size_mismatch": _("update.error_size_mismatch"),
       "update_error_browser_open_failed": _("update.error_browser_open_failed"),
-      "update_error_installer_missing": _("update.error_installer_missing")
+      "update_error_installer_missing": _("update.error_installer_missing"),
+      "update_checking": _("update.checking"),
+      "update_latest": _("update.latest"),
+      "update_check_failed": _("update.check_failed"),
+      "update_history_failed": _("update.history_failed"),
+      "update_history_empty": _("update.history_empty"),
+      "update_published_on": _("update.published_on", date="{date}")
     } | tojson }}</template>
   <div id="global-drop-overlay" class="global-drop-overlay">
     <div class="drop-content">
@@ -159,9 +168,13 @@
         <div class="update-kicker">{{ _('update.available_title') }}</div>
         <strong id="update-version-line"></strong>
       </div>
-      <button id="update-dismiss-btn" type="button" class="btn btn-ghost btn-sm">{{ _('update.remind_later') }}</button>
+      <div class="update-actions">
+        <button id="update-dismiss-btn" type="button" class="btn btn-ghost btn-sm">{{ _('update.remind_later') }}</button>
+        <button id="update-primary-btn" type="button" class="btn btn-primary btn-sm">{{ _('update.update_now') }}</button>
+        <button id="update-cancel-btn" type="button" class="btn btn-secondary btn-sm" hidden>{{ _('common.cancel') }}</button>
+      </div>
     </div>
-    <p id="update-release-notes" class="update-release-notes" hidden></p>
+    <div id="update-release-notes" class="update-release-notes update-markdown" hidden></div>
     <div id="update-protocol-warning" class="update-protocol-warning" hidden>
       <strong>{{ _('update.protocol_warning_title') }}</strong>
       <p id="update-protocol-warning-text"></p>
@@ -180,10 +193,7 @@
       </div>
     </div>
     <p id="update-status-text" class="update-status-text" hidden></p>
-    <div class="update-actions">
-      <button id="update-primary-btn" type="button" class="btn btn-primary">{{ _('update.update_now') }}</button>
-      <button id="update-cancel-btn" type="button" class="btn btn-secondary" hidden>{{ _('common.cancel') }}</button>
-    </div>
+    <a href="{{ url_for('main.updates') }}" class="update-details-link">{{ _('update.view_details') }}</a>
   </section>
 
   {% macro nav_icon(name) -%}
@@ -233,7 +243,7 @@
         <a href="{{ url_for('main.session_import') }}" class="sidebar-link {{ 'active' if endpoint == 'main.session_import' else '' }}" aria-label="{{ _('nav.import') }}" title="{{ _('nav.import') }}">
           {{ nav_icon('import') }} <span>{{ _('nav.import') }}</span>
         </a>
-        <a href="{{ url_for('main.settings') }}" class="sidebar-link {{ 'active' if endpoint in ['main.settings', 'main.settings_2fa'] else '' }}" aria-label="{{ _('nav.settings') }}" title="{{ _('nav.settings') }}">
+        <a href="{{ url_for('main.settings') }}" class="sidebar-link {{ 'active' if endpoint in ['main.settings', 'main.settings_2fa', 'main.updates'] else '' }}" aria-label="{{ _('nav.settings') }}" title="{{ _('nav.settings') }}">
           {{ nav_icon('settings') }} <span>{{ _('nav.settings') }}</span>
         </a>
         <a href="{{ url_for('main.profile') }}" class="sidebar-link {{ 'active' if endpoint == 'main.profile' else '' }}" aria-label="{{ _('profile.page_title') }}" title="{{ _('profile.page_title') }}">

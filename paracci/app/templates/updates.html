@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Paracci - {{ _('update.page_title') }}{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pages/updates.css') }}">
+{% endblock %}
+
+{% block content %}
+<div id="updates-page"
+     class="updates-page"
+     data-status-url="{{ url_for('main.api_update_status') }}"
+     data-check-url="{{ url_for('main.api_update_check') }}"
+     data-history-url="{{ url_for('main.api_update_history') }}"
+     data-download-url="{{ url_for('main.api_update_download') }}"
+     data-cancel-url="{{ url_for('main.api_update_cancel') }}">
+  <div class="page-header">
+    <div class="page-header-main">
+      <div>
+        <h1>{{ _('update.page_title') }}</h1>
+        <p class="subtitle">{{ _('update.page_subtitle') }}</p>
+      </div>
+      <button id="updates-check-btn" type="button" class="btn btn-primary">{{ _('update.check_now') }}</button>
+    </div>
+  </div>
+
+  <section class="updates-summary-card">
+    <span class="updates-label">{{ _('update.installed_version') }}</span>
+    <strong id="updates-current-version">-</strong>
+    <p id="updates-status-text" class="updates-status-text" aria-live="polite"></p>
+  </section>
+
+  <section id="updates-available-panel" class="updates-available-card" hidden>
+    <div class="update-kicker">{{ _('update.available_title') }}</div>
+    <h2 id="updates-version-line"></h2>
+    <div id="updates-release-notes" class="updates-release-notes update-markdown" hidden></div>
+    <div id="updates-protocol-warning" class="update-protocol-warning" hidden>
+      <strong>{{ _('update.protocol_warning_title') }}</strong>
+      <p id="updates-protocol-warning-text"></p>
+      <label class="update-acknowledge">
+        <input id="updates-protocol-ack" type="checkbox">
+        <span>{{ _('update.acknowledge') }}</span>
+      </label>
+    </div>
+    <div id="updates-progress-panel" class="update-progress-panel" hidden>
+      <div class="update-progress-track" aria-hidden="true">
+        <div id="updates-progress-fill" class="update-progress-fill"></div>
+      </div>
+      <div class="update-progress-meta">
+        <span id="updates-progress-percent">0%</span>
+        <span id="updates-download-size"></span>
+      </div>
+    </div>
+    <p id="updates-action-status" class="update-status-text" hidden></p>
+    <div class="updates-page-actions">
+      <button id="updates-primary-btn" type="button" class="btn btn-primary">{{ _('update.update_now') }}</button>
+      <button id="updates-cancel-btn" type="button" class="btn btn-secondary" hidden>{{ _('common.cancel') }}</button>
+    </div>
+  </section>
+
+  <section class="updates-history-card">
+    <div class="updates-section-head">
+      <h2>{{ _('update.history_title') }}</h2>
+    </div>
+    <div id="updates-history-list" class="updates-history-list">
+      <p class="updates-muted">{{ _('update.history_loading') }}</p>
+    </div>
+  </section>
+</div>
+{% endblock %}

@@ -11,11 +11,29 @@ This file is also used by the automated build pipeline (build.py).
 
 import sys
 import os
+import re
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_all, collect_submodules, collect_data_files
 
 # ── Determine icon path ────────────────────────────────────────────────────────
 ROOT = Path(SPECPATH)
+VERSION_FILE = ROOT / "VERSION"
+VERSION_INFO_FILE = ROOT / "build_metadata" / "file_version_info.txt"
+
+
+def _read_app_version():
+    try:
+        version = VERSION_FILE.read_text(encoding="ascii").strip()
+    except OSError as exc:
+        raise SystemExit(f"Canonical version file is unavailable: {VERSION_FILE}") from exc
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        raise SystemExit(f"VERSION must contain MAJOR.MINOR.PATCH, got {version!r}.")
+    return version
+
+
+APP_VERSION = _read_app_version()
+if not VERSION_INFO_FILE.is_file():
+    raise SystemExit("Generated version resource is missing. Build with: python build.py")
 
 
 def _dedupe_paths(paths):
@@ -126,6 +144,7 @@ else:
 
 # ── Data files to bundle ───────────────────────────────────────────────────────
 datas = [
+    (str(VERSION_FILE),                              "."),
     (str(ROOT / "paracci" / "app" / "templates"), "paracci/app/templates"),
     (str(ROOT / "paracci" / "app" / "static"),    "paracci/app/static"),
     (str(ROOT / "paracci" / "app" / "i18n"),      "paracci/app/i18n"),
@@ -256,7 +275,7 @@ if sys.platform == "win32":
         target_arch='x86_64',
         codesign_identity=None,
         entitlements_file=None,
-        version=str(ROOT / "file_version_info.txt"),
+        version=str(VERSION_INFO_FILE),
         icon=app_icon,
     )
     coll = COLLECT(
@@ -289,7 +308,7 @@ elif sys.platform == "darwin":
         target_arch=None,       # None = current machine arch
         codesign_identity=None,
         entitlements_file=None,
-        version=str(ROOT / "file_version_info.txt"),
+        version=str(VERSION_INFO_FILE),
         icon=app_icon,
     )
 else:
@@ -308,7 +327,7 @@ else:
         target_arch=None,       # None = current machine arch
         codesign_identity=None,
         entitlements_file=None,
-        version=str(ROOT / "file_version_info.txt"),
+        version=str(VERSION_INFO_FILE),
         icon=app_icon,
     )
     coll = COLLECT(
@@ -334,8 +353,8 @@ if sys.platform == "darwin":
         bundle_identifier="com.paracci.desktop",
         info_plist={
             "CFBundleDisplayName": "Paracci",
-            "CFBundleVersion": "1.5.0",
-            "CFBundleShortVersionString": "1.5.0",
+            "CFBundleVersion": APP_VERSION,
+            "CFBundleShortVersionString": APP_VERSION,
             "NSHighResolutionCapable": True,
             "NSRequiresAquaSystemAppearance": False,  # Dark mode support
             "LSMinimumSystemVersion": "11.0",

@@ -1,0 +1,119 @@
+.updates-page {
+  max-width: 840px;
+  margin: 0 auto;
+  padding-bottom: var(--space-10);
+}
+
+.updates-summary-card,
+.updates-available-card,
+.updates-history-card {
+  margin-bottom: var(--space-6);
+  padding: var(--space-6);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--material-card);
+}
+
+.updates-summary-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.updates-label {
+  color: var(--text-tertiary);
+  font-size: var(--text-label);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+#updates-current-version {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-body-lg);
+}
+
+.updates-status-text {
+  flex-basis: 100%;
+  margin: var(--space-2) 0 0;
+  color: var(--text-secondary);
+}
+
+.updates-status-text.error {
+  color: var(--state-error);
+}
+
+.updates-available-card h2 {
+  margin: var(--space-2) 0 var(--space-4);
+  color: var(--text-primary);
+  font-size: var(--text-h3);
+}
+
+.updates-release-notes {
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.14);
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.updates-page-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+.updates-page-actions [hidden] {
+  display: none !important;
+}
+
+.updates-section-head {
+  margin-bottom: var(--space-4);
+}
+
+.updates-section-head h2 {
+  margin: 0;
+  font-size: var(--text-h3);
+}
+
+.updates-history-item {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.updates-history-item:first-child {
+  border-top: none;
+}
+
+.updates-history-item summary {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4) 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.updates-history-item summary::-webkit-details-marker {
+  display: none;
+}
+
+.updates-history-version {
+  color: var(--text-primary);
+  font-weight: 650;
+}
+
+.updates-history-date,
+.updates-muted {
+  color: var(--text-tertiary);
+  font-size: var(--text-body-sm);
+}
+
+.updates-history-notes {
+  padding: 0 0 var(--space-4);
+  color: var(--text-secondary);
+  line-height: 1.55;
+}

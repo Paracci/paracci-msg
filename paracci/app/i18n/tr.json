@@ -132,6 +132,8 @@
     "2fa_disabled_success": "2FA devre dışı bırakıldı."
   },
   "settings": {
+    "updates_title": "Güncellemeler",
+    "updates_desc": "Uygulama güncellemelerini denetleyin ve sürüm geçmişini inceleyin.",
     "page_title": "Ayarlar",
     "title": "ayarlar",
     "subtitle": "Uygulama tercihlerini ve güvenlik yapılandırmasını yönet.",
@@ -428,6 +430,19 @@
     "30d": "30 Gün"
   },
   "update": {
+    "page_title": "Güncellemeler",
+    "page_subtitle": "Yeni sürümleri denetleyin ve son sürüm notlarını inceleyin.",
+    "installed_version": "Yüklü sürüm",
+    "check_now": "Güncellemeleri Denetle",
+    "checking": "Güncellemeler denetleniyor...",
+    "latest": "En güncel sürümü kullanıyorsunuz.",
+    "check_failed": "Güncellemeler şu anda denetlenemiyor.",
+    "view_details": "Ayrıntıları Görüntüle",
+    "history_title": "Güncelleme Geçmişi",
+    "history_loading": "Son sürümler yükleniyor...",
+    "history_failed": "Güncelleme geçmişi şu anda yüklenemiyor.",
+    "history_empty": "Güncelleme geçmişi bulunmuyor.",
+    "published_on": "Yayımlanma: {date}",
     "available_title": "Güncelleme mevcut",
     "version_line": "Mevcut {current} - Yeni {latest}",
     "size": "Boyut: {size}",

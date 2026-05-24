@@ -964,6 +964,16 @@ input[type="checkbox"] {
   gap: var(--space-3);
 }
 
+.update-banner-head {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.update-banner-head .update-actions {
+  margin-top: 0;
+  flex-shrink: 0;
+}
+
 .update-kicker {
   margin-bottom: 3px;
   color: var(--accent-secondary);
@@ -979,6 +989,80 @@ input[type="checkbox"] {
   color: var(--text-secondary);
   font-size: var(--text-body-sm);
   line-height: 1.45;
+}
+
+.update-release-notes {
+  max-height: 190px;
+  overflow-y: auto;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.14);
+}
+
+.update-markdown > :first-child {
+  margin-top: 0;
+}
+
+.update-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.update-markdown h1,
+.update-markdown h2,
+.update-markdown h3,
+.update-markdown h4 {
+  margin: var(--space-3) 0 var(--space-2);
+  color: var(--text-primary);
+  font-size: var(--text-body);
+}
+
+.update-markdown p,
+.update-markdown ul,
+.update-markdown ol,
+.update-markdown blockquote,
+.update-markdown pre,
+.update-markdown table {
+  margin: 0 0 var(--space-3);
+}
+
+.update-markdown ul,
+.update-markdown ol {
+  padding-left: var(--space-5);
+}
+
+.update-markdown code,
+.update-markdown pre {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.update-markdown code {
+  padding: 0.1em 0.3em;
+  border-radius: var(--radius-sm);
+}
+
+.update-markdown pre {
+  overflow-x: auto;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+}
+
+.update-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.update-markdown th,
+.update-markdown td {
+  padding: var(--space-2);
+  border: 1px solid var(--border-subtle);
+  text-align: left;
+}
+
+.update-markdown a {
+  color: var(--accent-secondary);
 }
 
 .update-status-text.error {
@@ -1037,6 +1121,18 @@ input[type="checkbox"] {
 .update-actions {
   justify-content: flex-end;
   margin-top: var(--space-4);
+}
+
+.update-details-link {
+  display: inline-flex;
+  margin-top: var(--space-3);
+  color: var(--accent-secondary);
+  font-size: var(--text-body-sm);
+  text-decoration: none;
+}
+
+.update-details-link:hover {
+  text-decoration: underline;
 }
 
 .p-modal-overlay {
