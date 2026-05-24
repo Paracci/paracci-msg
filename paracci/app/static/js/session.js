@@ -162,8 +162,12 @@ function setupAttachmentDropZone() {
                 try {
                     await window.stageNativeAttachmentsFromPicker();
                 } catch (err) {
-                    console.error('[Paracci] Native attachment picker failed:', err);
-                    showNotification(err.message || window.PARACCI_I18N?.drop_failed || 'Attachment could not be staged.', 'error');
+                    const message = err?.message ?? String(err);
+                    showNotification(message || window.PARACCI_I18N?.drop_failed || 'Attachment could not be staged.', 'error');
+                    const isExpected = message.includes('50MB') || message.includes('limit') || message.includes('size');
+                    if (!isExpected) {
+                        console.error('[Paracci] Native attachment picker failed:', err);
+                    }
                 }
                 return;
             }
