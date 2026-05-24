@@ -171,91 +171,22 @@ jobs:
         shell: pwsh
         run: choco install innosetup --version=6.7.1 --no-progress -y
 
-      - name: Inject release version metadata
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Verify canonical release metadata
         shell: bash
         env:
           RELEASE_TAG: ${{ github.ref_name }}
+          IS_RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
         run: |
           python - <<'PY'
           import os, re
           from pathlib import Path
 
+          version = Path("VERSION").read_text(encoding="ascii").strip()
+          if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+              raise SystemExit(f"VERSION must contain MAJOR.MINOR.PATCH, got {version!r}")
           tag = os.environ["RELEASE_TAG"]
-          version = tag[1:] if tag.startswith("v") else tag
-          match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version)
-          if not match:
-              raise SystemExit(f"Release tag must be vMAJOR.MINOR.PATCH, got {tag!r}")
-
-          major, minor, patch = map(int, match.groups())
-          version_tuple = f"({major}, {minor}, {patch}, 0)"
-
-          def replace_once(text, pattern, replacement, label):
-              updated, count = re.subn(pattern, replacement, text, count=1)
-              if count != 1:
-                  raise SystemExit(f"Expected exactly one {label} replacement, found {count}")
-              return updated
-
-          fv = Path("file_version_info.txt")
-          text = fv.read_text(encoding="utf-8")
-          text = replace_once(text, r"filevers=\(\d+,\s*\d+,\s*\d+,\s*\d+\)", f"filevers={version_tuple}", "filevers")
-          text = replace_once(text, r"prodvers=\(\d+,\s*\d+,\s*\d+,\s*\d+\)", f"prodvers={version_tuple}", "prodvers")
-          text = replace_once(text, r"StringStruct\('FileVersion',\s*'[^']*'\)", f"StringStruct('FileVersion', '{version}')", "FileVersion")
-          text = replace_once(text, r"StringStruct\('ProductVersion',\s*'[^']*'\)", f"StringStruct('ProductVersion', '{version}')", "ProductVersion")
-          fv.write_text(text, encoding="utf-8")
-
-          spec = Path("paracci.spec")
-          text = spec.read_text(encoding="utf-8")
-          text = replace_once(text, r'"CFBundleVersion":\s*"[^"]*"', f'"CFBundleVersion": "{version}"', "CFBundleVersion")
-          text = replace_once(text, r'"CFBundleShortVersionString":\s*"[^"]*"', f'"CFBundleShortVersionString": "{version}"', "CFBundleShortVersionString")
-          spec.write_text(text, encoding="utf-8")
-
-          build_info = Path("paracci/app/build_info.py")
-          text = build_info.read_text(encoding="utf-8")
-          text = replace_once(text, r'APP_VERSION\s*=\s*"[^"]*"', f'APP_VERSION = "{version}"', "APP_VERSION")
-          build_info.write_text(text, encoding="utf-8")
-
-          print(f"Injected Paracci version {version}")
-          PY
-
-      - name: Verify release version metadata
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          python - <<'PY'
-          import os, re
-          from pathlib import Path
-
-          tag = os.environ["RELEASE_TAG"]
-          version = tag[1:] if tag.startswith("v") else tag
-          major, minor, patch = map(int, version.split("."))
-          version_tuple = f"({major}, {minor}, {patch}, 0)"
-
-          checks = {
-              "file_version_info.txt": [
-                  f"filevers={version_tuple}",
-                  f"prodvers={version_tuple}",
-                  f"StringStruct('FileVersion', '{version}')",
-                  f"StringStruct('ProductVersion', '{version}')",
-              ],
-              "paracci.spec": [
-                  f'"CFBundleVersion": "{version}"',
-                  f'"CFBundleShortVersionString": "{version}"',
-              ],
-              "paracci/app/build_info.py": [
-                  f'APP_VERSION = "{version}"',
-              ],
-          }
-
-          missing = []
-          for path, needles in checks.items():
-              text = Path(path).read_text(encoding="utf-8")
-              missing.extend(f"{path}: {needle}" for needle in needles if needle not in text)
-
-          if missing:
-              raise SystemExit("Version injection verification failed:\n" + "\n".join(missing))
+          if os.environ["IS_RELEASE_TAG"] == "true" and tag != f"v{version}":
+              raise SystemExit(f"Release tag {tag!r} does not match canonical VERSION v{version}.")
           build_info = Path("paracci/app/build_info.py").read_text(encoding="utf-8")
           protocol_match = re.search(r"SESSION_PROTOCOL_VERSION\s*=\s*(\d+)", build_info)
           if not protocol_match:
@@ -264,7 +195,7 @@ jobs:
           workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
           if marker not in workflow:
               raise SystemExit(f"Release protocol marker is not synchronized: {marker}")
-          print(f"Verified injected version {version}")
+          print(f"Verified canonical Paracci version {version}")
           PY
 
       # ── 5. Build executable ────────────────────────────────────────────────
@@ -652,6 +583,9 @@ jobs:
       release_id: ${{ steps.gh_release.outputs.id }}
 
     steps:
+      - name: Checkout repository metadata
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
       - name: Download Windows artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
@@ -684,7 +618,11 @@ jobs:
       - name: Resolve release files
         id: resolve
         run: |
-          PACKAGE_VERSION="${GITHUB_REF_NAME#v}"
+          PACKAGE_VERSION="$(tr -d '\r\n' < VERSION)"
+          if [ "$GITHUB_REF_NAME" != "v$PACKAGE_VERSION" ]; then
+            echo "Release tag $GITHUB_REF_NAME does not match canonical VERSION v$PACKAGE_VERSION." >&2
+            exit 1
+          fi
           WIN_FILE="release-assets/windows/Paracci/Paracci.exe"
           WIN_SETUP_FILE="$(find release-assets/windows -maxdepth 1 -name 'Paracci-Setup-v*.exe' -print -quit)"
           WIN_PORTABLE_FILE="$(find release-assets/windows -maxdepth 1 -name 'Paracci-Portable-v*.zip' -print -quit)"

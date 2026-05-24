@@ -828,7 +828,10 @@ if __name__ == "__main__":
             if using_webview_token:
                 return
             try:
-                window.evaluate_js(f"window.__PARACCI_NATIVE_TOKEN = {json.dumps(loopback_token)};")
+                window.evaluate_js(
+                    f"window.__PARACCI_NATIVE_TOKEN = {json.dumps(loopback_token)}; "
+                    "window.dispatchEvent(new CustomEvent('paracci:loopback-token-ready'));"
+                )
             except (RuntimeError, AttributeError) as exc:
                 logger.warning("Loopback token injection error (expected): %s", exc)
             except (MemoryError, KeyboardInterrupt, SystemExit):

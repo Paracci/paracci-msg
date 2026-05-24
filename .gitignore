@@ -9,6 +9,7 @@ ENV/
 env/
 dist/
 build_cache/
+build_metadata/
 
 # --- Compiled binaries (local builds) ---
 # GitHub Actions produces these; local builds should not be committed

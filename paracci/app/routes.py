@@ -80,6 +80,7 @@ from core.evolution import (
 )
 from core.preview_store import PreviewEntry, preview_store
 from . import APP_DIR
+from .build_info import APP_VERSION
 from .i18n_manager import i18n
 
 logger = logging.getLogger(__name__)
@@ -742,6 +743,8 @@ def check_lock():
         "main.api_capabilities",
         "main.api_benchmark_results",
         "main.api_update_status",
+        "main.api_update_check",
+        "main.api_update_history",
         "main.api_update_dismiss",
         "main.api_update_download",
         "main.api_update_cancel",
@@ -1377,9 +1380,10 @@ def _no_update_status() -> dict:
     return {
         "state": "no_update",
         "visible": False,
-        "current_version": "",
+        "current_version": APP_VERSION,
         "latest_version": "",
         "release_notes": "",
+        "published_at": "",
         "protocol_warning": False,
         "protocol_unknown": False,
         "action": "none",
@@ -1397,6 +1401,34 @@ def api_update_status():
     manager = _update_manager()
     status = manager.public_status() if manager is not None else _no_update_status()
     return _mark_sensitive_no_store(jsonify(status))
+
+
+@bp.route("/api/update/check", methods=["POST"])
+def api_update_check():
+    """Start an explicit update check requested from the Updates page."""
+    if not request.is_json:
+        return _mark_sensitive_no_store(jsonify({"error_code": "json_required"})), 415
+    manager = _update_manager()
+    if manager is None:
+        return _mark_sensitive_no_store(jsonify({"error_code": "updater_unavailable"})), 409
+    if not manager.start_check(user_initiated=True):
+        status = manager.public_status()
+        status["error_code"] = "update_busy"
+        return _mark_sensitive_no_store(jsonify(status)), 409
+    return _mark_sensitive_no_store(jsonify(manager.public_status()))
+
+
+@bp.route("/api/update/history", methods=["GET"])
+def api_update_history():
+    """Return recent stable releases for the Updates page."""
+    manager = _update_manager()
+    if manager is None:
+        return _mark_sensitive_no_store(jsonify({"error_code": "updater_unavailable", "releases": []})), 409
+    try:
+        releases = manager.recent_releases()
+    except Exception:
+        return _mark_sensitive_no_store(jsonify({"error_code": "history_unavailable", "releases": []})), 502
+    return _mark_sensitive_no_store(jsonify({"releases": releases}))
 
 
 @bp.route("/api/update/dismiss", methods=["POST"])
@@ -2087,6 +2119,12 @@ def session_export(sid: str):
 # ---------------------------------------------------------------------------
 # GET/POST /settings — Application Settings
 # ---------------------------------------------------------------------------
+
+@bp.route("/updates")
+def updates():
+    """Render the manual update-check and release-history page."""
+    return render_template("updates.html")
+
 
 @bp.route("/settings", methods=["GET", "POST"])
 def settings():

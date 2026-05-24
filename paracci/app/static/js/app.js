@@ -126,6 +126,7 @@ document.addEventListener('DOMContentLoaded', () => {
     bindGlobalShellControls();
     setupGlobalDropExperience();
     initUpdateBanner();
+    initUpdatesPage();
 
     // 3. Focus settings TOTP verification code input if present
     const settingsCode = document.getElementById('authCodeInput');
@@ -496,6 +497,11 @@ function handleToastClick() {
 let _updateStatus = null;
 let _updatePollTimer = null;
 let _updateAckVersion = '';
+let _updateStatusPollingStarted = false;
+let _updatesPageStarted = false;
+let _updatesAckVersion = '';
+let _updatesManualCheckPending = false;
+const UPDATE_MARKDOWN_FRAGMENT_HREF_RE = /^#[^\s"'<>]*$/;
 
 function updateString(key, fallback, values = {}) {
     let result = window.PARACCI_I18N?.[key] || fallback;
@@ -513,9 +519,57 @@ function formatUpdateSize(rawSize) {
     return `${bytes} B`;
 }
 
+function renderUpdateMarkdown(container, markdown) {
+    if (!container) return;
+    const text = String(markdown || '');
+    container.hidden = !text;
+    if (!text) {
+        container.replaceChildren();
+        return;
+    }
+    if (typeof window.marked?.parse !== 'function' || typeof window.DOMPurify?.sanitize !== 'function') {
+        container.textContent = text;
+        return;
+    }
+    try {
+        const rawHtml = window.marked.parse(text);
+        container.innerHTML = window.DOMPurify.sanitize(rawHtml, {
+            ALLOWED_TAGS: [
+                'a', 'p', 'br', 'strong', 'b', 'em', 'i', 'code', 'pre', 'blockquote',
+                'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr',
+                'table', 'thead', 'tbody', 'tr', 'th', 'td'
+            ],
+            ALLOWED_ATTR: ['href', 'title'],
+            ALLOWED_URI_REGEXP: UPDATE_MARKDOWN_FRAGMENT_HREF_RE,
+            FORBID_ATTR: ['style', 'target']
+        });
+    } catch (_err) {
+        container.textContent = text;
+    }
+}
+
+function formatReleaseDate(rawDate) {
+    if (!rawDate) return '';
+    const parsed = new Date(rawDate);
+    if (Number.isNaN(parsed.getTime())) return '';
+    return parsed.toLocaleDateString(document.documentElement.lang || undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+    });
+}
+
 function scheduleUpdatePoll(delay = 1000) {
     clearTimeout(_updatePollTimer);
     _updatePollTimer = setTimeout(fetchUpdateStatus, delay);
+}
+
+function startUpdateStatusPollingWhenAuthorized() {
+    if (_updateStatusPollingStarted || !window.ParacciSecurity?.getLoopbackToken?.()) return;
+    _updateStatusPollingStarted = true;
+    window.removeEventListener('pywebviewready', startUpdateStatusPollingWhenAuthorized);
+    window.removeEventListener('paracci:loopback-token-ready', startUpdateStatusPollingWhenAuthorized);
+    fetchUpdateStatus();
 }
 
 async function fetchUpdateStatus() {
@@ -524,6 +578,7 @@ async function fetchUpdateStatus() {
         if (!response.ok) return;
         const status = await response.json();
         renderUpdateBanner(status);
+        renderUpdatesPageStatus(status);
         if (['checking', 'downloading', 'verifying'].includes(status.state)) {
             scheduleUpdatePoll();
         }
@@ -546,6 +601,7 @@ async function postUpdateAction(path, payload = {}) {
             return;
         }
         renderUpdateBanner(status);
+        renderUpdatesPageStatus(status);
         if (['downloading', 'verifying'].includes(status.state)) scheduleUpdatePoll(250);
     } catch (_err) {
         showNotification(updateString('update_error_download_failed', 'Could not start the update.'), 'error');
@@ -577,6 +633,10 @@ function renderUpdateBanner(status) {
     _updateStatus = status;
     const banner = document.getElementById('update-banner');
     if (!banner) return;
+    if (document.getElementById('updates-page')) {
+        banner.hidden = true;
+        return;
+    }
     if (!status?.visible) {
         banner.hidden = true;
         clearTimeout(_updatePollTimer);
@@ -601,8 +661,7 @@ function renderUpdateBanner(status) {
         'Current {current} - New {latest}',
         { current: status.current_version, latest: status.latest_version }
     );
-    notes.textContent = status.release_notes || '';
-    notes.hidden = !status.release_notes;
+    renderUpdateMarkdown(notes, status.release_notes);
 
     if (_updateAckVersion !== status.latest_version) {
         ack.checked = false;
@@ -665,7 +724,200 @@ function initUpdateBanner() {
             acknowledge_protocol_warning: Boolean(document.getElementById('update-protocol-ack')?.checked)
         });
     });
-    fetchUpdateStatus();
+    window.addEventListener('pywebviewready', startUpdateStatusPollingWhenAuthorized);
+    window.addEventListener('paracci:loopback-token-ready', startUpdateStatusPollingWhenAuthorized);
+    startUpdateStatusPollingWhenAuthorized();
+}
+
+function renderUpdatesPageStatus(status) {
+    const page = document.getElementById('updates-page');
+    if (!page || !status) return;
+    _updateStatus = status;
+    const currentVersion = document.getElementById('updates-current-version');
+    const checkButton = document.getElementById('updates-check-btn');
+    const summaryStatus = document.getElementById('updates-status-text');
+    const panel = document.getElementById('updates-available-panel');
+    const versionLine = document.getElementById('updates-version-line');
+    const notes = document.getElementById('updates-release-notes');
+    const warning = document.getElementById('updates-protocol-warning');
+    const warningText = document.getElementById('updates-protocol-warning-text');
+    const ack = document.getElementById('updates-protocol-ack');
+    const primary = document.getElementById('updates-primary-btn');
+    const cancel = document.getElementById('updates-cancel-btn');
+    const progressPanel = document.getElementById('updates-progress-panel');
+    const progressFill = document.getElementById('updates-progress-fill');
+    const progressPercent = document.getElementById('updates-progress-percent');
+    const size = document.getElementById('updates-download-size');
+    const actionStatus = document.getElementById('updates-action-status');
+    const busy = ['checking', 'downloading', 'verifying', 'installing'].includes(status.state);
+    const hasRelease = Boolean(status.latest_version) && ['available', 'downloading', 'verifying', 'ready', 'failed', 'cancelled', 'installing'].includes(status.state);
+
+    if (_updatesManualCheckPending && status.state !== 'checking') {
+        _updatesManualCheckPending = false;
+        if (!hasRelease && !['downloading', 'verifying', 'ready', 'installing'].includes(status.state)) {
+            requestManualUpdateCheck();
+            return;
+        }
+    }
+
+    currentVersion.textContent = status.current_version || '-';
+    checkButton.disabled = busy || status.state === 'ready';
+    summaryStatus.classList.toggle('error', status.state === 'check_failed');
+    if (status.state === 'checking') {
+        summaryStatus.textContent = updateString('update_checking', 'Checking for updates...');
+    } else if (status.state === 'check_failed') {
+        summaryStatus.textContent = updateString('update_check_failed', 'Unable to check for updates right now.');
+    } else if (hasRelease) {
+        summaryStatus.textContent = updateString('update_available_title', 'Update available.');
+    } else {
+        summaryStatus.textContent = updateString('update_latest', 'You are running the latest version.');
+    }
+
+    panel.hidden = !hasRelease;
+    if (!hasRelease) return;
+
+    versionLine.textContent = updateString(
+        'update_version_line',
+        'Current {current} - New {latest}',
+        { current: status.current_version, latest: status.latest_version }
+    );
+    renderUpdateMarkdown(notes, status.release_notes);
+    if (_updatesAckVersion !== status.latest_version) {
+        ack.checked = false;
+        _updatesAckVersion = status.latest_version;
+    }
+    warning.hidden = !status.protocol_warning;
+    warningText.textContent = status.protocol_unknown
+        ? updateString('update_protocol_unknown', 'This release does not provide session protocol compatibility information. After updating, you may need to establish new sessions with your contacts.')
+        : updateString('update_protocol_warning', 'This update changes the session protocol. After updating, you will need to establish new sessions with your contacts.');
+    const hasProgress = ['downloading', 'verifying', 'ready'].includes(status.state);
+    progressPanel.hidden = !hasProgress;
+    progressFill.style.width = `${Number(status.progress_percent || 0)}%`;
+    progressPercent.textContent = `${Number(status.progress_percent || 0)}%`;
+    const formattedSize = formatUpdateSize(status.size_bytes);
+    size.textContent = formattedSize
+        ? updateString('update_size', 'Size: {size}', { size: formattedSize })
+        : '';
+    const message = updateStatusMessage(status);
+    actionStatus.textContent = message;
+    actionStatus.hidden = !message;
+    actionStatus.classList.toggle('error', Boolean(status.error_code));
+    primary.hidden = busy;
+    cancel.hidden = !['downloading', 'verifying'].includes(status.state);
+    if (status.state === 'ready') {
+        primary.textContent = updateString('update_install_now', 'Install Update');
+    } else if (status.action === 'browser') {
+        primary.textContent = updateString('update_open_releases', 'View Download');
+    } else {
+        primary.textContent = updateString('update_update_now', 'Update Now');
+    }
+    primary.disabled = status.protocol_warning && !ack.checked;
+}
+
+async function requestManualUpdateCheck() {
+    const page = document.getElementById('updates-page');
+    if (!page) return;
+    try {
+        const response = await fetch(page.dataset.checkUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}'
+        });
+        const status = await response.json();
+        if (!response.ok && status.error_code !== 'update_busy') {
+            _updatesManualCheckPending = false;
+            renderUpdatesPageStatus({ state: 'check_failed', current_version: _updateStatus?.current_version || '', error_code: 'check_failed' });
+            return;
+        }
+        _updatesManualCheckPending = !response.ok && status.error_code === 'update_busy' && status.state === 'checking';
+        renderUpdatesPageStatus(status);
+        if (status.state === 'checking') scheduleUpdatePoll(250);
+    } catch (_err) {
+        _updatesManualCheckPending = false;
+        renderUpdatesPageStatus({ state: 'check_failed', current_version: _updateStatus?.current_version || '', error_code: 'check_failed' });
+    }
+}
+
+async function fetchUpdateHistory() {
+    const page = document.getElementById('updates-page');
+    const list = document.getElementById('updates-history-list');
+    if (!page || !list) return;
+    try {
+        const response = await fetch(page.dataset.historyUrl, { cache: 'no-store' });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error_code || 'history_unavailable');
+        list.replaceChildren();
+        if (!payload.releases?.length) {
+            const empty = document.createElement('p');
+            empty.className = 'updates-muted';
+            empty.textContent = updateString('update_history_empty', 'No release history is available.');
+            list.appendChild(empty);
+            return;
+        }
+        payload.releases.forEach(release => {
+            const details = document.createElement('details');
+            details.className = 'updates-history-item';
+            const summary = document.createElement('summary');
+            const version = document.createElement('span');
+            version.className = 'updates-history-version';
+            version.textContent = `v${release.version}`;
+            const date = document.createElement('span');
+            date.className = 'updates-history-date';
+            const formattedDate = formatReleaseDate(release.published_at);
+            date.textContent = formattedDate
+                ? updateString('update_published_on', 'Published {date}', { date: formattedDate })
+                : '';
+            summary.append(version, date);
+            const notes = document.createElement('div');
+            notes.className = 'updates-history-notes update-markdown';
+            renderUpdateMarkdown(notes, release.release_notes);
+            details.append(summary, notes);
+            list.appendChild(details);
+        });
+    } catch (_err) {
+        list.replaceChildren();
+        const error = document.createElement('p');
+        error.className = 'updates-muted';
+        error.textContent = updateString('update_history_failed', 'Unable to load update history right now.');
+        list.appendChild(error);
+    }
+}
+
+function startUpdatesPageWhenAuthorized() {
+    if (_updatesPageStarted || !window.ParacciSecurity?.getLoopbackToken?.()) return;
+    _updatesPageStarted = true;
+    window.removeEventListener('pywebviewready', startUpdatesPageWhenAuthorized);
+    window.removeEventListener('paracci:loopback-token-ready', startUpdatesPageWhenAuthorized);
+    requestManualUpdateCheck();
+    fetchUpdateHistory();
+}
+
+function initUpdatesPage() {
+    const page = document.getElementById('updates-page');
+    if (!page) return;
+    document.getElementById('updates-check-btn')?.addEventListener('click', requestManualUpdateCheck);
+    document.getElementById('updates-protocol-ack')?.addEventListener('change', () => {
+        if (_updateStatus) renderUpdatesPageStatus(_updateStatus);
+    });
+    document.getElementById('updates-cancel-btn')?.addEventListener('click', () => {
+        postUpdateAction(page.dataset.cancelUrl);
+    });
+    document.getElementById('updates-primary-btn')?.addEventListener('click', async () => {
+        if (_updateStatus?.state === 'ready') {
+            if (window.pywebview?.api?.install_verified_update) {
+                await window.pywebview.api.install_verified_update();
+            } else {
+                showNotification(updateString('update_error_installer_missing', 'Installer launch is unavailable.'), 'error');
+            }
+            return;
+        }
+        await postUpdateAction(page.dataset.downloadUrl, {
+            acknowledge_protocol_warning: Boolean(document.getElementById('updates-protocol-ack')?.checked)
+        });
+    });
+    window.addEventListener('pywebviewready', startUpdatesPageWhenAuthorized);
+    window.addEventListener('paracci:loopback-token-ready', startUpdatesPageWhenAuthorized);
+    startUpdatesPageWhenAuthorized();
 }
 
 // 5. Argon2id Work Overlay Helpers

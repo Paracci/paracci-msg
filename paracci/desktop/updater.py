@@ -22,10 +22,12 @@ from app.build_info import APP_VERSION, SESSION_PROTOCOL_VERSION
 
 
 LATEST_RELEASE_URL = "https://api.github.com/repos/Paracci/paracci-msg/releases/latest"
+RECENT_RELEASES_URL = "https://api.github.com/repos/Paracci/paracci-msg/releases?per_page=10"
 RELEASES_PAGE_URL = "https://github.com/Paracci/paracci-msg/releases"
 CHECKSUM_FILENAME = "SHA256SUMS.txt"
 REQUEST_TIMEOUT_SECONDS = 5.0
 MAX_RELEASE_BYTES = 512 * 1024
+MAX_RELEASE_HISTORY_BYTES = 2 * 1024 * 1024
 MAX_CHECKSUM_BYTES = 128 * 1024
 DOWNLOAD_CHUNK_SIZE = 64 * 1024
 _PROTOCOL_MARKER_RE = re.compile(
@@ -58,7 +60,8 @@ class ReleaseAsset:
 @dataclass(frozen=True)
 class ReleaseInfo:
     version: str
-    notes_excerpt: str
+    release_notes: str
+    published_at: str
     protocol_version: int | None
     protocol_warning: bool
     protocol_unknown: bool
@@ -113,10 +116,8 @@ def _https_url(value: object) -> str | None:
     return value
 
 
-def _release_notes_excerpt(body: str) -> str:
-    without_marker = _PROTOCOL_MARKER_RE.sub("", body if isinstance(body, str) else "")
-    normalized = " ".join(without_marker.split())
-    return normalized[:237] + "..." if len(normalized) > 240 else normalized
+def _release_notes(body: str) -> str:
+    return _PROTOCOL_MARKER_RE.sub("", body if isinstance(body, str) else "").strip()
 
 
 class UpdateManager:
@@ -155,29 +156,32 @@ class UpdateManager:
         self._verified_installer: Path | None = None
         self._handoff_installer: Path | None = None
 
-    def start_check(self) -> bool:
-        """Start the once-per-launch check without blocking the GUI thread."""
+    def start_check(self, *, user_initiated: bool = False) -> bool:
+        """Start an update check without blocking the GUI thread."""
         with self._lock:
             if self._worker is not None and self._worker.is_alive():
+                return False
+            if self._state in {"downloading", "verifying", "ready", "installing"}:
                 return False
             self._state = "checking"
             self._visible = False
             self._error_code = ""
             self._worker = threading.Thread(
                 target=self._check_worker,
+                args=(user_initiated,),
                 daemon=True,
                 name="paracci-update-check",
             )
             self._worker.start()
             return True
 
-    def check_now(self) -> None:
+    def check_now(self, *, user_initiated: bool = False) -> None:
         """Synchronous check entrypoint used by focused tests."""
         with self._lock:
             self._state = "checking"
             self._visible = False
             self._error_code = ""
-        self._check_worker()
+        self._check_worker(user_initiated)
 
     def public_status(self) -> dict:
         """Expose UI-safe state only; remote URLs and local paths stay private."""
@@ -191,7 +195,8 @@ class UpdateManager:
                 "visible": self._visible,
                 "current_version": self.current_version,
                 "latest_version": release.version if release else "",
-                "release_notes": release.notes_excerpt if release else "",
+                "release_notes": release.release_notes if release else "",
+                "published_at": release.published_at if release else "",
                 "protocol_warning": release.protocol_warning if release else False,
                 "protocol_unknown": release.protocol_unknown if release else False,
                 "action": self._action,
@@ -201,6 +206,31 @@ class UpdateManager:
                 "verification_status": self._verification_status,
                 "error_code": self._error_code,
             }
+
+    def recent_releases(self) -> list[dict]:
+        """Fetch recent stable GitHub releases for the updates page."""
+        payload = json.loads(
+            self._read_bounded_url(RECENT_RELEASES_URL, MAX_RELEASE_HISTORY_BYTES).decode("utf-8")
+        )
+        if not isinstance(payload, list):
+            raise ValueError("invalid release history response")
+        history = []
+        for item in payload:
+            if not isinstance(item, dict) or item.get("draft") is True or item.get("prerelease") is True:
+                continue
+            release = self._parse_release(item)
+            if release is None:
+                continue
+            history.append(
+                {
+                    "version": release.version,
+                    "published_at": release.published_at,
+                    "release_notes": release.release_notes,
+                }
+            )
+            if len(history) == 5:
+                break
+        return history
 
     def dismiss(self) -> dict:
         """Hide update state only for this application process."""
@@ -303,7 +333,7 @@ class UpdateManager:
                 self._handoff_installer = None
         self._remove_temp_dir(cleanup_path)
 
-    def _check_worker(self) -> None:
+    def _check_worker(self, user_initiated: bool = False) -> None:
         try:
             payload = json.loads(
                 self._read_bounded_url(LATEST_RELEASE_URL, MAX_RELEASE_BYTES).decode("utf-8")
@@ -325,7 +355,10 @@ class UpdateManager:
                 self._verification_status = ""
                 self._error_code = ""
         except Exception:
-            self._hide_no_update()
+            if user_initiated:
+                self._set_check_failed()
+            else:
+                self._hide_no_update()
 
     def _parse_release(self, payload: object) -> ReleaseInfo | None:
         if not isinstance(payload, dict):
@@ -336,6 +369,7 @@ class UpdateManager:
             return None
         version = tag_match.group(1)
         body = payload.get("body") if isinstance(payload.get("body"), str) else ""
+        published_at = payload.get("published_at") if isinstance(payload.get("published_at"), str) else ""
         protocol_version = extract_protocol_version(body)
         protocol_unknown = protocol_version is None
         protocol_warning = protocol_unknown or protocol_version != self.protocol_version
@@ -343,7 +377,8 @@ class UpdateManager:
         installer_name = f"Paracci-Setup-v{version}.exe"
         return ReleaseInfo(
             version=version,
-            notes_excerpt=_release_notes_excerpt(body),
+            release_notes=_release_notes(body),
+            published_at=published_at,
             protocol_version=protocol_version,
             protocol_warning=protocol_warning,
             protocol_unknown=protocol_unknown,
@@ -485,6 +520,17 @@ class UpdateManager:
             self._downloaded_bytes = 0
             self._verification_status = ""
             self._error_code = ""
+
+    def _set_check_failed(self) -> None:
+        with self._lock:
+            self._release = None
+            self._state = "check_failed"
+            self._visible = False
+            self._action = "none"
+            self._size_bytes = None
+            self._downloaded_bytes = 0
+            self._verification_status = ""
+            self._error_code = "check_failed"
 
     @staticmethod
     def _remove_temp_dir(path: Path | None) -> None:

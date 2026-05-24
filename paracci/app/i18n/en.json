@@ -132,6 +132,8 @@
     "2fa_disabled_success": "2FA disabled successfully."
   },
   "settings": {
+    "updates_title": "Updates",
+    "updates_desc": "Check for application updates and review release history.",
     "page_title": "Settings",
     "title": "settings",
     "subtitle": "Manage application preferences and security configuration.",
@@ -428,6 +430,19 @@
     "30d": "30 Days"
   },
   "update": {
+    "page_title": "Updates",
+    "page_subtitle": "Check for new releases and review recent update notes.",
+    "installed_version": "Installed version",
+    "check_now": "Check for Updates",
+    "checking": "Checking for updates...",
+    "latest": "You are running the latest version.",
+    "check_failed": "Unable to check for updates right now.",
+    "view_details": "View Details",
+    "history_title": "Update History",
+    "history_loading": "Loading recent releases...",
+    "history_failed": "Unable to load update history right now.",
+    "history_empty": "No release history is available.",
+    "published_on": "Published {date}",
     "available_title": "Update available",
     "version_line": "Current {current} - New {latest}",
     "size": "Size: {size}",

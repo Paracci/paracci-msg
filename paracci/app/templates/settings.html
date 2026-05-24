@@ -106,6 +106,24 @@
       </div>
     </div>
 
+    <!-- Updates -->
+    <div class="settings-section">
+      <div class="settings-section-title">{{ _('settings.updates_title') }}</div>
+      <div class="settings-group">
+        <a href="{{ url_for('main.updates') }}" class="settings-item">
+          <div class="settings-item-content">
+            <span class="settings-item-title">{{ _('settings.updates_title') }}</span>
+            <span class="settings-item-desc">{{ _('settings.updates_desc') }}</span>
+          </div>
+          <div style="color: var(--text-tertiary);">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="20" height="20">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+            </svg>
+          </div>
+        </a>
+      </div>
+    </div>
+
     <!-- System Info -->
     <div class="settings-section">
       <div class="settings-section-title">{{ _('settings.sys_info_title') }}</div>
