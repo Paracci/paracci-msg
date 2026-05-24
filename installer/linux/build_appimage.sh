@@ -90,7 +90,7 @@ install -m 0644 "$DESKTOP_FILE" "$APPDIR/usr/share/applications/paracci.desktop"
 install -m 0644 "$MIME_FILE" "$APPDIR/usr/share/mime/packages/application-x-paracci.xml"
 
 # Resize icon to a linuxdeploy-compatible resolution
-ICON_512="$(mktemp --suffix=.png)"
+ICON_512="/tmp/paracci.png"
 convert "$ROOT/paracci_icon.png" -resize 512x512 "$ICON_512"
 
 install -m 0644 "$ICON_512" "$APPDIR/usr/share/icons/hicolor/256x256/apps/paracci.png"
