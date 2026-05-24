@@ -304,8 +304,8 @@ if sys.platform == "darwin":
         bundle_identifier="com.paracci.desktop",
         info_plist={
             "CFBundleDisplayName": "Paracci",
-            "CFBundleVersion": "1.4.0",
-            "CFBundleShortVersionString": "1.4.0",
+            "CFBundleVersion": "1.5.0",
+            "CFBundleShortVersionString": "1.5.0",
             "NSHighResolutionCapable": True,
             "NSRequiresAquaSystemAppearance": False,  # Dark mode support
             "LSMinimumSystemVersion": "11.0",
