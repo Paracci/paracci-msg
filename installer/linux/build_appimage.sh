@@ -14,33 +14,6 @@ fail() {
     exit 1
 }
 
-resolve_tool() {
-    local configured="$1"
-    shift
-    if [[ -n "$configured" ]]; then
-        [[ -x "$configured" ]] && printf '%s\n' "$configured" && return 0
-        return 1
-    fi
-    local candidate
-    for candidate in "$@"; do
-        if command -v "$candidate" >/dev/null 2>&1; then
-            command -v "$candidate"
-            return 0
-        fi
-    done
-    return 1
-}
-
-run_tool() {
-    local tool="$1"
-    shift
-    if [[ "$tool" == *.AppImage ]]; then
-        "$tool" --appimage-extract-and-run "$@"
-    else
-        "$tool" "$@"
-    fi
-}
-
 VERSION="${1:-}"
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     fail "Usage: $0 MAJOR.MINOR.PATCH"
@@ -51,14 +24,14 @@ if [[ "$(uname -s)" != "Linux" ]]; then
     exit 0
 fi
 
-LINUXDEPLOY_TOOL="$(resolve_tool "${LINUXDEPLOY:-}" linuxdeploy linuxdeploy-x86_64.AppImage || true)"
-APPIMAGETOOL_TOOL="$(resolve_tool "${APPIMAGETOOL:-}" appimagetool appimagetool-x86_64.AppImage || true)"
-RUNTIME_FILE="${APPIMAGE_RUNTIME_FILE:-}"
-if [[ -z "$LINUXDEPLOY_TOOL" || -z "$APPIMAGETOOL_TOOL" ]]; then
-    warn "linuxdeploy and appimagetool are required; skipping AppImage build."
+APPIMAGETOOL="${APPIMAGETOOL:-}"
+APPIMAGE_RUNTIME_FILE="${APPIMAGE_RUNTIME_FILE:-}"
+
+if [[ -z "$APPIMAGETOOL" ]]; then
+    warn "APPIMAGETOOL is required; skipping AppImage build."
     exit 0
 fi
-if [[ -z "$RUNTIME_FILE" || ! -f "$RUNTIME_FILE" ]]; then
+if [[ -z "$APPIMAGE_RUNTIME_FILE" || ! -f "$APPIMAGE_RUNTIME_FILE" ]]; then
     warn "APPIMAGE_RUNTIME_FILE is unavailable; skipping AppImage build."
     exit 0
 fi
@@ -80,79 +53,41 @@ ICON_FILE="$ROOT/paracci_icon.png"
 
 rm -rf "$APPDIR"
 rm -f "$OUTPUT"
+
+# 1. Build the AppDir manually:
 mkdir -p \
     "$APPDIR/usr/lib/paracci" \
     "$APPDIR/usr/share/applications" \
-    "$APPDIR/usr/share/icons/hicolor/256x256/apps" \
+    "$APPDIR/usr/share/icons/hicolor/512x512/apps" \
     "$APPDIR/usr/share/mime/packages"
 
+# 2. Write the AppRun script:
+cat > "$APPDIR/AppRun" <<'EOF'
+#!/bin/bash
+HERE="$(dirname "$(readlink -f "${0}")")"
+exec "$HERE/usr/lib/paracci/Paracci" "$@"
+EOF
+chmod 0755 "$APPDIR/AppRun"
+
+# 3. Copy the onedir payload:
 cp -r "$PAYLOAD/." "$APPDIR/usr/lib/paracci/"
 chmod 0755 "$APPDIR/usr/lib/paracci/Paracci"
-install -m 0644 "$DESKTOP_FILE" "$APPDIR/usr/share/applications/paracci.desktop"
-install -m 0644 "$MIME_FILE" "$APPDIR/usr/share/mime/packages/application-x-paracci.xml"
 
-# Resize icon to a linuxdeploy-compatible resolution
-ICON_512="/tmp/paracci.png"
-convert "$ROOT/paracci_icon.png" -resize 512x512 "$ICON_512"
+# 4. Resize and place the icon:
+convert "$ROOT/paracci_icon.png" -resize 512x512 "$APPDIR/usr/share/icons/hicolor/512x512/apps/paracci.png"
+cp "$APPDIR/usr/share/icons/hicolor/512x512/apps/paracci.png" "$APPDIR/paracci.png"
 
-install -m 0644 "$ICON_512" "$APPDIR/usr/share/icons/hicolor/256x256/apps/paracci.png"
+# 5. Place desktop and MIME files:
+cp "$DESKTOP_FILE" "$APPDIR/usr/share/applications/paracci.desktop"
+cp "$DESKTOP_FILE" "$APPDIR/paracci.desktop"
+cp "$MIME_FILE" "$APPDIR/usr/share/mime/packages/application-x-paracci.xml"
 
-deploy_args=(
-    --appdir "$APPDIR"
-    --executable "$APPDIR/usr/lib/paracci/Paracci"
-    --desktop-file "$DESKTOP_FILE"
-    --icon-file "$ICON_512"
-)
+# 6. Package with appimagetool:
+ARCH=x86_64 "$APPIMAGETOOL" \
+  --runtime-file "$APPIMAGE_RUNTIME_FILE" \
+  "$APPDIR" \
+  "$OUTPUT"
 
-# GTK, WebKit and GStreamer load parts of their runtime dynamically rather
-# than exposing every dependency through the frozen executable's ELF imports.
-while IFS= read -r library; do
-    deploy_args+=(--library "$library")
-done < <(
-    find /usr/lib -type f \
-        \( -name 'libgtk-3.so.*' -o -name 'libwebkit2gtk-*.so.*' -o \
-           -name 'libjavascriptcoregtk-*.so.*' -o -path '*/gstreamer-1.0/*.so' \) \
-        2>/dev/null | sort -u
-)
-
-run_tool "$LINUXDEPLOY_TOOL" "${deploy_args[@]}"
-
-mkdir -p "$APPDIR/usr/lib/girepository-1.0"
-while IFS= read -r typelib; do
-    install -m 0644 "$typelib" "$APPDIR/usr/lib/girepository-1.0/$(basename "$typelib")"
-done < <(find /usr/lib -type f -path '*/girepository-1.0/*.typelib' 2>/dev/null | sort -u)
-
-for runtime_dir in /usr/lib/*/webkit2gtk-* /usr/lib/*/gstreamer-1.0; do
-    [[ -d "$runtime_dir" ]] || continue
-    mkdir -p "$APPDIR$(dirname "$runtime_dir")"
-    cp -a "$runtime_dir" "$APPDIR$runtime_dir"
-done
-
-if [[ -d /usr/share/glib-2.0/schemas ]]; then
-    mkdir -p "$APPDIR/usr/share/glib-2.0/schemas"
-    cp -a /usr/share/glib-2.0/schemas/. "$APPDIR/usr/share/glib-2.0/schemas/"
-    if command -v glib-compile-schemas >/dev/null 2>&1; then
-        glib-compile-schemas "$APPDIR/usr/share/glib-2.0/schemas"
-    fi
-fi
-
-mkdir -p "$APPDIR/usr/bin"
-cat > "$APPDIR/usr/bin/paracci" <<'EOF'
-#!/usr/bin/env bash
-set -e
-APPDIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
-export LD_LIBRARY_PATH="$APPDIR/usr/lib:$APPDIR/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-export GI_TYPELIB_PATH="$APPDIR/usr/lib/girepository-1.0:$APPDIR/usr/lib/x86_64-linux-gnu/girepository-1.0${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
-export GSETTINGS_SCHEMA_DIR="$APPDIR/usr/share/glib-2.0/schemas"
-export GST_PLUGIN_PATH="$APPDIR/usr/lib/gstreamer-1.0:$APPDIR/usr/lib/x86_64-linux-gnu/gstreamer-1.0${GST_PLUGIN_PATH:+:$GST_PLUGIN_PATH}"
-exec "$APPDIR/usr/lib/paracci/Paracci" "$@"
-EOF
-chmod 0755 "$APPDIR/usr/bin/paracci"
-ln -sfn usr/bin/paracci "$APPDIR/AppRun"
-ln -sfn usr/share/applications/paracci.desktop "$APPDIR/paracci.desktop"
-ln -sfn usr/share/icons/hicolor/256x256/apps/paracci.png "$APPDIR/paracci.png"
-
-ARCH=x86_64 run_tool "$APPIMAGETOOL_TOOL" --no-appstream --runtime-file "$RUNTIME_FILE" "$APPDIR" "$OUTPUT"
 chmod 0755 "$OUTPUT"
 rm -rf "$APPDIR"
 printf '[OK] AppImage created: %s\n' "$OUTPUT"
