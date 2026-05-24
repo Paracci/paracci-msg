@@ -34,7 +34,11 @@ DESKTOP_FILE="$ROOT/installer/linux/paracci.desktop"
 MIME_FILE="$ROOT/installer/linux/application-x-paracci.xml"
 ICON_FILE="$ROOT/paracci_icon.png"
 
-[[ -f "$PAYLOAD" ]] || fail "Linux payload not found: $PAYLOAD"
+if [[ -d "$PAYLOAD" ]]; then
+    [[ -x "$PAYLOAD/Paracci" ]] || fail "Linux executable not found: $PAYLOAD/Paracci"
+else
+    [[ -f "$PAYLOAD" ]] || fail "Linux payload not found: $PAYLOAD"
+fi
 [[ -f "$DESKTOP_FILE" ]] || fail "Desktop entry not found: $DESKTOP_FILE"
 [[ -f "$MIME_FILE" ]] || fail "MIME definition not found: $MIME_FILE"
 [[ -f "$ICON_FILE" ]] || fail "Application icon not found: $ICON_FILE"
@@ -49,7 +53,12 @@ mkdir -p \
     "$STAGE/usr/share/icons/hicolor/256x256/apps" \
     "$STAGE/usr/share/mime/packages"
 
-install -m 0755 "$PAYLOAD" "$STAGE/opt/paracci/Paracci"
+if [[ -d "$PAYLOAD" ]]; then
+    cp -r "$PAYLOAD/." "$STAGE/opt/paracci/"
+    chmod 0755 "$STAGE/opt/paracci/Paracci"
+else
+    install -m 0755 "$PAYLOAD" "$STAGE/opt/paracci/Paracci"
+fi
 ln -s /opt/paracci/Paracci "$STAGE/usr/local/bin/paracci"
 install -m 0644 "$DESKTOP_FILE" "$STAGE/usr/share/applications/paracci.desktop"
 install -m 0644 "$ICON_FILE" "$STAGE/usr/share/icons/hicolor/256x256/apps/paracci.png"
