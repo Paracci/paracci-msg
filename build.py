@@ -141,6 +141,10 @@ def move_outputs(platform_id: str) -> None:
     if platform_id == "windows":
         src = DIST_DIR / APP_NAME
         if src.exists() and src.is_dir():
+            python_dll = src / "_internal" / f"python{sys.version_info.major}{sys.version_info.minor}.dll"
+            if not python_dll.is_file():
+                print(f"\n  [ERROR] Windows onedir payload is missing Python runtime DLL: {python_dll}")
+                sys.exit(1)
             dst = out_dir / APP_NAME
             shutil.move(str(src), str(dst))
             print(f"\n  [OK] Windows build ready: {dst / f'{APP_NAME}.exe'}")

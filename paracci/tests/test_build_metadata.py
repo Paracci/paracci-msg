@@ -1,6 +1,8 @@
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -53,3 +55,68 @@ def test_spec_and_release_workflow_consume_version_without_rewriting_sources():
     assert 'Path("VERSION").read_text' in workflow
     assert "Inject release version metadata" not in workflow
     assert "APP_VERSION =" not in workflow
+
+
+def test_windows_spec_collects_the_complete_onedir_payload():
+    spec_text = (REPO_ROOT / "paracci.spec").read_text(encoding="utf-8")
+    windows_block = spec_text.rsplit('if sys.platform == "win32":', 1)[1].split(
+        'elif sys.platform == "darwin":', 1
+    )[0]
+
+    assert "exclude_binaries=True" in windows_block
+    assert "coll = COLLECT(" in windows_block
+    assert "a.binaries" in windows_block
+    assert "a.zipfiles" in windows_block
+    assert "a.datas" in windows_block
+
+
+def test_windows_output_preserves_the_complete_onedir_payload(tmp_path, monkeypatch):
+    build = load_build_module()
+    monkeypatch.setattr(build, "DIST_DIR", tmp_path / "dist")
+    monkeypatch.setattr(build, "BUILD_DIR", tmp_path / "builds")
+
+    source = build.DIST_DIR / build.APP_NAME
+    internal = source / "_internal"
+    internal.mkdir(parents=True)
+    runtime_name = f"python{build.sys.version_info.major}{build.sys.version_info.minor}.dll"
+    (source / "Paracci.exe").write_bytes(b"exe")
+    (internal / runtime_name).write_bytes(b"python-runtime")
+
+    build.move_outputs("windows")
+
+    payload = build.BUILD_DIR / "windows" / build.APP_NAME
+    assert (payload / "Paracci.exe").read_bytes() == b"exe"
+    assert (payload / "_internal" / runtime_name).read_bytes() == b"python-runtime"
+    assert not source.exists()
+
+
+def test_windows_output_fails_closed_without_the_python_runtime_dll(tmp_path, monkeypatch):
+    build = load_build_module()
+    monkeypatch.setattr(build, "DIST_DIR", tmp_path / "dist")
+    monkeypatch.setattr(build, "BUILD_DIR", tmp_path / "builds")
+
+    source = build.DIST_DIR / build.APP_NAME
+    (source / "_internal").mkdir(parents=True)
+    (source / "Paracci.exe").write_bytes(b"exe")
+
+    with pytest.raises(SystemExit) as error:
+        build.move_outputs("windows")
+
+    assert error.value.code == 1
+    assert source.exists()
+    assert not (build.BUILD_DIR / "windows" / build.APP_NAME).exists()
+
+
+def test_windows_release_publishes_only_complete_payloads():
+    workflow = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+
+    assert '$runtimeDll = "builds\\windows\\Paracci\\_internal\\python312.dll"' in workflow
+    assert 'Test-Path -LiteralPath $runtimeDll -PathType Leaf' in workflow
+    assert "$_.FullName.Replace('\\', '/') -eq $expectedRuntimeEntry" in workflow
+    assert "${{ steps.resolve.outputs.win_setup_file }}" in workflow
+    assert "${{ steps.resolve.outputs.win_portable_file }}" in workflow
+    assert "${{ steps.resolve.outputs.win_file }}" not in workflow
+    assert "Windows compatibility" not in workflow
+    assert "subject-path: builds/windows/Paracci/Paracci.exe" not in workflow
+    assert "vt-scan/Paracci-Windows.exe" not in workflow
+    assert '"$hash  Paracci.exe"' not in workflow
