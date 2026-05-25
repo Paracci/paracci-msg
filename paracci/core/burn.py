@@ -19,6 +19,7 @@ import re
 import time
 from pathlib import Path
 from .shields import shield
+from .constants import BURN_OPENING_STALE_SECONDS
 
 from .crypto import (
     message_id_fingerprint,
@@ -144,6 +145,7 @@ class BurnDB:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(burned_messages)")}
         if "status" not in columns:
             self._migrate_burned_messages(conn)
+        self._cleanup_stale_opening(conn)
         conn.commit()
         conn.close()
 
@@ -173,6 +175,17 @@ class BurnDB:
             (BURN_STATUS_BURNED,),
         )
         conn.execute("DROP TABLE burned_messages_legacy")
+
+    def _cleanup_stale_opening(self, conn: sqlite3.Connection) -> None:
+        """Deletes abandoned opening reservations left by a prior process."""
+        stale_before = int(time.time()) - BURN_OPENING_STALE_SECONDS
+        conn.execute(
+            """
+            DELETE FROM burned_messages
+            WHERE status=? AND reserved_at < ?
+            """,
+            (BURN_STATUS_OPENING, stale_before),
+        )
 
     # --- Message Burning ---
 
@@ -227,10 +240,11 @@ class BurnDB:
     def reserve_open(self, msg_id: bytes) -> bool:
         """Atomically claims a single-use message before decryption starts."""
         fingerprint = message_id_fingerprint(msg_id)
-        now = int(time.time())
         conn = self._connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
+            now = int(time.time())
+            stale_before = now - BURN_OPENING_STALE_SECONDS
             try:
                 conn.execute(
                     """
@@ -242,7 +256,7 @@ class BurnDB:
                 )
             except sqlite3.IntegrityError:
                 row = conn.execute(
-                    "SELECT status FROM burned_messages WHERE fingerprint=?",
+                    "SELECT status, reserved_at FROM burned_messages WHERE fingerprint=?",
                     (fingerprint,),
                 ).fetchone()
                 if row and row[0] == BURN_STATUS_FAILED:
@@ -254,6 +268,27 @@ class BurnDB:
                         WHERE fingerprint=? AND status=?
                         """,
                         (BURN_STATUS_OPENING, now, fingerprint, BURN_STATUS_FAILED),
+                    )
+                    if updated.rowcount != 1:
+                        conn.rollback()
+                        raise AlreadyBurnedError(
+                            "This message is already being opened or has been burned."
+                        )
+                elif row and row[0] == BURN_STATUS_OPENING and row[1] < stale_before:
+                    updated = conn.execute(
+                        """
+                        UPDATE burned_messages
+                        SET status=?, reserved_at=?, burned_at=NULL, failed_at=NULL,
+                            session_id=NULL, direction=NULL, failure_reason=NULL
+                        WHERE fingerprint=? AND status=? AND reserved_at < ?
+                        """,
+                        (
+                            BURN_STATUS_OPENING,
+                            now,
+                            fingerprint,
+                            BURN_STATUS_OPENING,
+                            stale_before,
+                        ),
                     )
                     if updated.rowcount != 1:
                         conn.rollback()

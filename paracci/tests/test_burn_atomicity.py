@@ -3,8 +3,11 @@ from pathlib import Path
 from queue import Queue
 from threading import Barrier, Thread
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import core.burn as burn_module
 from core.burn import (
     BURN_STATUS_BURNED,
     BURN_STATUS_OPENING,
@@ -12,6 +15,7 @@ from core.burn import (
     BurnDB,
     BurnGuard,
 )
+from core.constants import BURN_OPENING_STALE_SECONDS
 from core.crypto import new_message_id
 
 
@@ -55,3 +59,52 @@ def test_single_use_reservation_is_atomic(tmp_path):
 
     guard_a.post_open_burn(msg_id, session_id, direction=1, single_use=True, file_path=None)
     assert db_b.get_burn_status(msg_id) == BURN_STATUS_BURNED
+
+
+def test_stale_opening_reservation_is_reclaimed_on_retry(tmp_path, monkeypatch):
+    now = [1_700_000_000]
+    monkeypatch.setattr(burn_module.time, "time", lambda: now[0])
+    db = BurnDB(tmp_path / "sessions.db")
+    msg_id = new_message_id()
+
+    assert db.reserve_open(msg_id) is True
+    now[0] += BURN_OPENING_STALE_SECONDS + 1
+
+    assert db.reserve_open(msg_id) is True
+    assert db.get_burn_status(msg_id) == BURN_STATUS_OPENING
+    with pytest.raises(AlreadyBurnedError):
+        db.reserve_open(msg_id)
+
+
+def test_fresh_opening_reservation_survives_initialization_and_is_rejected(
+    tmp_path, monkeypatch
+):
+    now = [1_700_000_000]
+    monkeypatch.setattr(burn_module.time, "time", lambda: now[0])
+    db_path = tmp_path / "sessions.db"
+    db = BurnDB(db_path)
+    msg_id = new_message_id()
+
+    assert db.reserve_open(msg_id) is True
+    now[0] += BURN_OPENING_STALE_SECONDS - 1
+
+    restarted = BurnDB(db_path)
+    assert restarted.get_burn_status(msg_id) == BURN_STATUS_OPENING
+    with pytest.raises(AlreadyBurnedError):
+        restarted.reserve_open(msg_id)
+
+
+def test_startup_sweep_removes_stale_opening_reservation(tmp_path, monkeypatch):
+    now = [1_700_000_000]
+    monkeypatch.setattr(burn_module.time, "time", lambda: now[0])
+    db_path = tmp_path / "sessions.db"
+    db = BurnDB(db_path)
+    msg_id = new_message_id()
+
+    assert db.reserve_open(msg_id) is True
+    now[0] += BURN_OPENING_STALE_SECONDS + 1
+
+    restarted = BurnDB(db_path)
+    assert restarted.get_burn_status(msg_id) is None
+    assert restarted.reserve_open(msg_id) is True
+    assert restarted.get_burn_status(msg_id) == BURN_STATUS_OPENING
