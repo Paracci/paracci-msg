@@ -232,7 +232,6 @@ def test_ml_kem_secret_key_is_absent_from_database_after_bond_completes(tmp_path
 
 def test_hybrid_kem_error_in_initiator_setup_uses_safe_route_message(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("PARACCI_LOOPBACK_TOKEN", TOKEN)
     monkeypatch.setenv("PARACCI_LOOPBACK_HOST", "127.0.0.1")
     monkeypatch.setenv("PARACCI_LOOPBACK_PORT", "18080")
     monkeypatch.setenv("PARACCI_NO_GUI", "1")
@@ -240,7 +239,7 @@ def test_hybrid_kem_error_in_initiator_setup_uses_safe_route_message(tmp_path, m
     import app as ag_app
 
     ag_app = importlib.reload(ag_app)
-    flask_app = ag_app.create_app()
+    flask_app = ag_app.create_app(loopback_auth_token=TOKEN)
     flask_app.config["TESTING"] = True
     client = flask_app.test_client()
     client.get(

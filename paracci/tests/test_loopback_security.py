@@ -1,5 +1,6 @@
 import importlib
 import io
+import os
 import sys
 import time
 from pathlib import Path
@@ -19,7 +20,6 @@ ORIGIN = f"http://{HOST}"
 
 def make_flask_app(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("PARACCI_LOOPBACK_TOKEN", TOKEN)
     monkeypatch.setenv("PARACCI_LOOPBACK_HOST", "127.0.0.1")
     monkeypatch.setenv("PARACCI_LOOPBACK_PORT", "18080")
     monkeypatch.setenv("PARACCI_NO_GUI", "1")
@@ -27,7 +27,7 @@ def make_flask_app(tmp_path, monkeypatch):
     import app as ag_app
 
     ag_app = importlib.reload(ag_app)
-    flask_app = ag_app.create_app()
+    flask_app = ag_app.create_app(loopback_auth_token=TOKEN)
     flask_app.config["TESTING"] = True
     return ag_app, flask_app
 
@@ -88,6 +88,63 @@ def test_bootstrap_sets_authorized_client_session(tmp_path, monkeypatch):
         assert sess["paracci_client_ok"] is True
         assert sess["paracci_client_id"]
         assert sess["csrf_token"]
+
+
+def test_legacy_environment_token_is_purged_and_not_authorized(tmp_path, monkeypatch):
+    monkeypatch.setenv("PARACCI_LOOPBACK_TOKEN", "legacy-env-token")
+    _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    client = flask_app.test_client()
+
+    response = client.get(
+        "/__paracci_bootstrap?token=legacy-env-token&next=/",
+        base_url=ORIGIN,
+        headers={"Host": HOST},
+    )
+
+    assert "PARACCI_LOOPBACK_TOKEN" not in os.environ
+    assert response.status_code == 403
+    assert bootstrap(client).status_code == 302
+
+
+@pytest.mark.parametrize("bad_token", ["", None, b"not-a-string"])
+def test_create_app_rejects_invalid_in_process_token(tmp_path, monkeypatch, bad_token):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("PARACCI_LOOPBACK_TOKEN", "legacy-env-token")
+    monkeypatch.setenv("PARACCI_LOOPBACK_HOST", "127.0.0.1")
+    monkeypatch.setenv("PARACCI_LOOPBACK_PORT", "18080")
+
+    import app as ag_app
+
+    ag_app = importlib.reload(ag_app)
+    with pytest.raises(RuntimeError, match="must be supplied directly"):
+        ag_app.create_app(loopback_auth_token=bad_token)
+
+    assert "PARACCI_LOOPBACK_TOKEN" not in os.environ
+
+
+def test_planted_loopback_token_file_is_ignored(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    token_path = data_dir / ".loopback_token"
+    token_path.write_text("planted-token", encoding="utf-8")
+    _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    client = flask_app.test_client()
+
+    response = client.get(
+        "/__paracci_bootstrap?token=planted-token&next=/",
+        base_url=ORIGIN,
+        headers={"Host": HOST},
+    )
+
+    assert token_path.read_text(encoding="utf-8") == "planted-token"
+    assert response.status_code == 403
+    assert bootstrap(client).status_code == 302
+
+
+def test_app_initialization_does_not_create_loopback_token_file(tmp_path, monkeypatch):
+    make_flask_app(tmp_path, monkeypatch)
+
+    assert not (tmp_path / "data" / ".loopback_token").exists()
 
 
 def test_api_rejects_missing_bearer_after_bootstrap(tmp_path, monkeypatch):

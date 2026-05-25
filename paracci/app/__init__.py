@@ -76,20 +76,24 @@ no_gui_mode = False
 active_client_id = None
 
 
-def create_app() -> Flask:
+def create_app(*, loopback_auth_token: str) -> Flask:
     """Initializes and configures the Paracci Flask application factory."""
     global db, device_key, loopback_token, loopback_host, loopback_port, loopback_origin, no_gui_mode, active_client_id
+
+    os.environ.pop("PARACCI_LOOPBACK_TOKEN", None)
+    if not isinstance(loopback_auth_token, str) or not loopback_auth_token:
+        raise RuntimeError("Paracci loopback security token must be supplied directly before app initialization.")
+    loopback_token = loopback_auth_token
 
     app = Flask(__name__, 
                 template_folder=str(APP_DIR / "templates"), 
                 static_folder=str(APP_DIR / "static"))
 
-    loopback_token = os.environ.get("PARACCI_LOOPBACK_TOKEN")
     loopback_host = os.environ.get("PARACCI_LOOPBACK_HOST", "127.0.0.1")
     loopback_port = os.environ.get("PARACCI_LOOPBACK_PORT")
     no_gui_mode = os.environ.get("PARACCI_NO_GUI") == "1"
-    if not loopback_token or not loopback_port:
-        raise RuntimeError("Paracci loopback security token and port must be set before app initialization.")
+    if not loopback_port:
+        raise RuntimeError("Paracci loopback port must be set before app initialization.")
     loopback_origin = f"http://{loopback_host}:{loopback_port}"
     if db is not None:
         db.release_device_key()
