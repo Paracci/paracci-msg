@@ -1,4 +1,7 @@
 import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -47,6 +50,83 @@ def test_strong_passphrase_unlocks_and_resets_failed_counter(tmp_path):
     assert db.get_unlock_rate_limit()["failed_attempts"] == 1
     assert unlock_device(db, STRONG_PASSPHRASE) == device_key
     assert db.get_unlock_rate_limit()["failed_attempts"] == 0
+
+
+def test_successful_unlock_reserves_attempt_before_kdf_and_clears_it(tmp_path, monkeypatch):
+    db = BurnDB(tmp_path / "sessions.db")
+    device_key = init_device(db, STRONG_PASSPHRASE)
+    observed_failed_attempts = []
+    real_derive_master_key = burn_module.derive_master_key
+
+    def observed_derive_master_key(pin, salt):
+        observed_failed_attempts.append(db.get_unlock_rate_limit()["failed_attempts"])
+        return real_derive_master_key(pin, salt)
+
+    monkeypatch.setattr(burn_module, "derive_master_key", observed_derive_master_key)
+
+    assert burn_module.unlock_device(db, STRONG_PASSPHRASE) == device_key
+    assert observed_failed_attempts == [1]
+    assert db.get_unlock_rate_limit()["failed_attempts"] == 0
+
+
+def test_parallel_wrong_unlocks_are_serialized_and_stopped_before_kdf(tmp_path, monkeypatch):
+    db = BurnDB(tmp_path / "sessions.db")
+    init_device(db, STRONG_PASSPHRASE)
+    workers = 8
+    start = threading.Barrier(workers)
+    metrics_lock = threading.Lock()
+    kdf_calls = 0
+    active_kdfs = 0
+    maximum_active_kdfs = 0
+
+    def slow_wrong_derive_master_key(_pin, _salt):
+        nonlocal kdf_calls, active_kdfs, maximum_active_kdfs
+        with metrics_lock:
+            kdf_calls += 1
+            active_kdfs += 1
+            maximum_active_kdfs = max(maximum_active_kdfs, active_kdfs)
+        time.sleep(0.05)
+        with metrics_lock:
+            active_kdfs -= 1
+        return bytearray(b"\x00" * 32)
+
+    monkeypatch.setattr(burn_module, "derive_master_key", slow_wrong_derive_master_key)
+
+    def attempt_unlock():
+        start.wait(timeout=2)
+        with pytest.raises(DeviceError):
+            burn_module.unlock_device(db, "Wrong-Horse-95175328")
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        list(executor.map(lambda _index: attempt_unlock(), range(workers)))
+
+    assert kdf_calls == 2
+    assert maximum_active_kdfs == 1
+    assert db.get_unlock_rate_limit()["failed_attempts"] == 2
+
+
+def test_atomic_reservations_enforce_shared_database_budget(tmp_path, monkeypatch):
+    db_path = tmp_path / "sessions.db"
+    workers = 10
+    dbs = [BurnDB(db_path) for _index in range(workers)]
+    start = threading.Barrier(workers)
+    monkeypatch.setattr(burn_module, "UNLOCK_FAILURE_DELAYS", {})
+
+    def reserve_attempt(db):
+        start.wait(timeout=2)
+        try:
+            db.reserve_unlock_attempt(now=1000)
+        except DeviceLockedError:
+            return False
+        return True
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        admitted = list(executor.map(reserve_attempt, dbs))
+
+    assert sum(admitted) == 5
+    state = dbs[0].get_unlock_rate_limit(now=1000)
+    assert state["failed_attempts"] == 5
+    assert state["retry_after_seconds"] == 300
 
 
 def test_unlock_lockout_state_is_durable(tmp_path):

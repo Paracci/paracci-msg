@@ -20,6 +20,7 @@ from desktop.device_key_binding import (
     unlock_device_with_binding,
 )
 from desktop.dpapi_win import DPAPIError
+from desktop.keychain_mac import KeychainError
 from desktop.secret_service_linux import SecretServiceError
 
 
@@ -102,6 +103,22 @@ def test_linux_creation_and_unlock_use_secret_service(tmp_path, monkeypatch):
     assert db.get_device_meta(PLATFORM_BINDING_KIND_META_KEY) == LINUX_SECRET_SERVICE_KIND
     assert profile_id in store
     assert unlock_device_with_binding(db, PASSPHRASE) == device_key
+
+
+def test_macos_keychain_failure_before_kdf_does_not_consume_unlock_attempt(tmp_path, monkeypatch):
+    fake_keychain(monkeypatch)
+    db = BurnDB(tmp_path / "sessions.db")
+    initialize_device_with_binding(db, PASSPHRASE)
+    monkeypatch.setattr(
+        binding,
+        "unwrap_with_keychain",
+        lambda _profile_id: (_ for _ in ()).throw(KeychainError("unwrap", "not available")),
+    )
+
+    with pytest.raises(DeviceBindingError):
+        unlock_device_with_binding(db, PASSPHRASE)
+
+    assert db.get_unlock_rate_limit()["failed_attempts"] == 0
 
 
 def test_legacy_macos_profile_is_bound_after_successful_unlock(tmp_path, monkeypatch):
@@ -199,6 +216,7 @@ def test_linux_no_daemon_on_bound_profile_does_not_downgrade(tmp_path, monkeypat
 
     assert exc.value.code == SECRET_SERVICE_FAILED_CODE
     assert db.get_device_meta(PLATFORM_BINDING_PROFILE_ID_META_KEY) == profile_id
+    assert db.get_unlock_rate_limit()["failed_attempts"] == 0
     assert device_key != b""
 
 

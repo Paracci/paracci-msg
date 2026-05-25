@@ -1,4 +1,7 @@
 import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -59,6 +62,43 @@ def test_windows_bound_unlock_requires_dpapi_and_passphrase(tmp_path, monkeypatc
     with pytest.raises(DeviceError, match="Incorrect passphrase"):
         unlock_device_with_binding(db, "Wrong-Horse-95175328")
     assert db.get_unlock_rate_limit()["failed_attempts"] == 1
+
+
+def test_parallel_windows_bound_wrong_unlocks_are_serialized_before_kdf(tmp_path, monkeypatch):
+    enable_fake_windows_dpapi(monkeypatch)
+    db = BurnDB(tmp_path / "sessions.db")
+    initialize_device_with_binding(db, PASSPHRASE)
+    workers = 8
+    start = threading.Barrier(workers)
+    metrics_lock = threading.Lock()
+    kdf_calls = 0
+    active_kdfs = 0
+    maximum_active_kdfs = 0
+
+    def slow_wrong_derive_master_key(_pin, _salt):
+        nonlocal kdf_calls, active_kdfs, maximum_active_kdfs
+        with metrics_lock:
+            kdf_calls += 1
+            active_kdfs += 1
+            maximum_active_kdfs = max(maximum_active_kdfs, active_kdfs)
+        time.sleep(0.05)
+        with metrics_lock:
+            active_kdfs -= 1
+        return bytearray(b"\x00" * 32)
+
+    monkeypatch.setattr(binding, "derive_master_key", slow_wrong_derive_master_key)
+
+    def attempt_unlock():
+        start.wait(timeout=2)
+        with pytest.raises(DeviceError):
+            unlock_device_with_binding(db, "Wrong-Horse-95175328")
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        list(executor.map(lambda _index: attempt_unlock(), range(workers)))
+
+    assert kdf_calls == 2
+    assert maximum_active_kdfs == 1
+    assert db.get_unlock_rate_limit()["failed_attempts"] == 2
 
 
 def test_unwrapped_dpapi_factor_cannot_decrypt_device_key_by_itself(tmp_path, monkeypatch):

@@ -16,7 +16,9 @@ import hashlib
 import json
 import math
 import re
+import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from .shields import shield
 from .constants import BURN_OPENING_STALE_SECONDS
@@ -53,6 +55,7 @@ UNLOCK_FAILURE_DELAYS = {
     3: 5,
     4: 15,
 }
+_UNLOCK_ATTEMPT_LOCK = threading.Lock()
 TWO_FA_SECRET_KEY = "2fa_secret"
 TWO_FA_SECRET_AAD = b"paracci.2fa_secret.v1"
 TWO_FA_SECRET_NONCE_LEN = 12
@@ -101,6 +104,13 @@ _SEQUENCE_ROWS = (
     "asdfghjkl",
     "zxcvbnm",
 )
+
+
+@contextmanager
+def _serialized_unlock_attempt():
+    """Serialize one unlock attempt through reservation and final outcome."""
+    with _UNLOCK_ATTEMPT_LOCK:
+        yield
 
 
 # ---------------------------------------------------------------------------
@@ -845,8 +855,8 @@ class BurnDB:
         if state["retry_after_seconds"] > 0:
             raise DeviceLockedError(state["retry_after_seconds"])
 
-    def record_unlock_failure(self, now: int | None = None) -> dict:
-        """Records one failed unlock attempt and returns the updated durable state."""
+    def reserve_unlock_attempt(self, now: int | None = None) -> dict:
+        """Claims one unlock attempt before expensive verification begins."""
         now = int(time.time()) if now is None else int(now)
         conn = self._connect()
         try:
@@ -885,6 +895,10 @@ class BurnDB:
             raise
         finally:
             conn.close()
+
+    def record_unlock_failure(self, now: int | None = None) -> dict:
+        """Compatibility helper for recording an already-known failed attempt."""
+        return self.reserve_unlock_attempt(now)
 
     def reset_unlock_failures(self) -> None:
         """Clears consecutive unlock failures after a successful unlock."""
@@ -1201,27 +1215,26 @@ def unlock_device(db: BurnDB, pin: str) -> bytearray:
     if not pin_salt or not enc_data:
         raise DeviceError("Device not set up yet.")
 
-    db.assert_unlock_allowed()
-    master_key = derive_master_key(pin, pin_salt)
-    
-    try:
-        # enc_data: nonce(12) + ciphertext
-        nonce = enc_data[:12]
-        ciphertext = enc_data[12:]
-        blob = EncryptedBlob(nonce=nonce, ciphertext=ciphertext)
-        
-        device_key = bytearray(decrypt(master_key, blob, aad=b"paracci.device_key.v1"))
-    except Exception:
-        state = db.record_unlock_failure()
-        if state["retry_after_seconds"] > 0 and state["failed_attempts"] >= UNLOCK_MAX_FAILED_ATTEMPTS:
-            raise DeviceLockedError(state["retry_after_seconds"])
-        raise DeviceError("Incorrect passphrase.")
-    else:
-        db.reset_unlock_failures()
-        return device_key
-    finally:
-        # Wipe master_key from memory
-        if 'master_key' in locals():
+    with _serialized_unlock_attempt():
+        state = db.reserve_unlock_attempt()
+        master_key = derive_master_key(pin, pin_salt)
+
+        try:
+            # enc_data: nonce(12) + ciphertext
+            nonce = enc_data[:12]
+            ciphertext = enc_data[12:]
+            blob = EncryptedBlob(nonce=nonce, ciphertext=ciphertext)
+
+            device_key = bytearray(decrypt(master_key, blob, aad=b"paracci.device_key.v1"))
+        except Exception:
+            if state["retry_after_seconds"] > 0 and state["failed_attempts"] >= UNLOCK_MAX_FAILED_ATTEMPTS:
+                raise DeviceLockedError(state["retry_after_seconds"])
+            raise DeviceError("Incorrect passphrase.")
+        else:
+            db.reset_unlock_failures()
+            return device_key
+        finally:
+            # Wipe master_key from memory
             wipe(master_key)
 
 
