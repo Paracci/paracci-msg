@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -235,6 +236,50 @@ def test_preview_api_download_rejects_non_downloadable_entry(reset_preview_windo
 
     assert result["success"] is False
     assert result["error"] == "Download not permitted."
+
+
+def test_preview_api_open_file_location_uses_validated_explorer_arguments(
+    reset_preview_window_state,
+    tmp_path,
+    monkeypatch,
+):
+    created, _store = reset_preview_window_state
+    run.open_preview_window(TOKEN_A, "note.txt", "text/plain", 12)
+    from core.config import ParacciConfig
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    target = downloads / "note.txt"
+    target.write_bytes(b"preview-bytes")
+    launches = []
+    monkeypatch.setattr(ParacciConfig, "__init__", lambda self: setattr(self, "full_downloads_path", str(downloads)))
+    monkeypatch.setattr(run.subprocess, "Popen", lambda args: launches.append(args))
+
+    result = created[0].kwargs["js_api"].open_file_location(str(target))
+
+    assert result == {"success": True}
+    assert launches == [["explorer", f"/select,{os.path.normpath(str(target.resolve()))}"]]
+
+
+def test_preview_api_open_file_location_rejects_path_outside_downloads(
+    reset_preview_window_state,
+    tmp_path,
+    monkeypatch,
+):
+    created, _store = reset_preview_window_state
+    run.open_preview_window(TOKEN_A, "note.txt", "text/plain", 12)
+    from core.config import ParacciConfig
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_bytes(b"outside")
+    launches = []
+    monkeypatch.setattr(ParacciConfig, "__init__", lambda self: setattr(self, "full_downloads_path", str(downloads)))
+    monkeypatch.setattr(run.subprocess, "Popen", lambda args: launches.append(args))
+
+    result = created[0].kwargs["js_api"].open_file_location(str(outside))
+
+    assert result == {"success": False, "error": "File location is unavailable."}
+    assert launches == []
 
 
 def test_multiple_preview_windows_can_be_open(reset_preview_window_state):

@@ -87,6 +87,30 @@ def _preview_close_guard_active() -> bool:
         return _preview_closing_count > 0
 
 
+def _open_download_file_location(path, *, preview_window: bool = False) -> dict:
+    """Reveal only an existing application-managed download in Explorer."""
+    from core.config import ParacciConfig
+
+    try:
+        raw_path = os.fspath(path)
+        if not isinstance(raw_path, str) or "\x00" in raw_path:
+            raise ValueError("Invalid path.")
+        candidate = Path(raw_path)
+        if not candidate.is_absolute():
+            raise ValueError("Path must be absolute.")
+
+        downloads_root = Path(ParacciConfig().full_downloads_path).resolve()
+        resolved_path = candidate.resolve(strict=True)
+        resolved_path.relative_to(downloads_root)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return {"success": False, "error": "File location is unavailable."}
+
+    label = " (Preview window)" if preview_window else ""
+    print(f"  [>] Opening location{label}: {resolved_path}")
+    subprocess.Popen(["explorer", f"/select,{os.path.normpath(str(resolved_path))}"])
+    return {"success": True}
+
+
 class PreviewWindowApi:
     """Token-scoped API exposed only to a dedicated preview window."""
 
@@ -105,12 +129,7 @@ class PreviewWindowApi:
 
     def open_file_location(self, path):
         """Opens the folder containing the file in Windows Explorer."""
-        import os
-        import subprocess
-
-        if os.path.exists(path):
-            print(f"  [>] Opening location (Preview window): {path}")
-            subprocess.Popen(f'explorer /select,"{os.path.normpath(path)}"')
+        return _open_download_file_location(path, preview_window=True)
 
 
 def _preview_token_matches(candidate: str | None, expected: str | None) -> bool:
@@ -443,11 +462,7 @@ class ProApi:
 
     def open_file_location(self, path):
         """Opens the folder containing the file in Windows Explorer."""
-        import subprocess
-
-        if os.path.exists(path):
-            print(f"  [>] Opening location: {path}")
-            subprocess.Popen(f'explorer /select,"{os.path.normpath(path)}"')
+        return _open_download_file_location(path)
 
     def copy_and_clear(self, text, delay=30):
         """Copies text to the clipboard and clears it after X seconds."""
