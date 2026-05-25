@@ -296,6 +296,7 @@
     "attachment_sanitization_failed": "This image attachment could not be processed and was rejected for safety. Please try a different file.",
     "drop_failed": "Drop failed.",
     "unexpected_error": "An unexpected error occurred. Please try again.",
+    "secure_delete_failed": "The source .paracci file could not be securely deleted. Treat the remaining file as sensitive and delete it using a secure deletion method.",
     "package_limit_error": "The message could not be opened: package size or structure limit exceeded.",
     "pending_title": "Session pending",
     "pending_desc_x_p1": "Did you send the Initiator file to Y? Activate your session by uploading the Responder file from the other peer below.",

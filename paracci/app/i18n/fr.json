@@ -345,6 +345,7 @@
     "attachment_sanitization_failed": "Cette image jointe n'a pas pu être traitée et a été rejetée par sécurité. Veuillez essayer un autre fichier.",
     "drop_failed": "Drop failed.",
     "unexpected_error": "Une erreur inattendue s'est produite. Veuillez réessayer.",
+    "secure_delete_failed": "Le fichier .paracci source n'a pas pu être supprimé de manière sécurisée. Traitez le fichier restant comme sensible et supprimez-le avec une méthode d'effacement sécurisé.",
     "package_limit_error": "Le message n'a pas pu être ouvert : limite de taille ou de structure du paquet dépassée."
   },
   "profile": {

@@ -129,6 +129,7 @@ def test_ui_api_session_roundtrip_and_attachment_cache(tmp_path):
     )
     assert opened["text"] == "Hello **Y**"
     assert opened["attachments"][0]["filename"] == "note.txt"
+    assert opened["secure_delete_warning"] is None
 
     preview = y.dispatch(
         "attachment_preview",
@@ -151,6 +152,27 @@ def test_ui_api_session_roundtrip_and_attachment_cache(tmp_path):
         assert False, "cleared attachment cache remained accessible"
     except UIApiError as exc:
         assert exc.code == "open_not_found"
+
+
+def test_ui_api_surfaces_secure_delete_warning(tmp_path):
+    api = make_api(tmp_path / "secure-delete-warning")
+    message = OpenedMessage(
+        text="secret",
+        attachments=[],
+        allow_download=False,
+        msg_id_hex="00",
+        evo_step=1,
+        expire_at=0,
+        single_use=True,
+        security_report={"is_safe": True, "risks": []},
+        secure_delete_failed=True,
+    )
+
+    opened = api._opened_message_to_dict("open-id", message)
+
+    assert opened["secure_delete_warning"] == api.services.i18n.translate(
+        "session.secure_delete_failed"
+    )
 
 
 def test_ui_api_device_lock_drops_open_cache_and_windows_status_is_best_effort(tmp_path):

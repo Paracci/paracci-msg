@@ -609,6 +609,7 @@ def test_flask_open_uses_bound_header_policy_over_package_metadata(tmp_path, mon
     assert opened.status_code == 200
     payload = opened.get_json()
     assert payload["allow_download"] is False
+    assert payload["secure_delete_warning"] is None
     assert len(payload["attachments"]) == 1
     attachment_ref = payload["attachments"][0]["pid"]
     assert routes_module.PREVIEW_CACHE[attachment_ref]["allow_download"] is False
@@ -637,6 +638,54 @@ def test_flask_open_uses_bound_header_policy_over_package_metadata(tmp_path, mon
     assert inline_response.data != b"original bytes"
     assert forged_download_response.status_code == 403
     assert forged_download_response.data != b"original bytes"
+
+
+@oqs_required
+def test_flask_native_open_surfaces_secure_delete_failure_without_hiding_message(
+    tmp_path, monkeypatch
+):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    import app.routes as routes_module
+    import core.burn as burn_module
+
+    client = flask_app.test_client()
+    bootstrap(client)
+    _unlock_test_client(ag_app, client)
+    meta_x, meta_y = _make_active_handshake()
+    _save_meta(ag_app, meta_x)
+    with client.session_transaction(base_url=ORIGIN) as sess:
+        sess["locale"] = "en"
+
+    sealed = client.post(
+        f"/session/{meta_x.session_id.hex()}/seal",
+        base_url=ORIGIN,
+        data={"message": "must remain readable", "ttl_seconds": "0"},
+        headers=auth_headers(client),
+    )
+    assert sealed.status_code == 200
+
+    _save_meta(ag_app, meta_y)
+    selected = tmp_path / "incoming.paracci"
+    selected.write_bytes(sealed.data)
+    native_ref = routes_module.register_native_file_path(selected)
+    monkeypatch.setattr(burn_module.shield, "secure_delete", lambda _path: False)
+
+    opened = client.post(
+        f"/session/{meta_y.session_id.hex()}/open?ajax=1",
+        base_url=ORIGIN,
+        data={"native_file_id": native_ref["id"]},
+        headers=auth_headers(client, **{"X-Requested-With": "XMLHttpRequest"}),
+    )
+
+    assert opened.status_code == 200
+    payload = opened.get_json()
+    assert payload["success"] is True
+    assert payload["text"] == "must remain readable"
+    assert payload["secure_delete_warning"] == (
+        "The source .paracci file could not be securely deleted. Treat the remaining "
+        "file as sensitive and delete it using a secure deletion method."
+    )
+    assert selected.exists()
 
 
 @oqs_required

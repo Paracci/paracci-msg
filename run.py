@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent / "paracci"))
 
 # core.shields import
 from core.shields import shield
+from core.burn import secure_delete
 from core.preview_store import preview_store
 from desktop.file_activation import (
     FileActivationBroker,
@@ -638,6 +639,7 @@ def run_auto_cleanup(protected_path: Path | None = None):
         now = time.time()
         max_age = cleanup_hours * 3600
         count = 0
+        failed_count = 0
         
         for fname in os.listdir(target_dir):
             if fname.endswith(".paracci"):
@@ -650,11 +652,22 @@ def run_auto_cleanup(protected_path: Path | None = None):
                             continue
                     f_age = now - os.path.getmtime(path)
                     if f_age > max_age:
-                        os.remove(path)
-                        count += 1
+                        if secure_delete(path):
+                            count += 1
+                        else:
+                            failed_count += 1
         
         if count > 0:
             print(f"  [BURN] Auto-Cleanup: {count} old message files destroyed.")
+        if failed_count > 0:
+            logger.error(
+                "Auto-cleanup could not securely delete %d expired message file(s).",
+                failed_count,
+            )
+            print(
+                f"  [!] Auto-Cleanup: {failed_count} old message file(s) "
+                "could not be securely destroyed."
+            )
             
     except Exception as e:
         print(f"  [!] Auto-Cleanup error: {e}")

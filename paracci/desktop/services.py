@@ -184,6 +184,7 @@ class OpenedMessage:
     expire_at: int
     single_use: bool
     security_report: dict
+    secure_delete_failed: bool = False
 
 
 def configure_data_dir(explicit: str | None = None, user_profile: str | None = None) -> Path:
@@ -714,7 +715,7 @@ class MessageService:
                 meta = apply_bond_nonce_to_y(meta, opened.bond_nonce)
             updated = meta._replace(rx_count=opened.next_step, recv_seed=opened.next_seed)
             self.sessions.save(updated)
-            guard.post_open_burn(
+            secure_delete_succeeded = guard.post_open_burn(
                 msg_id=opened.msg_id,
                 session_id=opened.session_id,
                 direction=opened.direction,
@@ -756,6 +757,7 @@ class MessageService:
             expire_at=opened.expire_at,
             single_use=opened.single_use,
             security_report=scan_text_for_security(package.text),
+            secure_delete_failed=not secure_delete_succeeded,
         )
 
     def _read_attachments(self, paths: list[Path]) -> list[tuple[str, bytes]]:

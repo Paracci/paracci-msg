@@ -14,6 +14,7 @@ import os
 import sqlite3
 import hashlib
 import json
+import logging
 import math
 import re
 import threading
@@ -35,6 +36,8 @@ from .crypto import (
     random_bytes,
     wipe
 )
+
+logger = logging.getLogger(__name__)
 
 BURN_STATUS_OPENING = "opening"
 BURN_STATUS_BURNED = "burned"
@@ -990,11 +993,21 @@ class BurnDB:
 # Secure File Deletion
 # ---------------------------------------------------------------------------
 
-def secure_delete(file_path: str | Path, passes: int = 3):
+def secure_delete(file_path: str | Path, passes: int = 3) -> bool:
     """
     Destroys the file using the most secure system-specific method (Shield).
     """
-    return shield.secure_delete(str(file_path))
+    try:
+        deleted = shield.secure_delete(str(file_path))
+    except (MemoryError, KeyboardInterrupt, SystemExit):
+        raise
+    except Exception:
+        logger.exception("Unexpected secure deletion failure for a sensitive source file.")
+        return False
+    if not deleted:
+        logger.error("Secure deletion failed for a sensitive source file.")
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -1034,7 +1047,7 @@ class BurnGuard:
         direction: int,
         single_use: bool,
         file_path: str | Path | None = None,
-    ) -> None:
+    ) -> bool:
         """
         After the message is opened:
           - If single-use, register the MSG_ID as burned
@@ -1046,7 +1059,8 @@ class BurnGuard:
 
         # Securely delete the file (if single-use or requested by caller)
         if file_path and single_use:
-            secure_delete(file_path)
+            return secure_delete(file_path)
+        return True
 
     def mark_open_failed(self, msg_id: bytes, reason: str | None = None) -> None:
         """
@@ -1065,8 +1079,10 @@ class BurnGuard:
         Force burn the message (when user wants to delete manually).
         """
         self.db.burn(msg_id, session_id, direction)
-        if file_path:
-            secure_delete(file_path)
+        if file_path and not secure_delete(file_path):
+            raise SecureDeleteError(
+                "The message was burned, but its source file could not be securely deleted."
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -1248,6 +1264,10 @@ class AlreadyBurnedError(Exception):
 
 class TTLExpiredError(Exception):
     """Message TTL has expired."""
+
+
+class SecureDeleteError(Exception):
+    """A burned message source file could not be securely deleted."""
 
 
 class DeviceError(Exception):

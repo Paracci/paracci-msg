@@ -378,6 +378,11 @@ class UIApi:
             "expire_at": message.expire_at,
             "single_use": message.single_use,
             "security_report": message.security_report,
+            "secure_delete_warning": (
+                self.services.i18n.translate("session.secure_delete_failed")
+                if message.secure_delete_failed
+                else None
+            ),
             "attachments": [
                 self._attachment_meta(attachment, str(index))
                 for index, attachment in enumerate(message.attachments)

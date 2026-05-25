@@ -231,3 +231,19 @@ def test_all_locales_have_package_limit_error_key():
         assert session_block[key], (
             f"Empty value for session.{key} in locale '{lang}'"
         )
+
+
+def test_all_locales_have_secure_delete_failure_warning():
+    """All shipped locales expose the nonfatal secure-delete warning."""
+    for lang in ["en", "de", "es", "fr", "ru", "tr"]:
+        warning = _load_locale(lang).get("session", {}).get("secure_delete_failed", "")
+        assert warning, f"Missing or empty session.secure_delete_failed in locale '{lang}'"
+
+
+def test_session_js_renders_secure_delete_warning_as_security_alert():
+    session_js = (
+        Path(__file__).parent.parent / "app" / "static" / "js" / "session.js"
+    ).read_text(encoding="utf-8")
+
+    assert "data.secure_delete_warning" in session_js
+    assert "appendAlert(securityDiv, 'error', warnLabel, data.secure_delete_warning)" in session_js
