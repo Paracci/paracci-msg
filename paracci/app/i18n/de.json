@@ -360,6 +360,8 @@
     "clearing_clipboard": "Clearing clipboard ({s}s)",
     "clipboard_cleared": "Clipboard cleared.",
     "copy_protection_btn": "Kopieren (30s Auto-Löschen)",
+    "clipboard_clear_failed": "Die Zwischenablage konnte nicht geleert werden. Ersetzen oder leeren Sie sie jetzt manuell.",
+    "clipboard_browser_history_warning": "Der Browsermodus kann das Speichern im Zwischenablageverlauf nicht verhindern. Leeren Sie den Verlauf manuell.",
     "text_copied_notify": "Text kopiert. Lokale Apps können die Zwischenablage lesen, bis sie in 30 Sekunden geleert wird.",
     "clipboard_failed": "Clipboard access failed.",
     "download_failed": "Download failed",

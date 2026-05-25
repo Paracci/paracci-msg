@@ -360,6 +360,8 @@
     "clearing_clipboard": "Clearing clipboard ({s}s)",
     "clipboard_cleared": "Clipboard cleared.",
     "copy_protection_btn": "Копировать (автоочистка 30с)",
+    "clipboard_clear_failed": "Не удалось очистить буфер обмена. Замените его содержимое или очистите его вручную.",
+    "clipboard_browser_history_warning": "Режим браузера не может запретить сохранение истории буфера обмена. Очистите историю вручную.",
     "text_copied_notify": "Текст скопирован. Локальные приложения могут читать буфер обмена, пока он не очистится через 30 секунд.",
     "clipboard_failed": "Clipboard access failed.",
     "download_failed": "Download failed",

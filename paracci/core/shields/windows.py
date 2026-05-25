@@ -7,6 +7,11 @@ import time
 from pathlib import Path
 from .base import BaseShield
 
+CF_UNICODETEXT = 13
+GHND = 0x0042  # GMEM_MOVEABLE | GMEM_ZEROINIT
+CLIPBOARD_HISTORY_EXCLUSION_FORMAT = "ExcludeClipboardContentFromMonitorProcessing"
+
+
 class WindowsShield(BaseShield):
     """
     Windows implementation of Paracci's best-effort platform shield.
@@ -47,6 +52,10 @@ class WindowsShield(BaseShield):
             # BOOL CloseClipboard()
             self._user32.CloseClipboard.argtypes = []
             self._user32.CloseClipboard.restype = ctypes.wintypes.BOOL
+
+            # UINT RegisterClipboardFormatW(LPCWSTR lpszFormat)
+            self._user32.RegisterClipboardFormatW.argtypes = [ctypes.wintypes.LPCWSTR]
+            self._user32.RegisterClipboardFormatW.restype = ctypes.wintypes.UINT
 
             # --- Kernel32 Signatures ---
             # HGLOBAL GlobalAlloc(UINT uFlags, SIZE_T dwBytes)
@@ -199,70 +208,80 @@ class WindowsShield(BaseShield):
             logging.error(f"[WindowsArmor] Failed to clear recent docs: {e}")
             return False
 
+    def _place_clipboard_data(self, format_id: int, payload: bytes) -> bool:
+        """Transfer one payload allocation to the open Windows clipboard."""
+        h_global_mem = self._kernel32.GlobalAlloc(GHND, len(payload))
+        if not h_global_mem:
+            return False
+
+        lp_global_mem = self._kernel32.GlobalLock(h_global_mem)
+        if not lp_global_mem:
+            self._kernel32.GlobalFree(h_global_mem)
+            return False
+
+        try:
+            ctypes.memmove(lp_global_mem, payload, len(payload))
+        finally:
+            self._kernel32.GlobalUnlock(h_global_mem)
+
+        if not self._user32.SetClipboardData(format_id, h_global_mem):
+            self._kernel32.GlobalFree(h_global_mem)
+            return False
+        return True
+
+    def _set_clipboard(self, content: str) -> bool:
+        """Set current clipboard content, excluding sensitive text from Win+V history."""
+        opened = False
+        for attempt in range(10):
+            if self._user32.OpenClipboard(None):
+                opened = True
+                break
+            logging.warning(f"[WindowsArmor] OpenClipboard attempt {attempt + 1} failed. Retrying...")
+            time.sleep(0.1)
+
+        if not opened:
+            logging.error("[WindowsArmor] Failed to open clipboard after 10 attempts.")
+            return False
+
+        try:
+            if not self._user32.EmptyClipboard():
+                return False
+
+            if not content:
+                return True
+
+            exclusion_format = self._user32.RegisterClipboardFormatW(CLIPBOARD_HISTORY_EXCLUSION_FORMAT)
+            if not exclusion_format:
+                logging.warning("[WindowsArmor] Clipboard history exclusion format is unavailable; copy rejected.")
+                return False
+
+            # Any payload in this registered format prevents built-in history and cloud sync.
+            if not self._place_clipboard_data(exclusion_format, b"\x00"):
+                logging.warning("[WindowsArmor] Clipboard history exclusion marker failed; copy rejected.")
+                return False
+
+            text_payload = str(content).encode("utf-16le") + b"\x00\x00"
+            if not self._place_clipboard_data(CF_UNICODETEXT, text_payload):
+                return False
+            return True
+        except Exception as e:
+            logging.error(f"[WindowsArmor] Internal clipboard error: {e}")
+            return False
+        finally:
+            self._user32.CloseClipboard()
+
     def copy_to_clipboard(self, text: str, clear_delay: int = 30) -> bool:
         """Copies to clipboard and auto-clears after delay; local processes can read it meanwhile."""
-        def _set_clipboard(content):
-            CF_UNICODETEXT = 13
-            GHND = 0x0042 # GMEM_MOVEABLE (0x02) | GMEM_ZEROINIT (0x40)
-            
-            # Retry loop for OpenClipboard (it can fail if another app is using it)
-            opened = False
-            for i in range(10):
-                if self._user32.OpenClipboard(None):
-                    opened = True
-                    break
-                logging.warning(f"[WindowsArmor] OpenClipboard attempt {i+1} failed. Retrying...")
-                time.sleep(0.1)
-
-            if not opened:
-                logging.error(f"[WindowsArmor] Failed to open clipboard after 10 attempts.")
-                return False
-                
-            try:
-                if not self._user32.EmptyClipboard():
-                    return False
-
-                if not content:
-                    return True
-                
-                content_bytes = str(content).encode('utf-16le')
-                msize = len(content_bytes) + 2
-                
-                hGlobalMem = self._kernel32.GlobalAlloc(GHND, msize)
-                if not hGlobalMem:
-                    return False
-                    
-                lpGlobalMem = self._kernel32.GlobalLock(hGlobalMem)
-                if not lpGlobalMem:
-                    self._kernel32.GlobalFree(hGlobalMem)
-                    return False
-                
-                try:
-                    ctypes.memmove(lpGlobalMem, content_bytes, len(content_bytes))
-                finally:
-                    self._kernel32.GlobalUnlock(hGlobalMem)
-                    
-                if not self._user32.SetClipboardData(CF_UNICODETEXT, hGlobalMem):
-                    self._kernel32.GlobalFree(hGlobalMem)
-                    return False
-                    
-                return True
-            except Exception as e:
-                logging.error(f"[WindowsArmor] Internal clipboard error: {e}")
-                return False
-            finally:
-                self._user32.CloseClipboard()
-
         def _delayed_clear():
             try:
                 time.sleep(clear_delay)
-                if _set_clipboard(""):
+                if self._set_clipboard(""):
                     logging.info(f"[WindowsArmor] Clipboard auto-cleared after {clear_delay}s")
             except Exception as e:
                 logging.error(f"[WindowsArmor] Error in delayed clear: {e}")
 
         try:
-            if _set_clipboard(text):
+            if self._set_clipboard(text):
                 if clear_delay > 0:
                     threading.Thread(target=_delayed_clear, daemon=True).start()
                 return True

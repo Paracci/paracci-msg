@@ -72,6 +72,9 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
 
+      - name: Run clipboard JavaScript tests
+        run: node --test paracci/tests/test_session_clipboard.mjs
+
   # ═══════════════════════════════════════════════════════════════════════════
   # JOB 2 — Build on all three platforms in parallel
   # ═══════════════════════════════════════════════════════════════════════════

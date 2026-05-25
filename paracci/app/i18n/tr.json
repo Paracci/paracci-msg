@@ -301,6 +301,8 @@
     "copy_protection_btn": "Kopyala (30sn Otomatik temizleme)",
     "clearing_clipboard": "Pano temizleniyor ({s}sn)",
     "clipboard_cleared": "Pano temizlendi.",
+    "clipboard_clear_failed": "Pano temizlenemedi. Şimdi başka bir içerik kopyalayın veya panoyu elle temizleyin.",
+    "clipboard_browser_history_warning": "Tarayıcı modu işletim sistemi pano geçmişine kaydı engelleyemez. Pano geçmişini elle temizleyin.",
     "text_copied_notify": "Metin kopyalandı. Pano 30 saniye içinde temizlenene kadar yerel uygulamalar okuyabilir.",
     "processing": "İşleniyor...",
     "server_error": "Sunucu hatası",
