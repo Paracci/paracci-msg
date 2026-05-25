@@ -51,6 +51,8 @@ PASSPHRASE_NUMERIC_MIN_LENGTH = 20
 PASSPHRASE_MIN_UNIQUE_CHARS = 5
 
 UNLOCK_RATE_LIMIT_KEY = "unlock_rate_limit_v1"
+UNLOCK_EVER_SUCCEEDED_KEY = "unlock_ever_succeeded"
+UNLOCK_EVER_SUCCEEDED_VALUE = b"1"
 UNLOCK_MAX_FAILED_ATTEMPTS = 5
 UNLOCK_LOCKOUT_SECONDS = 300
 UNLOCK_FAILURE_DELAYS = {
@@ -80,6 +82,7 @@ BOOTSTRAP_DEVICE_META_KEYS = frozenset(
         "platform_binding_profile_id_v1",
         "platform_binding_kind_v1",
         UNLOCK_RATE_LIMIT_KEY,
+        UNLOCK_EVER_SUCCEEDED_KEY,
     }
 )
 
@@ -833,10 +836,68 @@ class BurnDB:
         finally:
             conn.close()
 
-    def _decode_unlock_rate_limit(self, raw: bytes | None, now: int | None = None) -> dict:
+    @staticmethod
+    def _encode_unlock_rate_limit(state: dict) -> bytes:
+        stored = {
+            "failed_attempts": state["failed_attempts"],
+            "locked_until": state["locked_until"],
+            "last_failed_at": state["last_failed_at"],
+        }
+        return json.dumps(stored, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+    def _write_unlock_rate_limit(self, conn: sqlite3.Connection, state: dict) -> None:
+        conn.execute(
+            "INSERT OR REPLACE INTO device_meta (key, value) VALUES (?, ?)",
+            (UNLOCK_RATE_LIMIT_KEY, self._encode_unlock_rate_limit(state)),
+        )
+
+    def _load_unlock_rate_limit(
+        self,
+        conn: sqlite3.Connection,
+        now: int,
+    ) -> tuple[dict, bool]:
+        row = conn.execute(
+            "SELECT value FROM device_meta WHERE key=?",
+            (UNLOCK_RATE_LIMIT_KEY,),
+        ).fetchone()
+        raw = row[0] if row is not None else None
+        unlock_ever_succeeded = False
+        has_sessions = False
+        if row is None:
+            unlock_ever_succeeded = conn.execute(
+                "SELECT 1 FROM device_meta WHERE key=? LIMIT 1",
+                (UNLOCK_EVER_SUCCEEDED_KEY,),
+            ).fetchone() is not None
+            has_sessions = (
+                conn.execute("SELECT 1 FROM sessions LIMIT 1").fetchone() is not None
+            )
+        state = self._decode_unlock_rate_limit(
+            raw,
+            now,
+            unlock_ever_succeeded=unlock_ever_succeeded,
+            has_sessions=has_sessions,
+        )
+        return state, row is None and (unlock_ever_succeeded or has_sessions)
+
+    def _decode_unlock_rate_limit(
+        self,
+        raw: bytes | None,
+        now: int | None = None,
+        *,
+        unlock_ever_succeeded: bool = False,
+        has_sessions: bool = False,
+    ) -> dict:
         now = int(time.time()) if now is None else int(now)
         state = {"failed_attempts": 0, "locked_until": 0, "last_failed_at": 0}
-        if raw:
+        if raw is None and (unlock_ever_succeeded or has_sessions):
+            failed_attempts = UNLOCK_MAX_FAILED_ATTEMPTS - 1
+            delay = UNLOCK_FAILURE_DELAYS[failed_attempts]
+            state = {
+                "failed_attempts": failed_attempts,
+                "locked_until": now + delay,
+                "last_failed_at": now,
+            }
+        elif raw:
             try:
                 parsed = json.loads(raw.decode("utf-8"))
                 state["failed_attempts"] = max(0, int(parsed.get("failed_attempts", 0)))
@@ -849,8 +910,21 @@ class BurnDB:
 
     def get_unlock_rate_limit(self, now: int | None = None) -> dict:
         """Returns durable unlock failure and lockout state."""
-        raw = self.get_device_meta(UNLOCK_RATE_LIMIT_KEY)
-        return self._decode_unlock_rate_limit(raw, now)
+        now = int(time.time()) if now is None else int(now)
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            state, recovered_missing_record = self._load_unlock_rate_limit(conn, now)
+            if recovered_missing_record:
+                self._write_unlock_rate_limit(conn, state)
+            conn.commit()
+            return state
+        except Exception:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def assert_unlock_allowed(self, now: int | None = None) -> None:
         """Raises when the durable unlock lockout window is still active."""
@@ -864,13 +938,10 @@ class BurnDB:
         conn = self._connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute(
-                "SELECT value FROM device_meta WHERE key=?",
-                (UNLOCK_RATE_LIMIT_KEY,),
-            ).fetchone()
-            state = self._decode_unlock_rate_limit(row[0] if row else None, now)
+            state, _recovered_missing_record = self._load_unlock_rate_limit(conn, now)
             if state["retry_after_seconds"] > 0:
-                conn.rollback()
+                self._write_unlock_rate_limit(conn, state)
+                conn.commit()
                 raise DeviceLockedError(state["retry_after_seconds"])
 
             failed_attempts = state["failed_attempts"] + 1
@@ -884,11 +955,7 @@ class BurnDB:
                 "locked_until": now + delay if delay else 0,
                 "last_failed_at": now,
             }
-            encoded = json.dumps(updated, sort_keys=True, separators=(",", ":")).encode("utf-8")
-            conn.execute(
-                "INSERT OR REPLACE INTO device_meta (key, value) VALUES (?, ?)",
-                (UNLOCK_RATE_LIMIT_KEY, encoded),
-            )
+            self._write_unlock_rate_limit(conn, updated)
             conn.commit()
             updated["retry_after_seconds"] = delay
             return updated
@@ -904,11 +971,18 @@ class BurnDB:
         return self.reserve_unlock_attempt(now)
 
     def reset_unlock_failures(self) -> None:
-        """Clears consecutive unlock failures after a successful unlock."""
+        """Clears failures and records that this device has unlocked successfully."""
         conn = self._connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
-            conn.execute("DELETE FROM device_meta WHERE key=?", (UNLOCK_RATE_LIMIT_KEY,))
+            self._write_unlock_rate_limit(
+                conn,
+                {"failed_attempts": 0, "locked_until": 0, "last_failed_at": 0},
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO device_meta (key, value) VALUES (?, ?)",
+                (UNLOCK_EVER_SUCCEEDED_KEY, UNLOCK_EVER_SUCCEEDED_VALUE),
+            )
             conn.commit()
         except Exception:
             if conn.in_transaction:

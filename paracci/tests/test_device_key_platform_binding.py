@@ -5,7 +5,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core.burn import BurnDB, init_device
+from core.burn import (
+    UNLOCK_EVER_SUCCEEDED_KEY,
+    UNLOCK_RATE_LIMIT_KEY,
+    BurnDB,
+    init_device,
+)
 from desktop import device_key_binding as binding
 from desktop.device_key_binding import (
     LINUX_SECRET_SERVICE_KIND,
@@ -91,6 +96,9 @@ def test_macos_creation_and_unlock_use_keychain(tmp_path, monkeypatch):
     assert db.get_device_meta(PLATFORM_BINDING_KIND_META_KEY) == MACOS_KEYCHAIN_KIND
     assert profile_id in store
     assert unlock_device_with_binding(db, PASSPHRASE) == device_key
+    assert db.get_device_meta(UNLOCK_EVER_SUCCEEDED_KEY) == b"1"
+    assert db.get_device_meta(UNLOCK_RATE_LIMIT_KEY) is not None
+    assert db.get_unlock_rate_limit()["failed_attempts"] == 0
 
 
 def test_linux_creation_and_unlock_use_secret_service(tmp_path, monkeypatch):
@@ -103,6 +111,9 @@ def test_linux_creation_and_unlock_use_secret_service(tmp_path, monkeypatch):
     assert db.get_device_meta(PLATFORM_BINDING_KIND_META_KEY) == LINUX_SECRET_SERVICE_KIND
     assert profile_id in store
     assert unlock_device_with_binding(db, PASSPHRASE) == device_key
+    assert db.get_device_meta(UNLOCK_EVER_SUCCEEDED_KEY) == b"1"
+    assert db.get_device_meta(UNLOCK_RATE_LIMIT_KEY) is not None
+    assert db.get_unlock_rate_limit()["failed_attempts"] == 0
 
 
 def test_macos_keychain_failure_before_kdf_does_not_consume_unlock_attempt(tmp_path, monkeypatch):

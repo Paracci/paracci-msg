@@ -307,6 +307,36 @@ def test_unlock_route_renders_durable_lockout_state(tmp_path, monkeypatch):
     )
 
 
+def test_unlock_route_repairs_deleted_rate_state_after_success(tmp_path, monkeypatch):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    client = flask_app.test_client()
+    bootstrap(client)
+
+    from core.burn import (
+        UNLOCK_MAX_FAILED_ATTEMPTS,
+        UNLOCK_RATE_LIMIT_KEY,
+        init_device,
+        unlock_device,
+    )
+
+    init_device(ag_app.db, "Correct-Horse-95175328")
+    unlock_device(ag_app.db, "Correct-Horse-95175328")
+    ag_app.db.delete_device_meta(UNLOCK_RATE_LIMIT_KEY)
+
+    response = client.get("/unlock", base_url=ORIGIN, headers={"Host": HOST})
+    repaired = ag_app.db.get_unlock_rate_limit()
+
+    assert response.status_code == 200
+    assert b"id=\"lockoutCountdown\"" in response.data
+    assert any(
+        f"data-lockout-seconds=\"{seconds}\"".encode("utf-8") in response.data
+        for seconds in range(10, 16)
+    )
+    assert repaired["failed_attempts"] == UNLOCK_MAX_FAILED_ATTEMPTS - 1
+    assert repaired["retry_after_seconds"] > 0
+    assert ag_app.db.get_device_meta(UNLOCK_RATE_LIMIT_KEY) is not None
+
+
 def test_unlock_route_renders_dpapi_binding_error(tmp_path, monkeypatch):
     ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
     client = flask_app.test_client()

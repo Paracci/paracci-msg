@@ -1,3 +1,5 @@
+import json
+import sqlite3
 import sys
 import threading
 import time
@@ -10,6 +12,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core import burn as burn_module
 from core.burn import (
+    UNLOCK_EVER_SUCCEEDED_KEY,
+    UNLOCK_FAILURE_DELAYS,
+    UNLOCK_MAX_FAILED_ATTEMPTS,
+    UNLOCK_RATE_LIMIT_KEY,
     BurnDB,
     DeviceError,
     DeviceLockedError,
@@ -20,6 +26,11 @@ from core.crypto import derive_master_key, encrypt, random_bytes
 
 
 STRONG_PASSPHRASE = "Correct-Horse-95175328"
+
+
+def _stored_unlock_state(db):
+    raw = db.get_device_meta(UNLOCK_RATE_LIMIT_KEY)
+    return json.loads(raw.decode("utf-8")) if raw is not None else None
 
 
 @pytest.mark.parametrize(
@@ -40,6 +51,24 @@ def test_weak_new_device_passphrases_are_rejected(tmp_path, passphrase):
         init_device(db, passphrase)
 
 
+def test_new_device_missing_rate_state_is_permissive_until_first_success(tmp_path):
+    db = BurnDB(tmp_path / "sessions.db")
+    device_key = init_device(db, STRONG_PASSPHRASE)
+
+    assert db.get_device_meta(UNLOCK_EVER_SUCCEEDED_KEY) is None
+    assert db.get_device_meta(UNLOCK_RATE_LIMIT_KEY) is None
+    db.assert_unlock_allowed(now=1000)
+    assert db.get_device_meta(UNLOCK_RATE_LIMIT_KEY) is None
+
+    assert unlock_device(db, STRONG_PASSPHRASE) == device_key
+    assert db.get_device_meta(UNLOCK_EVER_SUCCEEDED_KEY) == b"1"
+    assert _stored_unlock_state(db) == {
+        "failed_attempts": 0,
+        "last_failed_at": 0,
+        "locked_until": 0,
+    }
+
+
 def test_strong_passphrase_unlocks_and_resets_failed_counter(tmp_path):
     db = BurnDB(tmp_path / "sessions.db")
     device_key = init_device(db, STRONG_PASSPHRASE)
@@ -50,6 +79,88 @@ def test_strong_passphrase_unlocks_and_resets_failed_counter(tmp_path):
     assert db.get_unlock_rate_limit()["failed_attempts"] == 1
     assert unlock_device(db, STRONG_PASSPHRASE) == device_key
     assert db.get_unlock_rate_limit()["failed_attempts"] == 0
+
+
+def test_deleted_rate_state_after_success_is_delayed_and_repaired(tmp_path):
+    db_path = tmp_path / "sessions.db"
+    db = BurnDB(db_path)
+    init_device(db, STRONG_PASSPHRASE)
+    unlock_device(db, STRONG_PASSPHRASE)
+    db.delete_device_meta(UNLOCK_RATE_LIMIT_KEY)
+
+    restarted = BurnDB(db_path)
+    delay = UNLOCK_FAILURE_DELAYS[UNLOCK_MAX_FAILED_ATTEMPTS - 1]
+    with pytest.raises(DeviceLockedError) as locked:
+        restarted.assert_unlock_allowed(now=1000)
+    assert locked.value.retry_after_seconds == delay
+    assert _stored_unlock_state(restarted) == {
+        "failed_attempts": UNLOCK_MAX_FAILED_ATTEMPTS - 1,
+        "last_failed_at": 1000,
+        "locked_until": 1000 + delay,
+    }
+
+    with pytest.raises(DeviceLockedError) as locked_again:
+        restarted.reserve_unlock_attempt(now=1001)
+    assert locked_again.value.retry_after_seconds == delay - 1
+    assert _stored_unlock_state(restarted)["locked_until"] == 1000 + delay
+
+
+def test_sessions_force_delay_if_both_unlock_policy_rows_are_deleted(tmp_path):
+    db_path = tmp_path / "sessions.db"
+    db = BurnDB(db_path)
+    device_key = init_device(db, STRONG_PASSPHRASE)
+    keyed = db.with_device_key(device_key)
+    try:
+        keyed.save_session(random_bytes(16), "Existing Session", "active", b"metadata", 1)
+    finally:
+        keyed.release_device_key()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "DELETE FROM device_meta WHERE key IN (?, ?)",
+            (UNLOCK_RATE_LIMIT_KEY, UNLOCK_EVER_SUCCEEDED_KEY),
+        )
+
+    restarted = BurnDB(db_path)
+    delay = UNLOCK_FAILURE_DELAYS[UNLOCK_MAX_FAILED_ATTEMPTS - 1]
+    with pytest.raises(DeviceLockedError) as locked:
+        restarted.assert_unlock_allowed(now=2000)
+    assert locked.value.retry_after_seconds == delay
+    assert _stored_unlock_state(restarted)["failed_attempts"] == UNLOCK_MAX_FAILED_ATTEMPTS - 1
+
+
+def test_blocked_attempt_repersist_existing_rate_state(tmp_path):
+    db_path = tmp_path / "sessions.db"
+    db = BurnDB(db_path)
+    db.set_device_meta(UNLOCK_EVER_SUCCEEDED_KEY, b"1")
+    db.set_device_meta(
+        UNLOCK_RATE_LIMIT_KEY,
+        json.dumps(
+            {"failed_attempts": 5, "last_failed_at": 1000, "locked_until": 1300},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8"),
+    )
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE unlock_rate_writes (id INTEGER PRIMARY KEY)")
+        conn.execute(
+            """
+            CREATE TRIGGER capture_unlock_rate_rewrite
+            AFTER INSERT ON device_meta
+            WHEN NEW.key = 'unlock_rate_limit_v1'
+            BEGIN
+                INSERT INTO unlock_rate_writes (id) VALUES (NULL);
+            END
+            """
+        )
+
+    with pytest.raises(DeviceLockedError):
+        db.reserve_unlock_attempt(now=1001)
+
+    with sqlite3.connect(db_path) as conn:
+        writes = conn.execute("SELECT COUNT(*) FROM unlock_rate_writes").fetchone()[0]
+    assert writes == 1
+    assert _stored_unlock_state(db)["locked_until"] == 1300
 
 
 def test_successful_unlock_reserves_attempt_before_kdf_and_clears_it(tmp_path, monkeypatch):
