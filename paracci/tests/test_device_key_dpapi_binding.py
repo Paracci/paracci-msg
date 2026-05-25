@@ -8,7 +8,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core.burn import BurnDB, DeviceError, init_device
+from core.burn import (
+    UNLOCK_EVER_SUCCEEDED_KEY,
+    UNLOCK_RATE_LIMIT_KEY,
+    BurnDB,
+    DeviceError,
+    init_device,
+)
 from core.crypto import EncryptedBlob, decrypt
 from desktop import device_key_binding as binding
 from desktop.device_key_binding import (
@@ -59,6 +65,9 @@ def test_windows_bound_unlock_requires_dpapi_and_passphrase(tmp_path, monkeypatc
     device_key = initialize_device_with_binding(db, PASSPHRASE)
 
     assert unlock_device_with_binding(db, PASSPHRASE) == device_key
+    assert db.get_device_meta(UNLOCK_EVER_SUCCEEDED_KEY) == b"1"
+    assert db.get_device_meta(UNLOCK_RATE_LIMIT_KEY) is not None
+    assert db.get_unlock_rate_limit()["failed_attempts"] == 0
     with pytest.raises(DeviceError, match="Incorrect passphrase"):
         unlock_device_with_binding(db, "Wrong-Horse-95175328")
     assert db.get_unlock_rate_limit()["failed_attempts"] == 1

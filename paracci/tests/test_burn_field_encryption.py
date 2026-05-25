@@ -12,6 +12,8 @@ from core.burn import (
     PROTECTED_VALUE_PREFIX,
     STORAGE_MIGRATION_COMPLETE,
     STORAGE_MIGRATION_KEY,
+    UNLOCK_EVER_SUCCEEDED_KEY,
+    UNLOCK_RATE_LIMIT_KEY,
     BurnDB,
     DeviceError,
 )
@@ -96,10 +98,14 @@ def test_wrong_key_and_locked_access_fail_closed_while_bootstrap_remains_availab
     db.save_session(session_id, "Protected Label", "active", b"metadata", 1)
     db.set_device_meta("private_note", b"protected")
     db.set_device_meta("pin_salt", b"bootstrap-salt")
+    db.set_device_meta(UNLOCK_RATE_LIMIT_KEY, b'{"failed_attempts":0}')
+    db.set_device_meta(UNLOCK_EVER_SUCCEEDED_KEY, b"1")
 
     locked = BurnDB(db_path)
     assert locked.session_exists(session_id) is True
     assert locked.get_device_meta("pin_salt") == b"bootstrap-salt"
+    assert locked.get_device_meta(UNLOCK_RATE_LIMIT_KEY) == b'{"failed_attempts":0}'
+    assert locked.get_device_meta(UNLOCK_EVER_SUCCEEDED_KEY) == b"1"
     with pytest.raises(DeviceError, match="protected metadata"):
         locked.load_session(session_id)
     with pytest.raises(DeviceError, match="protected metadata"):
@@ -148,11 +154,21 @@ def test_legacy_plaintext_rows_are_migrated_and_scrubbed_on_first_keyed_open(tmp
             "INSERT INTO device_meta (key, value) VALUES (?, ?)",
             ("pin_salt", b"plain-bootstrap"),
         )
+        conn.execute(
+            "INSERT INTO device_meta (key, value) VALUES (?, ?)",
+            (UNLOCK_RATE_LIMIT_KEY, b'{"failed_attempts":0}'),
+        )
+        conn.execute(
+            "INSERT INTO device_meta (key, value) VALUES (?, ?)",
+            (UNLOCK_EVER_SUCCEEDED_KEY, b"1"),
+        )
 
     db = BurnDB(db_path, device_key=key)
     assert db.load_session(session_id)[0] == label
     assert db.get_device_meta("private_note") == private_value
     assert db.get_device_meta("pin_salt") == b"plain-bootstrap"
+    assert db.get_device_meta(UNLOCK_RATE_LIMIT_KEY) == b'{"failed_attempts":0}'
+    assert db.get_device_meta(UNLOCK_EVER_SUCCEEDED_KEY) == b"1"
 
     raw_label = _raw_row(
         db_path, "SELECT label FROM sessions WHERE session_id=?", (session_id,)
