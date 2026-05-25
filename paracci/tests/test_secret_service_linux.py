@@ -18,8 +18,8 @@ class FakeSecretServiceBackend:
     def __init__(self):
         self.items = {}
 
-    def store(self, profile_id: str, data: bytes) -> None:
-        self.items[profile_id] = data
+    def store(self, profile_id: str, data: bytes | bytearray) -> None:
+        self.items[profile_id] = bytes(data)
 
     def load(self, profile_id: str) -> bytes:
         if profile_id not in self.items:
@@ -48,9 +48,11 @@ def test_secret_service_public_api_is_mockable(monkeypatch):
     monkeypatch.setattr(secret_service_linux.sys, "platform", "linux")
     monkeypatch.setattr(secret_service_linux, "_get_backend", lambda: backend)
 
-    wrap_with_secret_service("profile-a", b"binding-factor")
+    wrap_with_secret_service("profile-a", bytearray(b"binding-factor"))
+    loaded = unwrap_with_secret_service("profile-a")
 
-    assert unwrap_with_secret_service("profile-a") == b"binding-factor"
+    assert isinstance(loaded, bytearray)
+    assert loaded == b"binding-factor"
     delete_from_secret_service("profile-a")
     with pytest.raises(SecretServiceError) as exc:
         unwrap_with_secret_service("profile-a")

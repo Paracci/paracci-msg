@@ -5,6 +5,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from core import burn as burn_module
 from core.burn import (
     BurnDB,
     DeviceError,
@@ -97,3 +98,22 @@ def test_existing_short_legacy_pin_can_still_unlock(tmp_path):
     db.set_device_meta("encrypted_device_key", blob.nonce + blob.ciphertext)
 
     assert unlock_device(db, legacy_pin) == device_key
+
+
+def test_device_master_keys_are_mutable_and_zeroed_after_use(tmp_path, monkeypatch):
+    db = BurnDB(tmp_path / "sessions.db")
+    wiped = []
+    real_wipe = burn_module.wipe
+
+    def track_wipe(value):
+        assert isinstance(value, bytearray)
+        real_wipe(value)
+        wiped.append(value)
+
+    monkeypatch.setattr(burn_module, "wipe", track_wipe)
+
+    burn_module.init_device(db, STRONG_PASSPHRASE)
+    burn_module.unlock_device(db, STRONG_PASSPHRASE)
+
+    assert len(wiped) == 2
+    assert all(value == bytearray(len(value)) for value in wiped)

@@ -49,7 +49,7 @@ def fake_windows_dpapi(monkeypatch, calls=None):
 def fake_keychain(monkeypatch):
     store = {}
     monkeypatch.setattr(binding.sys, "platform", "darwin")
-    monkeypatch.setattr(binding, "wrap_with_keychain", lambda profile_id, data: store.__setitem__(profile_id, data))
+    monkeypatch.setattr(binding, "wrap_with_keychain", lambda profile_id, data: store.__setitem__(profile_id, bytes(data)))
     monkeypatch.setattr(binding, "unwrap_with_keychain", lambda profile_id: store[profile_id])
     monkeypatch.setattr(binding, "delete_from_keychain", lambda profile_id: store.pop(profile_id, None))
     return store
@@ -61,7 +61,7 @@ def fake_secret_service(monkeypatch):
     monkeypatch.setattr(
         binding,
         "wrap_with_secret_service",
-        lambda profile_id, data: store.__setitem__(profile_id, data),
+        lambda profile_id, data: store.__setitem__(profile_id, bytes(data)),
     )
     monkeypatch.setattr(binding, "unwrap_with_secret_service", lambda profile_id: store[profile_id])
     monkeypatch.setattr(binding, "delete_from_secret_service", lambda profile_id: store.pop(profile_id, None))
@@ -200,3 +200,43 @@ def test_linux_no_daemon_on_bound_profile_does_not_downgrade(tmp_path, monkeypat
     assert exc.value.code == SECRET_SERVICE_FAILED_CODE
     assert db.get_device_meta(PLATFORM_BINDING_PROFILE_ID_META_KEY) == profile_id
     assert device_key != b""
+
+
+def test_macos_binding_wipes_mutable_intermediate_keys(tmp_path, monkeypatch):
+    fake_keychain(monkeypatch)
+    db = BurnDB(tmp_path / "sessions.db")
+    wiped = []
+    real_wipe = binding.wipe
+
+    def track_wipe(value):
+        assert isinstance(value, bytearray)
+        real_wipe(value)
+        wiped.append(value)
+
+    monkeypatch.setattr(binding, "wipe", track_wipe)
+
+    initialize_device_with_binding(db, PASSPHRASE)
+    unlock_device_with_binding(db, PASSPHRASE)
+
+    assert len(wiped) == 6
+    assert all(value == bytearray(len(value)) for value in wiped)
+
+
+def test_legacy_platform_binding_wipes_mutable_intermediate_keys(tmp_path, monkeypatch):
+    db = BurnDB(tmp_path / "sessions.db")
+    init_device(db, PASSPHRASE)
+    fake_keychain(monkeypatch)
+    wiped = []
+    real_wipe = binding.wipe
+
+    def track_wipe(value):
+        assert isinstance(value, bytearray)
+        real_wipe(value)
+        wiped.append(value)
+
+    monkeypatch.setattr(binding, "wipe", track_wipe)
+
+    unlock_device_with_binding(db, PASSPHRASE)
+
+    assert len(wiped) == 3
+    assert all(value == bytearray(len(value)) for value in wiped)

@@ -154,6 +154,8 @@ def test_ui_api_session_roundtrip_and_attachment_cache(tmp_path):
 def test_ui_api_device_lock_drops_open_cache_and_windows_status_is_best_effort(tmp_path):
     api = make_api(tmp_path / "device-lock")
     api.dispatch("device_init", {"pin": "Correct-Horse-95175328"})
+    retained_device_key = api.services.device.device_key
+    assert isinstance(retained_device_key, bytearray)
     api.services.shield.get_os_name = lambda: "Windows"
 
     status = api.dispatch("device_status")
@@ -184,6 +186,7 @@ def test_ui_api_device_lock_drops_open_cache_and_windows_status_is_best_effort(t
 
     assert locked["unlocked"] is False
     assert api._opened == {}
+    assert retained_device_key == bytearray(len(retained_device_key))
 
 
 def test_ui_api_non_downloadable_text_preview_returns_policy_message(tmp_path):

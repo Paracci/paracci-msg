@@ -1,10 +1,12 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core import constants, integrity
-from core.crypto import derive_session_keys
+from core.crypto import derive_session_keys, wipe
 
 
 def _fixture_keys():
@@ -47,3 +49,16 @@ def test_public_envelope_file_seal_helpers_are_removed():
     assert not hasattr(constants, "ENVELOPE_FILE_SEAL_HMAC_KEY_V1")
     assert not hasattr(integrity, "generate_file_seal")
     assert not hasattr(integrity, "verify_file_seal")
+
+
+def test_wipe_rejects_immutable_bytes():
+    with pytest.raises(TypeError, match="immutable bytes"):
+        wipe(b"sensitive-key-material")
+
+
+def test_wipe_zeros_mutable_bytearray():
+    key_material = bytearray(b"sensitive-key-material")
+
+    wipe(key_material)
+
+    assert key_material == bytearray(len(key_material))

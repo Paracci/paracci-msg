@@ -30,17 +30,19 @@ def test_dpapi_public_api_is_mockable_without_windows(monkeypatch):
 
     monkeypatch.setattr(dpapi_win, "_call_crypt_unprotect", fake_unprotect)
 
-    wrapped = wrap_with_dpapi(b"intermediate-key")
+    wrapped = wrap_with_dpapi(bytearray(b"intermediate-key"))
+    unwrapped = unwrap_with_dpapi(wrapped)
 
     assert wrapped == b"mock-dpapi:intermediate-key"
-    assert unwrap_with_dpapi(wrapped) == b"intermediate-key"
+    assert isinstance(unwrapped, bytearray)
+    assert unwrapped == b"intermediate-key"
     with pytest.raises(DPAPIError, match="mock unwrap failed"):
         unwrap_with_dpapi(b"bad")
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="real DPAPI is Windows-only")
 def test_dpapi_real_round_trip_on_windows():
-    wrapped = wrap_with_dpapi(b"real-windows-round-trip")
+    wrapped = wrap_with_dpapi(bytearray(b"real-windows-round-trip"))
 
     assert wrapped != b"real-windows-round-trip"
     assert unwrap_with_dpapi(wrapped) == b"real-windows-round-trip"

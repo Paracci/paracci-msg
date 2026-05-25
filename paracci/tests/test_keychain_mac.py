@@ -19,8 +19,8 @@ class FakeKeychainAdapter:
     def __init__(self):
         self.items = {}
 
-    def store(self, profile_id: str, data: bytes) -> None:
-        self.items[(keychain_mac.SERVICE_NAME, profile_id)] = data
+    def store(self, profile_id: str, data: bytes | bytearray) -> None:
+        self.items[(keychain_mac.SERVICE_NAME, profile_id)] = bytes(data)
 
     def load(self, profile_id: str) -> bytes:
         key = (keychain_mac.SERVICE_NAME, profile_id)
@@ -50,9 +50,11 @@ def test_keychain_public_api_is_mockable_without_macos(monkeypatch):
     monkeypatch.setattr(keychain_mac.sys, "platform", "darwin")
     monkeypatch.setattr(keychain_mac, "_get_adapter", lambda: adapter)
 
-    wrap_with_keychain("profile-a", b"binding-factor")
+    wrap_with_keychain("profile-a", bytearray(b"binding-factor"))
+    loaded = unwrap_with_keychain("profile-a")
 
-    assert unwrap_with_keychain("profile-a") == b"binding-factor"
+    assert isinstance(loaded, bytearray)
+    assert loaded == b"binding-factor"
     delete_from_keychain("profile-a")
     with pytest.raises(KeychainError) as exc:
         unwrap_with_keychain("profile-a")
