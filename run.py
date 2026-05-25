@@ -708,12 +708,9 @@ if __name__ == "__main__":
     webview_token = getattr(webview, "token", None) if not args.no_gui else None
     using_webview_token = bool(webview_token)
     loopback_token = (
-        os.environ.get("PARACCI_LOOPBACK_TOKEN")
-        if args.no_gui
-        else webview_token
+        webview_token if not args.no_gui else None
     ) or secrets.token_urlsafe(32)
 
-    os.environ["PARACCI_LOOPBACK_TOKEN"] = loopback_token
     os.environ["PARACCI_LOOPBACK_HOST"] = loopback_host
     os.environ["PARACCI_LOOPBACK_PORT"] = str(port)
     os.environ["PARACCI_NO_GUI"] = "1" if args.no_gui else "0"
@@ -748,7 +745,7 @@ if __name__ == "__main__":
         if forwarded:
             sys.exit(0)
 
-    app = ag_app.create_app()
+    app = ag_app.create_app(loopback_auth_token=loopback_token)
     update_manager = None
     if not args.no_gui:
         from desktop.updater import UpdateManager
@@ -777,7 +774,7 @@ if __name__ == "__main__":
     if args.no_gui:
         print("  Mode: Server Only")
         print("  Authenticated entrypoint:")
-        print(f"  {bootstrap_url}")
+        print(f"  {bootstrap_url}", flush=True)
         print("  Bare loopback URLs reject protected requests without bootstrap auth.")
         print("  Stop with: Ctrl+C\n")
         app.run(host=loopback_host, port=port, debug=False)

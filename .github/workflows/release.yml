@@ -226,12 +226,14 @@ jobs:
           python - <<'PY'
           import http.cookiejar
           import os
+          import queue
           import re
           import shutil
           import socket
           import subprocess
           import sys
           import tempfile
+          import threading
           import time
           import urllib.parse
           import urllib.request
@@ -252,11 +254,12 @@ jobs:
           with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
               probe.bind(("127.0.0.1", 0))
               port = probe.getsockname()[1]
-          token = "paracci-release-smoke-token"
+          token = None
           origin = f"http://127.0.0.1:{port}"
           data_root = Path(tempfile.mkdtemp(prefix="paracci-smoke-")).resolve()
 
           env = os.environ.copy()
+          env.pop("PARACCI_LOOPBACK_TOKEN", None)
           for name in (
               "OQS_INSTALL_PATH",
               "LIBOQS_LIB_DIR",
@@ -270,7 +273,6 @@ jobs:
               if "_oqs" not in part.lower() and "liboqs" not in part.lower()
           )
           env["DATA_DIR"] = str(data_root / "data")
-          env["PARACCI_LOOPBACK_TOKEN"] = token
           env["PYOQS_VERSION"] = "paracci-smoke-no-autoinstall"
           env["QT_QPA_PLATFORM"] = "offscreen"
 
@@ -283,6 +285,18 @@ jobs:
               errors="replace",
           )
 
+          output_lines = []
+          output_events = queue.Queue()
+
+          def collect_output():
+              if proc.stdout:
+                  for line in proc.stdout:
+                      output_lines.append(line)
+                      output_events.put(line)
+
+          output_thread = threading.Thread(target=collect_output, daemon=True)
+          output_thread.start()
+
           def stop_process():
               if proc.poll() is None:
                   proc.terminate()
@@ -292,20 +306,44 @@ jobs:
                       proc.kill()
                       proc.wait(timeout=10)
 
+          def redact(text):
+              redacted = re.sub(r"([?&]token=)[^&\s]+", r"\1<redacted>", text)
+              return redacted.replace(token, "<redacted>") if token else redacted
+
           def output_tail():
-              if not proc.stdout:
-                  return ""
-              try:
-                  return proc.stdout.read()[-4000:]
-              except Exception:
-                  return ""
+              return redact("".join(output_lines)[-4000:])
 
           def fail(message):
               stop_process()
+              output_thread.join(timeout=1)
               raise SystemExit(f"{message}\n--- packaged app output ---\n{output_tail()}")
 
           try:
               deadline = time.time() + 90
+              while token is None and time.time() < deadline:
+                  if proc.poll() is not None:
+                      fail(f"Packaged app exited early with code {proc.returncode}")
+                  try:
+                      line = output_events.get(timeout=0.25)
+                  except queue.Empty:
+                      continue
+                  marker = "http://127.0.0.1:"
+                  if marker not in line or "/__paracci_bootstrap?" not in line:
+                      continue
+                  entrypoint = urllib.parse.urlparse(line.strip())
+                  candidate = urllib.parse.parse_qs(entrypoint.query).get("token", [""])[0]
+                  if (
+                      entrypoint.scheme != "http"
+                      or entrypoint.hostname != "127.0.0.1"
+                      or entrypoint.port != port
+                      or entrypoint.path != "/__paracci_bootstrap"
+                      or not candidate
+                  ):
+                      fail("Packaged app printed an invalid authenticated entrypoint")
+                  token = candidate
+              if token is None:
+                  fail("Timed out waiting for packaged app authenticated entrypoint")
+
               while time.time() < deadline:
                   if proc.poll() is not None:
                       fail(f"Packaged app exited early with code {proc.returncode}")
@@ -363,6 +401,7 @@ jobs:
               print(f"Packaged ML-KEM smoke test passed: {final_url}")
           finally:
               stop_process()
+              output_thread.join(timeout=1)
               shutil.rmtree(data_root, ignore_errors=True)
           PY
 

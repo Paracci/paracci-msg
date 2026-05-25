@@ -84,7 +84,7 @@ Main UI and preview browser controls mitigate external link execution:
 1. [run.py](run.py) parses command-line arguments and sets up data directories.
 2. Clears system-level recent-items queues and sweeps expired temporary directories.
 3. Launches a background thread to run the Flask web daemon.
-4. Generates a secure random bootstrap token, exports `PARACCI_LOOPBACK_TOKEN`, `PARACCI_LOOPBACK_HOST`, and `PARACCI_LOOPBACK_PORT`, then constructs a loopback launch URL.
+4. Generates a secure random bootstrap token, passes it directly into the Flask application factory, exports only non-secret loopback configuration (`PARACCI_LOOPBACK_HOST` and `PARACCI_LOOPBACK_PORT`), then constructs a loopback launch URL.
 5. Launches `pywebview` pointing to the loopback URL.
 6. The `pywebview` engine starts a native browser frame (Chromium/WebView2 on Windows, WebKit on macOS/Linux), disabling external page navigation and exposing developer tools only in debug mode.
 

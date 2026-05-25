@@ -15,7 +15,6 @@ ORIGIN = f"http://{HOST}"
 
 def make_flask_app(tmp_path, monkeypatch, no_gui=True):
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("PARACCI_LOOPBACK_TOKEN", TOKEN)
     monkeypatch.setenv("PARACCI_LOOPBACK_HOST", "127.0.0.1")
     monkeypatch.setenv("PARACCI_LOOPBACK_PORT", "18080")
     monkeypatch.setenv("PARACCI_NO_GUI", "1" if no_gui else "0")
@@ -23,7 +22,7 @@ def make_flask_app(tmp_path, monkeypatch, no_gui=True):
     import app as ag_app
 
     ag_app = importlib.reload(ag_app)
-    flask_app = ag_app.create_app()
+    flask_app = ag_app.create_app(loopback_auth_token=TOKEN)
     flask_app.config["TESTING"] = True
     return ag_app, flask_app
 

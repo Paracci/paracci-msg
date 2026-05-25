@@ -514,14 +514,13 @@ def test_recent_release_history_filters_unstable_releases_and_exposes_full_notes
 
 def make_flask_app(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("PARACCI_LOOPBACK_TOKEN", TOKEN)
     monkeypatch.setenv("PARACCI_LOOPBACK_HOST", "127.0.0.1")
     monkeypatch.setenv("PARACCI_LOOPBACK_PORT", "18080")
     monkeypatch.setenv("PARACCI_NO_GUI", "0")
     import app as ag_app
 
     ag_app = importlib.reload(ag_app)
-    flask_app = ag_app.create_app()
+    flask_app = ag_app.create_app(loopback_auth_token=TOKEN)
     flask_app.config["TESTING"] = True
     return flask_app
 
