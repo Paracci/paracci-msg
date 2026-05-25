@@ -61,6 +61,7 @@ def test_ui_api_device_settings_and_profile(tmp_path):
     status = api.dispatch("device_status")
     assert status["initialized"] is False
     assert status["unlocked"] is False
+    assert status["two_factor_enabled"] is None
 
     initialized = api.dispatch("device_init", {"pin": "Correct-Horse-95175328"})
     assert initialized["initialized"] is True
@@ -186,6 +187,7 @@ def test_ui_api_device_lock_drops_open_cache_and_windows_status_is_best_effort(t
     locked = api.dispatch("device_lock")
 
     assert locked["unlocked"] is False
+    assert locked["two_factor_enabled"] is None
     assert api._opened == {}
     assert retained_device_key == bytearray(len(retained_device_key))
 

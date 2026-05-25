@@ -209,8 +209,8 @@ def test_v6_handshake_session_derivation_does_not_call_argon2(monkeypatch):
 
 @oqs_required
 def test_ml_kem_secret_key_is_absent_from_database_after_bond_completes(tmp_path):
-    db = BurnDB(tmp_path / "sessions.db")
     device_key = random_bytes(32)
+    db = BurnDB(tmp_path / "sessions.db", device_key=device_key)
     pending_x, finalized_x, _meta_y, _init_file, resp_file = _handshake()
 
     _save_meta(db, device_key, pending_x)
@@ -249,6 +249,7 @@ def test_hybrid_kem_error_in_initiator_setup_uses_safe_route_message(tmp_path, m
         headers={"Host": HOST},
     )
     ag_app.device_key = init_device(ag_app.db, "Correct-Horse-95175328")
+    ag_app.db = ag_app.db.with_device_key(ag_app.device_key)
     with client.session_transaction(base_url=ORIGIN) as sess:
         ag_app.active_client_id = sess["paracci_client_id"]
         csrf_token = sess["csrf_token"]

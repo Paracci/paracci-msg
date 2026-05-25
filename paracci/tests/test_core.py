@@ -542,7 +542,7 @@ print("\n-- burn.py -----------------------------------------")
 
 def test_burn_workflow():
     with tempfile.TemporaryDirectory() as tmpdir:
-        db = BurnDB(os.path.join(tmpdir, "test.db"))
+        db = BurnDB(os.path.join(tmpdir, "test.db"), device_key=random_bytes(32))
         guard = BurnGuard(db)
 
         msg_id = new_message_id()
@@ -628,6 +628,7 @@ def test_session_db_roundtrip():
         db = BurnDB(os.path.join(tmpdir, "test.db"))
         pin = "Correct-Horse-Session-95175328"
         device_key = init_device(db, pin)
+        db = db.with_device_key(device_key)
 
         meta_x, init_file = create_initiator_session("DB Test")
         meta_y, resp_file = accept_initiator_and_create_responder(init_file, "DB Test")

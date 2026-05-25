@@ -41,6 +41,7 @@ def unlock_test_client(ag_app, client):
     from core.burn import init_device
 
     ag_app.device_key = init_device(ag_app.db, "Correct-Horse-95175328")
+    ag_app.db = ag_app.db.with_device_key(ag_app.device_key)
     with client.session_transaction(base_url=ORIGIN) as sess:
         ag_app.active_client_id = sess["paracci_client_id"]
 
@@ -269,6 +270,7 @@ def test_preview_token_allows_child_window_without_bootstrap_session(tmp_path, m
     from core.burn import init_device
 
     ag_app.device_key = init_device(ag_app.db, "Correct-Horse-95175328")
+    ag_app.db = ag_app.db.with_device_key(ag_app.device_key)
     ag_app.active_client_id = "already-unlocked-parent"
     original = png_bytes()
     token = seed_token_preview("child-window-image", original, "image/png", allow_download=True)
@@ -291,6 +293,7 @@ def test_preview_token_download_respects_allow_download_boundary(tmp_path, monke
     from core.burn import init_device
 
     ag_app.device_key = init_device(ag_app.db, "Correct-Horse-95175328")
+    ag_app.db = ag_app.db.with_device_key(ag_app.device_key)
     ag_app.active_client_id = "already-unlocked-parent"
     original = png_bytes()
     token = seed_token_preview("child-window-image", original, "image/png", allow_download=True)

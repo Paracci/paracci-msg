@@ -17,6 +17,7 @@ sys.path.insert(0, str(PACKAGE_ROOT))
 
 import run
 from core.burn import BurnDB
+from core.crypto import random_bytes
 from core.envelope import (
     DIR_X_TO_Y,
     FILE_VERSION,
@@ -29,6 +30,13 @@ from desktop.file_activation import (
     inspect_launch_file,
     install_macos_file_open_handler,
 )
+
+
+def seed_locked_session_db(db_path):
+    keyed_db = BurnDB(db_path, device_key=random_bytes(32))
+    keyed_db.save_session(SESSION_ID, "opaque", "active", b"encrypted-metadata", 1)
+    keyed_db.release_device_key()
+    return BurnDB(db_path)
 
 
 SESSION_ID = bytes.fromhex("00112233445566778899aabbccddeeff")
@@ -115,8 +123,7 @@ def test_inspect_launch_file_rejects_relative_missing_and_unreadable_paths(tmp_p
 
 
 def test_session_exists_is_available_while_metadata_is_locked(tmp_path):
-    db = BurnDB(tmp_path / "sessions.db")
-    db.save_session(SESSION_ID, "opaque", "active", b"encrypted-metadata", 1)
+    db = seed_locked_session_db(tmp_path / "sessions.db")
 
     assert db.session_exists(SESSION_ID) is True
     assert db.session_exists(b"\xff" * 16) is False
@@ -151,8 +158,7 @@ def test_known_activation_builds_opaque_session_url(tmp_path):
     routes.NATIVE_FILE_REF_CACHE.clear()
     message_path = write_message(tmp_path / "private message.paracci")
     candidate = inspect_launch_file(str(message_path))
-    db = BurnDB(tmp_path / "sessions.db")
-    db.save_session(SESSION_ID, "opaque", "active", b"encrypted-metadata", 1)
+    db = seed_locked_session_db(tmp_path / "sessions.db")
 
     target = run._file_activation_target(candidate, db)
 
@@ -195,8 +201,7 @@ class FakeWindow:
 
 def test_window_activation_foregrounds_and_navigates_only_for_valid_files(tmp_path):
     message_path = write_message(tmp_path / "known.paracci")
-    db = BurnDB(tmp_path / "sessions.db")
-    db.save_session(SESSION_ID, "opaque", "active", b"encrypted-metadata", 1)
+    db = seed_locked_session_db(tmp_path / "sessions.db")
     window = FakeWindow()
 
     target = run._activate_main_window(window, str(message_path), db, "127.0.0.1", 18080)

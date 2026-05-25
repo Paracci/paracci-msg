@@ -45,6 +45,7 @@ def setup_user(user_name: str):
     
     db = BurnDB(data_dir / "sessions.db")
     device_key = init_device(db, DEFAULT_PIN)
+    db = db.with_device_key(device_key)
     
     # Create default profile settings
     import json

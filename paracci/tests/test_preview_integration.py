@@ -56,6 +56,7 @@ def unlock_test_client(ag_app, client):
     from core.burn import init_device
 
     ag_app.device_key = init_device(ag_app.db, "Correct-Horse-95175328")
+    ag_app.db = ag_app.db.with_device_key(ag_app.device_key)
     with client.session_transaction(base_url=ORIGIN) as sess:
         ag_app.active_client_id = sess["paracci_client_id"]
 

@@ -28,6 +28,8 @@ from .crypto import (
     decrypt, 
     derive_master_key, 
     EncryptedBlob,
+    KEY_LEN,
+    NONCE_LEN,
     random_bytes,
     wipe
 )
@@ -57,6 +59,23 @@ TWO_FA_SECRET_NONCE_LEN = 12
 TWO_FA_SECRET_TAG_LEN = 16
 TWO_FA_SECRET_MIN_CIPHERTEXT_LEN = TWO_FA_SECRET_TAG_LEN + 1
 LEGACY_TOTP_SECRET_RE = re.compile(r"^[A-Z2-7]{16,128}$")
+
+PROTECTED_VALUE_PREFIX = b"paracci.burndb.field.v1:"
+PROTECTED_VALUE_AAD_PREFIX = b"paracci.burndb.field.v1\x00"
+PROTECTED_VALUE_TAG_LEN = 16
+STORAGE_MIGRATION_KEY = "protected_fields_v1"
+STORAGE_MIGRATION_PENDING = b"pending_scrub"
+STORAGE_MIGRATION_COMPLETE = b"complete"
+BOOTSTRAP_DEVICE_META_KEYS = frozenset(
+    {
+        "pin_salt",
+        "encrypted_device_key",
+        "dpapi_blob",
+        "platform_binding_profile_id_v1",
+        "platform_binding_kind_v1",
+        UNLOCK_RATE_LIMIT_KEY,
+    }
+)
 
 _COMMON_WEAK_PASSPHRASES = {
     "password",
@@ -98,17 +117,48 @@ class BurnDB:
       device_meta     : Device identity and device_key salts
     """
 
-    def __init__(self, db_path: str | Path):
-        """Initializes the BurnDB instance and prepares the database connection."""
+    def __init__(
+        self,
+        db_path: str | Path,
+        device_key: bytes | bytearray | None = None,
+    ):
+        """Initializes storage in locked bootstrap mode or keyed protected mode."""
         self.db_path = str(db_path)
         self._conn: sqlite3.Connection | None = None
+        self._device_key: bytearray | None = None
+        if device_key is not None:
+            if len(device_key) != KEY_LEN:
+                raise DeviceError("Invalid device key.")
+            self._device_key = bytearray(device_key)
         self._init_db()
+        if self._device_key is not None:
+            try:
+                self._migrate_protected_fields()
+            except Exception:
+                self.release_device_key()
+                raise
+
+    @property
+    def has_device_key(self) -> bool:
+        """Return whether protected database values may be opened."""
+        return self._device_key is not None
+
+    def with_device_key(self, device_key: bytes | bytearray) -> "BurnDB":
+        """Open the same database with a lifetime-scoped protected-field key."""
+        return BurnDB(self.db_path, device_key=device_key)
+
+    def release_device_key(self) -> None:
+        """Best-effort zeroing for the protected-field key owned by this object."""
+        if self._device_key is not None:
+            wipe(self._device_key)
+            self._device_key = None
 
     def _connect(self) -> sqlite3.Connection:
         """Connects to the SQLite database in WAL mode with optimized settings."""
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA secure_delete=ON")
         # Minimize cache on memory
         conn.execute("PRAGMA cache_size=64")
         return conn
@@ -141,6 +191,11 @@ class BurnDB:
                 key             TEXT PRIMARY KEY,
                 value           BLOB NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS burn_internal_meta (
+                key             TEXT PRIMARY KEY,
+                value           BLOB NOT NULL
+            );
         """)
         columns = {row[1] for row in conn.execute("PRAGMA table_info(burned_messages)")}
         if "status" not in columns:
@@ -148,6 +203,230 @@ class BurnDB:
         self._cleanup_stale_opening(conn)
         conn.commit()
         conn.close()
+
+    def _require_device_key(self) -> bytearray:
+        if self._device_key is None:
+            raise DeviceError("Device is locked; protected metadata is unavailable.")
+        return self._device_key
+
+    @staticmethod
+    def _row_identifier(value: bytes | bytearray | str) -> bytes:
+        if isinstance(value, str):
+            return value.encode("utf-8")
+        return bytes(value)
+
+    def _protected_aad(
+        self,
+        table: str,
+        column: str,
+        row_identifier: bytes | bytearray | str,
+    ) -> bytes:
+        return (
+            PROTECTED_VALUE_AAD_PREFIX
+            + table.encode("ascii")
+            + b"\x00"
+            + column.encode("ascii")
+            + b"\x00"
+            + self._row_identifier(row_identifier)
+        )
+
+    @staticmethod
+    def _logical_bytes(value: bytes | bytearray | str) -> bytes:
+        if isinstance(value, str):
+            return value.encode("utf-8")
+        if isinstance(value, (bytes, bytearray)):
+            return bytes(value)
+        raise DeviceError("Invalid protected metadata.")
+
+    def _encrypt_protected_value(
+        self,
+        table: str,
+        column: str,
+        row_identifier: bytes | bytearray | str,
+        value: bytes | bytearray | str,
+    ) -> bytes:
+        key = self._require_device_key()
+        blob = encrypt(
+            key,
+            self._logical_bytes(value),
+            aad=self._protected_aad(table, column, row_identifier),
+        )
+        return PROTECTED_VALUE_PREFIX + blob.nonce + blob.ciphertext
+
+    def _decrypt_protected_value(
+        self,
+        table: str,
+        column: str,
+        row_identifier: bytes | bytearray | str,
+        value,
+    ) -> bytes:
+        key = self._require_device_key()
+        if not isinstance(value, bytes) or not value.startswith(PROTECTED_VALUE_PREFIX):
+            raise DeviceError("Invalid protected metadata.")
+        encoded = value[len(PROTECTED_VALUE_PREFIX):]
+        if len(encoded) < NONCE_LEN + PROTECTED_VALUE_TAG_LEN:
+            raise DeviceError("Invalid protected metadata.")
+        blob = EncryptedBlob(nonce=encoded[:NONCE_LEN], ciphertext=encoded[NONCE_LEN:])
+        try:
+            return decrypt(
+                key,
+                blob,
+                aad=self._protected_aad(table, column, row_identifier),
+            )
+        except Exception as exc:
+            raise DeviceError("Invalid protected metadata.") from exc
+
+    def _decrypt_protected_text(
+        self,
+        table: str,
+        column: str,
+        row_identifier: bytes | bytearray | str,
+        value,
+    ) -> str:
+        try:
+            return self._decrypt_protected_value(
+                table,
+                column,
+                row_identifier,
+                value,
+            ).decode("utf-8")
+        except DeviceError:
+            raise
+        except UnicodeDecodeError as exc:
+            raise DeviceError("Invalid protected metadata.") from exc
+
+    def _migration_state(self, conn: sqlite3.Connection) -> bytes | None:
+        row = conn.execute(
+            "SELECT value FROM burn_internal_meta WHERE key=?",
+            (STORAGE_MIGRATION_KEY,),
+        ).fetchone()
+        if row is None:
+            return None
+        state = self._decrypt_protected_value(
+            "burn_internal_meta",
+            "value",
+            STORAGE_MIGRATION_KEY,
+            row[0],
+        )
+        if state not in {STORAGE_MIGRATION_PENDING, STORAGE_MIGRATION_COMPLETE}:
+            raise DeviceError("Invalid protected metadata migration state.")
+        return state
+
+    def _write_migration_state(self, conn: sqlite3.Connection, state: bytes) -> None:
+        conn.execute(
+            "INSERT OR REPLACE INTO burn_internal_meta (key, value) VALUES (?, ?)",
+            (
+                STORAGE_MIGRATION_KEY,
+                self._encrypt_protected_value(
+                    "burn_internal_meta",
+                    "value",
+                    STORAGE_MIGRATION_KEY,
+                    state,
+                ),
+            ),
+        )
+
+    def _migrate_protected_fields(self) -> None:
+        """Encrypt existing plaintext cells atomically, then scrub SQLite residue."""
+        conn = self._connect()
+        try:
+            state = self._migration_state(conn)
+            if state is None:
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    for session_id, label in conn.execute(
+                        "SELECT session_id, label FROM sessions"
+                    ).fetchall():
+                        if isinstance(label, bytes) and label.startswith(PROTECTED_VALUE_PREFIX):
+                            self._decrypt_protected_text("sessions", "label", session_id, label)
+                            continue
+                        conn.execute(
+                            "UPDATE sessions SET label=? WHERE session_id=?",
+                            (
+                                self._encrypt_protected_value(
+                                    "sessions",
+                                    "label",
+                                    session_id,
+                                    label,
+                                ),
+                                session_id,
+                            ),
+                        )
+
+                    for fingerprint, reason in conn.execute(
+                        "SELECT fingerprint, failure_reason FROM burned_messages "
+                        "WHERE failure_reason IS NOT NULL"
+                    ).fetchall():
+                        if isinstance(reason, bytes) and reason.startswith(PROTECTED_VALUE_PREFIX):
+                            self._decrypt_protected_text(
+                                "burned_messages",
+                                "failure_reason",
+                                fingerprint,
+                                reason,
+                            )
+                            continue
+                        conn.execute(
+                            "UPDATE burned_messages SET failure_reason=? WHERE fingerprint=?",
+                            (
+                                self._encrypt_protected_value(
+                                    "burned_messages",
+                                    "failure_reason",
+                                    fingerprint,
+                                    reason,
+                                ),
+                                fingerprint,
+                            ),
+                        )
+
+                    for key, value in conn.execute(
+                        "SELECT key, value FROM device_meta"
+                    ).fetchall():
+                        if key in BOOTSTRAP_DEVICE_META_KEYS:
+                            continue
+                        if isinstance(value, bytes) and value.startswith(PROTECTED_VALUE_PREFIX):
+                            self._decrypt_protected_value("device_meta", "value", key, value)
+                            continue
+                        conn.execute(
+                            "UPDATE device_meta SET value=? WHERE key=?",
+                            (
+                                self._encrypt_protected_value(
+                                    "device_meta",
+                                    "value",
+                                    key,
+                                    value,
+                                ),
+                                key,
+                            ),
+                        )
+
+                    self._write_migration_state(conn, STORAGE_MIGRATION_PENDING)
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
+                state = STORAGE_MIGRATION_PENDING
+        finally:
+            conn.close()
+
+        if state == STORAGE_MIGRATION_PENDING:
+            scrub_conn = self._connect()
+            try:
+                checkpoint = scrub_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                if checkpoint and checkpoint[0] != 0:
+                    raise DeviceError("Could not scrub protected metadata migration residue.")
+                scrub_conn.execute("VACUUM")
+                checkpoint = scrub_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                if checkpoint and checkpoint[0] != 0:
+                    raise DeviceError("Could not scrub protected metadata migration residue.")
+                scrub_conn.execute("BEGIN IMMEDIATE")
+                self._write_migration_state(scrub_conn, STORAGE_MIGRATION_COMPLETE)
+                scrub_conn.commit()
+            except Exception:
+                if scrub_conn.in_transaction:
+                    scrub_conn.rollback()
+                raise
+            finally:
+                scrub_conn.close()
 
     def _migrate_burned_messages(self, conn: sqlite3.Connection) -> None:
         """Migrates the legacy burn table into the state-machine schema."""
@@ -256,10 +535,17 @@ class BurnDB:
                 )
             except sqlite3.IntegrityError:
                 row = conn.execute(
-                    "SELECT status, reserved_at FROM burned_messages WHERE fingerprint=?",
+                    "SELECT status, reserved_at, failure_reason FROM burned_messages WHERE fingerprint=?",
                     (fingerprint,),
                 ).fetchone()
                 if row and row[0] == BURN_STATUS_FAILED:
+                    if row[2] is not None:
+                        self._decrypt_protected_text(
+                            "burned_messages",
+                            "failure_reason",
+                            fingerprint,
+                            row[2],
+                        )
                     updated = conn.execute(
                         """
                         UPDATE burned_messages
@@ -341,7 +627,12 @@ class BurnDB:
         """Transitions a reserved message from opening to failed so it can be retried."""
         fingerprint = message_id_fingerprint(msg_id)
         now = int(time.time())
-        failure_reason = (reason or "")[:512]
+        failure_reason = self._encrypt_protected_value(
+            "burned_messages",
+            "failure_reason",
+            fingerprint,
+            (reason or "")[:512],
+        )
         conn = self._connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
@@ -372,6 +663,12 @@ class BurnDB:
         created_at: int,
     ):
         """Saves or updates session metadata."""
+        protected_label = self._encrypt_protected_value(
+            "sessions",
+            "label",
+            session_id,
+            label,
+        )
         conn = self._connect()
         now = int(time.time())
         try:
@@ -385,7 +682,7 @@ class BurnDB:
                     encrypted_meta=excluded.encrypted_meta,
                     updated_at=excluded.updated_at
                 """,
-                (session_id, label, state, encrypted_meta, created_at, now)
+                (session_id, protected_label, state, encrypted_meta, created_at, now)
             )
             conn.commit()
         finally:
@@ -399,7 +696,14 @@ class BurnDB:
                 "SELECT label, state, encrypted_meta, created_at FROM sessions WHERE session_id=?",
                 (session_id,)
             ).fetchone()
-            return row
+            if row is None:
+                return None
+            return (
+                self._decrypt_protected_text("sessions", "label", session_id, row[0]),
+                row[1],
+                row[2],
+                row[3],
+            )
         finally:
             conn.close()
 
@@ -424,7 +728,9 @@ class BurnDB:
             return [
                 {
                     "session_id": row[0],
-                    "label":      row[1],
+                    "label":      self._decrypt_protected_text(
+                        "sessions", "label", row[0], row[1]
+                    ),
                     "state":      row[2],
                     "created_at": row[3],
                     "updated_at": row[4],
@@ -450,29 +756,63 @@ class BurnDB:
 
     def get_device_meta(self, key: str) -> bytes | None:
         """Returns the specified key from device metadata (e.g., pin_salt)."""
+        if key not in BOOTSTRAP_DEVICE_META_KEYS:
+            self._require_device_key()
         conn = self._connect()
         try:
             row = conn.execute(
                 "SELECT value FROM device_meta WHERE key=?", (key,)
             ).fetchone()
-            return row[0] if row else None
+            if row is None:
+                return None
+            if key in BOOTSTRAP_DEVICE_META_KEYS:
+                return row[0]
+            return self._decrypt_protected_value("device_meta", "value", key, row[0])
         finally:
             conn.close()
 
-    def set_device_meta(self, key: str, value: bytes):
+    def set_device_meta(self, key: str, value: bytes | bytearray | str):
         """Registers or updates a new key-value pair in device metadata."""
+        encoded = self._logical_bytes(value)
+        if key not in BOOTSTRAP_DEVICE_META_KEYS:
+            encoded = self._encrypt_protected_value("device_meta", "value", key, encoded)
         conn = self._connect()
         try:
             conn.execute(
                 "INSERT OR REPLACE INTO device_meta (key, value) VALUES (?, ?)",
-                (key, value)
+                (key, encoded)
             )
             conn.commit()
         finally:
             conn.close()
 
+    def set_device_meta_batch(self, values: dict[str, bytes | bytearray | str]) -> None:
+        """Stores metadata atomically while applying protected-value policy."""
+        encoded_values = []
+        for key, value in values.items():
+            encoded = self._logical_bytes(value)
+            if key not in BOOTSTRAP_DEVICE_META_KEYS:
+                encoded = self._encrypt_protected_value("device_meta", "value", key, encoded)
+            encoded_values.append((key, encoded))
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.executemany(
+                "INSERT OR REPLACE INTO device_meta (key, value) VALUES (?, ?)",
+                encoded_values,
+            )
+            conn.commit()
+        except Exception:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     def delete_device_meta(self, key: str):
         """Deletes the specified key from device metadata if it exists."""
+        if key not in BOOTSTRAP_DEVICE_META_KEYS:
+            self._require_device_key()
         conn = self._connect()
         try:
             conn.execute("DELETE FROM device_meta WHERE key=?", (key,))

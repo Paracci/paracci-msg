@@ -793,6 +793,8 @@ def inject_user():
                 })
                 if len(sidebar_sessions) >= 6:
                     break
+    except DeviceError:
+        raise
     except Exception:
         sidebar_sessions = []
 
@@ -810,6 +812,25 @@ def inject_user():
         csrf_token="" if preview_only else _ensure_csrf_token(),
         paracci_browser_token=browser_token,
     )
+
+
+def _activate_keyed_db(keyed_db) -> None:
+    previous = ag_app.db
+    ag_app.db = keyed_db
+    if previous is not keyed_db:
+        previous.release_device_key()
+
+
+def _discard_pending_unlock(pending: dict | None) -> None:
+    if not pending:
+        return
+    keyed_db = pending.get("db")
+    if keyed_db is not None:
+        keyed_db.release_device_key()
+    pending_key = pending.get("device_key")
+    if isinstance(pending_key, bytearray):
+        wipe(pending_key)
+
 
 @bp.route("/unlock", methods=["GET", "POST"])
 def unlock():
@@ -831,6 +852,12 @@ def unlock():
             if mode == "init":
                 # Redirect to 2FA setup after the passphrase is set during initial setup
                 device_key = initialize_device_with_binding(ag_app.db, pin)
+                try:
+                    keyed_db = ag_app.db.with_device_key(device_key)
+                except Exception:
+                    wipe(device_key)
+                    raise
+                _activate_keyed_db(keyed_db)
                 ag_app.device_key = device_key # Set globally since it's initial setup
                 ag_app.active_client_id = session.get("paracci_client_id")
                 session['setup_in_progress'] = True # Temporary flag
@@ -840,17 +867,29 @@ def unlock():
                 # Normal unlock: check 2FA if the passphrase is correct
                 device_key = unlock_device_with_binding(ag_app.db, pin)
                 _flash_device_binding_warning()
-                
-                if ag_app.db.is_2fa_enabled():
+                try:
+                    keyed_db = ag_app.db.with_device_key(device_key)
+                    two_factor_enabled = keyed_db.is_2fa_enabled()
+                except Exception:
+                    if "keyed_db" in locals():
+                        keyed_db.release_device_key()
+                    wipe(device_key)
+                    raise
+
+                if two_factor_enabled:
+                    # Keep only the pending keyed view until the second factor succeeds.
+                    ag_app.db.release_device_key()
                     # Cleanup old pending unlocks (older than 10 mins)
                     now = time.time()
                     expired_ids = [k for k, v in ag_app.PENDING_UNLOCKS.items() if now - v["timestamp"] > 600]
-                    for k in expired_ids: del ag_app.PENDING_UNLOCKS[k]
+                    for k in expired_ids:
+                        _discard_pending_unlock(ag_app.PENDING_UNLOCKS.pop(k))
                     
                     # If 2FA is active, temporarily store device_key in memory
                     unlock_id = str(uuid.uuid4())
                     ag_app.PENDING_UNLOCKS[unlock_id] = {
                         "device_key": device_key,
+                        "db": keyed_db,
                         "timestamp": time.time(),
                         "client_id": session.get("paracci_client_id")
                     }
@@ -858,6 +897,7 @@ def unlock():
                     return redirect(url_for("main.unlock_2fa_verify"))
                 
                 # If 2FA is not active, unlock directly
+                _activate_keyed_db(keyed_db)
                 ag_app.device_key = device_key
                 ag_app.active_client_id = session.get("paracci_client_id")
                 flash(_('auth.unlock_success'), "success")
@@ -928,12 +968,23 @@ def unlock_2fa_setup():
 @bp.route("/unlock/2fa/verify", methods=["GET", "POST"])
 def unlock_2fa_verify():
     """Unlocking with 2FA verification."""
-    if not ag_app.db.is_2fa_enabled() or 'unlock_id' not in session:
+    unlock_id = session.get('unlock_id')
+    pending = ag_app.PENDING_UNLOCKS.get(unlock_id) if unlock_id else None
+    if not pending:
+        return redirect(url_for("main.unlock"))
+    try:
+        if not pending["db"].is_2fa_enabled():
+            _discard_pending_unlock(ag_app.PENDING_UNLOCKS.pop(unlock_id, None))
+            session.pop('unlock_id', None)
+            return redirect(url_for("main.unlock"))
+    except DeviceError:
+        _discard_pending_unlock(ag_app.PENDING_UNLOCKS.pop(unlock_id, None))
+        session.pop('unlock_id', None)
+        flash("Security Error: Could not decrypt device metadata.", "error")
         return redirect(url_for("main.unlock"))
 
     if request.method == "POST":
         code = request.form.get("code")
-        unlock_id = session.get('unlock_id')
         
         if not unlock_id or unlock_id not in ag_app.PENDING_UNLOCKS:
             flash("Session expired or invalid.", "error")
@@ -941,21 +992,28 @@ def unlock_2fa_verify():
 
         pending = ag_app.PENDING_UNLOCKS.pop(unlock_id)
         if pending.get("client_id") != session.get("paracci_client_id"):
+            _discard_pending_unlock(pending)
             return _reject_security("pending unlock client mismatch")
         device_key = pending["device_key"]
+        keyed_db = pending["db"]
         
         try:
-            secret = ag_app.db.get_2fa_secret(device_key)
+            secret = keyed_db.get_2fa_secret(device_key)
         except DeviceError:
+            _discard_pending_unlock(pending)
+            session.pop('unlock_id', None)
             flash("Security Error: Could not decrypt 2FA secret.", "error")
             return redirect(url_for("main.unlock"))
         if not secret:
+            _discard_pending_unlock(pending)
+            session.pop('unlock_id', None)
             flash("2FA Secret not found.", "error")
             return redirect(url_for("main.unlock"))
 
         totp = pyotp.TOTP(secret)
         if totp.verify(code):
             # 2FA correct
+            _activate_keyed_db(keyed_db)
             ag_app.device_key = device_key
             ag_app.active_client_id = session.get("paracci_client_id")
             session.pop('unlock_id', None)
@@ -965,6 +1023,8 @@ def unlock_2fa_verify():
             # Re-insert into pending to allow retry? 
             # Better to force restart unlock for security?
             # Let's allow 3 retries? For now, force restart is safer.
+            _discard_pending_unlock(pending)
+            session.pop('unlock_id', None)
             flash(_('auth.invalid_2fa_code'), "error")
             return redirect(url_for("main.unlock"))
 

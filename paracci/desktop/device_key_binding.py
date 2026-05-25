@@ -646,19 +646,7 @@ def _decode_dpapi_blob(stored_blob: bytes) -> bytes:
 
 
 def _set_device_meta_batch(db: BurnDB, values: dict[str, bytes]) -> None:
-    conn = db._connect()
-    try:
-        conn.execute("BEGIN IMMEDIATE")
-        conn.executemany(
-            "INSERT OR REPLACE INTO device_meta (key, value) VALUES (?, ?)",
-            values.items(),
-        )
-        conn.commit()
-    except sqlite3.Error:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    db.set_device_meta_batch(values)
 
 
 def _set_device_binding_warning(warning: DeviceBindingWarning) -> None:
