@@ -21,6 +21,7 @@ from core.burn import (
     BurnDB,
     DeviceError,
     DeviceLockedError,
+    _serialized_unlock_attempt,
     init_device as legacy_init_device,
     is_device_initialized,
     unlock_device as legacy_unlock_device,
@@ -216,50 +217,51 @@ def _unlock_bound_device(db: BurnDB, pin: str, stored_dpapi_blob: bytes) -> byte
     if not pin_salt or not encrypted_device_key:
         raise DeviceError("Device not set up yet.")
 
-    db.assert_unlock_allowed()
-    master_key = None
-    dpapi_factor = None
-    storage_key = None
+    with _serialized_unlock_attempt():
+        master_key = None
+        dpapi_factor = None
+        storage_key = None
 
-    try:
-        raw_dpapi_blob = _decode_dpapi_blob(stored_dpapi_blob)
         try:
-            dpapi_factor = _as_mutable_secret(unwrap_with_dpapi(raw_dpapi_blob))
-        except DPAPIError as exc:
-            raise _different_account_error() from exc
+            raw_dpapi_blob = _decode_dpapi_blob(stored_dpapi_blob)
+            try:
+                dpapi_factor = _as_mutable_secret(unwrap_with_dpapi(raw_dpapi_blob))
+            except DPAPIError as exc:
+                raise _different_account_error() from exc
 
-        if len(dpapi_factor) != KEY_LEN:
-            raise _keyfile_damaged_error()
+            if len(dpapi_factor) != KEY_LEN:
+                raise _keyfile_damaged_error()
 
-        master_key = derive_master_key(pin, pin_salt)
-        storage_key = _derive_bound_storage_key(master_key, dpapi_factor)
-        try:
-            device_key = _decrypt_stored_device_key(
-                storage_key,
-                encrypted_device_key,
-                BOUND_DEVICE_KEY_AAD,
-                _keyfile_damaged_error,
-            )
-        except DeviceBindingError:
+            state = db.reserve_unlock_attempt()
+            master_key = derive_master_key(pin, pin_salt)
+            storage_key = _derive_bound_storage_key(master_key, dpapi_factor)
+            try:
+                device_key = _decrypt_stored_device_key(
+                    storage_key,
+                    encrypted_device_key,
+                    BOUND_DEVICE_KEY_AAD,
+                    _keyfile_damaged_error,
+                )
+            except DeviceBindingError:
+                raise
+            except InvalidTag:
+                _raise_incorrect_passphrase(state)
+        except DeviceError:
             raise
-        except InvalidTag:
-            _raise_incorrect_passphrase(db)
-    except DeviceError:
-        raise
-    except sqlite3.Error:
-        raise
-    except (DPAPIError, KeychainError, SecretServiceError, ValueError, TypeError) as exc:
-        raise _keyfile_damaged_error() from exc
-    else:
-        db.reset_unlock_failures()
-        return device_key
-    finally:
-        if master_key is not None:
-            wipe(master_key)
-        if dpapi_factor is not None:
-            wipe(dpapi_factor)
-        if storage_key is not None:
-            wipe(storage_key)
+        except sqlite3.Error:
+            raise
+        except (DPAPIError, KeychainError, SecretServiceError, ValueError, TypeError) as exc:
+            raise _keyfile_damaged_error() from exc
+        else:
+            db.reset_unlock_failures()
+            return device_key
+        finally:
+            if master_key is not None:
+                wipe(master_key)
+            if dpapi_factor is not None:
+                wipe(dpapi_factor)
+            if storage_key is not None:
+                wipe(storage_key)
 
 
 def _unlock_legacy_and_bind(db: BurnDB, pin: str) -> bytearray:
@@ -431,43 +433,46 @@ def _unlock_platform_bound_device(
     if not profile_id or stored_kind != kind:
         raise damaged_error_factory()
 
-    db.assert_unlock_allowed()
-    master_key = None
-    binding_factor = None
-    storage_key = None
+    with _serialized_unlock_attempt():
+        master_key = None
+        binding_factor = None
+        storage_key = None
 
-    try:
-        binding_factor = _as_mutable_secret(load_factor(profile_id))
-        if len(binding_factor) != KEY_LEN:
-            raise damaged_error_factory()
-
-        master_key = derive_master_key(pin, pin_salt)
-        storage_key = _derive_bound_storage_key(master_key, binding_factor)
         try:
-            device_key = _decrypt_stored_device_key(
-                storage_key,
-                encrypted_device_key,
-                PLATFORM_BOUND_DEVICE_KEY_AAD,
-                damaged_error_factory,
-            )
-        except DeviceBindingError:
+            binding_factor = _as_mutable_secret(load_factor(profile_id))
+            if len(binding_factor) != KEY_LEN:
+                raise damaged_error_factory()
+
+            state = db.reserve_unlock_attempt()
+            master_key = derive_master_key(pin, pin_salt)
+            storage_key = _derive_bound_storage_key(master_key, binding_factor)
+            try:
+                device_key = _decrypt_stored_device_key(
+                    storage_key,
+                    encrypted_device_key,
+                    PLATFORM_BOUND_DEVICE_KEY_AAD,
+                    damaged_error_factory,
+                )
+            except DeviceBindingError:
+                raise
+            except Exception:
+                _raise_incorrect_passphrase(state)
+        except DeviceError:
             raise
-        except Exception:
-            _raise_incorrect_passphrase(db)
-    except DeviceError:
-        raise
-    except Exception as exc:
-        raise damaged_error_factory() from exc
-    else:
-        db.reset_unlock_failures()
-        return device_key
-    finally:
-        if master_key is not None:
-            wipe(master_key)
-        if binding_factor is not None:
-            wipe(binding_factor)
-        if storage_key is not None:
-            wipe(storage_key)
+        except sqlite3.Error:
+            raise
+        except Exception as exc:
+            raise damaged_error_factory() from exc
+        else:
+            db.reset_unlock_failures()
+            return device_key
+        finally:
+            if master_key is not None:
+                wipe(master_key)
+            if binding_factor is not None:
+                wipe(binding_factor)
+            if storage_key is not None:
+                wipe(storage_key)
 
 
 def _bind_legacy_device_with_platform_factor(
@@ -604,8 +609,7 @@ def _as_mutable_secret(value: bytes | bytearray) -> bytearray:
     return bytearray(value)
 
 
-def _raise_incorrect_passphrase(db: BurnDB) -> None:
-    state = db.record_unlock_failure()
+def _raise_incorrect_passphrase(state: dict) -> None:
     if state["retry_after_seconds"] > 0 and state["failed_attempts"] >= UNLOCK_MAX_FAILED_ATTEMPTS:
         raise DeviceLockedError(state["retry_after_seconds"])
     raise DeviceError("Incorrect passphrase.")
