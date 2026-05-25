@@ -27,7 +27,7 @@ class BaseShield(ABC):
 
     @abstractmethod
     def secure_delete(self, file_path: str) -> bool:
-        """Attempts best-effort overwrite/delete; storage media may retain data."""
+        """Attempts best-effort deletion hygiene; physical erasure is not guaranteed."""
         pass
 
     @abstractmethod

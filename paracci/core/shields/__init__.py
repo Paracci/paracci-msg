@@ -35,7 +35,7 @@ def get_shield():
                 """Returns current directory as fallback."""
                 return "./data"
             def secure_delete(self, p): 
-                """Standard deletion as fallback."""
+                """Unlinks only; physical erasure is not guaranteed by this fallback."""
                 try: os.remove(p); return True
                 except: return False
             def clear_recent_documents(self):

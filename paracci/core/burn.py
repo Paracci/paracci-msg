@@ -1069,7 +1069,7 @@ class BurnDB:
 
 def secure_delete(file_path: str | Path, passes: int = 3) -> bool:
     """
-    Destroys the file using the most secure system-specific method (Shield).
+    Requests the platform shield's best-effort deletion hygiene for a file.
     """
     try:
         deleted = shield.secure_delete(str(file_path))

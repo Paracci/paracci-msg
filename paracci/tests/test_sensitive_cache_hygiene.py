@@ -193,7 +193,18 @@ def test_locked_device_redirect_clears_sensitive_caches(tmp_path, monkeypatch):
 def test_security_shields_doc_names_limits_and_wording_rules():
     doc = (Path(__file__).parent.parent / "docs" / "SECURITY_SHIELDS.md").read_text(encoding="utf-8")
 
-    for term in ["Windows", "macOS", "Linux", "clipboard", "Secure-delete", "Python `bytes`", "best-effort"]:
+    for term in [
+        "Windows",
+        "macOS",
+        "Linux",
+        "clipboard",
+        "Secure-delete",
+        "Python `bytes`",
+        "best-effort",
+        "FSCTL_FILE_LEVEL_TRIM",
+        "F_FULLFSYNC",
+        "FALLOC_FL_PUNCH_HOLE",
+    ]:
         assert term.lower() in doc.lower()
     for forbidden in ["prevents screenshots", "guarantees deletion", "wipes instantly", "securely deletes"]:
         assert forbidden in doc
