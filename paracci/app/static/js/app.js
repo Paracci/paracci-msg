@@ -613,6 +613,8 @@ function updateStatusMessage(status) {
         download_failed: ['update_error_download_failed', 'Could not download the update. Try again later.'],
         checksum_missing: ['update_error_checksum_missing', 'The release checksum entry is missing. Installation was stopped.'],
         checksum_failed: ['update_error_checksum_failed', 'Checksum verification failed. The downloaded installer was deleted.'],
+        signature_missing: ['update_error_signature_missing', 'This release is missing a signed update manifest. Automatic installation is unavailable.'],
+        signature_failed: ['update_error_signature_failed', 'Update signature verification failed. Automatic installation was stopped.'],
         size_mismatch: ['update_error_size_mismatch', 'The downloaded file size did not match the release asset. Installation was stopped.'],
         browser_open_failed: ['update_error_browser_open_failed', 'Could not open the releases page.'],
         installer_missing: ['update_error_installer_missing', 'The verified installer is no longer available.']
@@ -621,9 +623,9 @@ function updateStatusMessage(status) {
         return updateString(...errors[status.error_code]);
     }
     if (status.state === 'downloading') return updateString('update_downloading', 'Downloading update...');
-    if (status.state === 'verifying') return updateString('update_verifying', 'Verifying SHA-256 checksum...');
+    if (status.state === 'verifying') return updateString('update_verifying', 'Verifying signed update manifest and installer checksum...');
     if (status.state === 'ready') {
-        return `${updateString('update_verified', 'Checksum verified.')} ${updateString('update_ready', 'Ready to install. The application will close.')}`;
+        return `${updateString('update_verified', 'Signed update verified.')} ${updateString('update_ready', 'Ready to install. The application will close.')}`;
     }
     if (status.state === 'cancelled') return updateString('update_cancelled', 'Download cancelled.');
     return '';

@@ -25,6 +25,7 @@ logs/
 .audit_trace
 .flask_secret
 .paracci_identity
+/signing_key.pem
 audit_results.txt
 
 # --- OS Caches ---

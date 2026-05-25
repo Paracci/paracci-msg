@@ -1,0 +1,196 @@
+name: Publish Signed Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Draft release tag to publish (for example, v1.5.0)"
+        required: true
+        type: string
+      manifest_signature_b64:
+        description: "Base64 Ed25519 signature for the draft SHA256SUMS.txt"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Verify Signature And Publish Draft
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout signed release source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          ref: ${{ inputs.release_tag }}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Linux runtime dependency headers
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            gir1.2-gtk-3.0 gir1.2-webkit2-4.0 libwebkit2gtk-4.0-37 \
+            libgirepository1.0-dev gcc libcairo2-dev pkg-config python3-dev libglib2.0-dev
+
+      - name: Install locked runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --require-hashes -r requirements.lock
+
+      - name: Require draft release and download assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft')" = "true"
+          mkdir release-assets
+          gh release download "$RELEASE_TAG" --dir release-assets
+          rm -f release-assets/SHA256SUMS.txt.sig
+          test -f release-assets/SHA256SUMS.txt
+
+      - name: Verify detached signature and every package checksum
+        env:
+          MANIFEST_SIGNATURE_B64: ${{ inputs.manifest_signature_b64 }}
+        run: |
+          python - <<'PY'
+          import base64
+          import binascii
+          import hashlib
+          import os
+          import re
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, "paracci")
+          from desktop.updater import verify_checksum_signature
+
+          root = Path("release-assets")
+          manifest = (root / "SHA256SUMS.txt").read_bytes()
+          try:
+              signature = base64.b64decode(os.environ["MANIFEST_SIGNATURE_B64"], validate=True)
+          except binascii.Error as exc:
+              raise SystemExit("The supplied manifest signature is not valid Base64.") from exc
+          if not verify_checksum_signature(manifest, signature):
+              raise SystemExit("The detached signature does not authenticate SHA256SUMS.txt.")
+          (root / "SHA256SUMS.txt.sig").write_bytes(signature)
+
+          required_patterns = (
+              "Paracci-Setup-v*.exe",
+              "Paracci-Portable-v*.zip",
+              "Paracci-*-macOS.dmg",
+              "Paracci-Linux.zip",
+              "Paracci-*-x86_64.AppImage",
+              "paracci_*_amd64.deb",
+          )
+          expected = set()
+          for pattern in required_patterns:
+              matches = list(root.glob(pattern))
+              if len(matches) != 1:
+                  raise SystemExit(f"Expected exactly one release asset for {pattern!r}; found {len(matches)}.")
+              expected.add(matches[0].name)
+
+          macos_compat = list(root.glob("Paracci-macOS.zip")) or list(root.glob("Paracci-macOS"))
+          if len(macos_compat) != 1:
+              raise SystemExit("Expected exactly one macOS compatibility asset.")
+          expected.add(macos_compat[0].name)
+
+          entries = {}
+          line_re = re.compile(r"^([0-9a-fA-F]{64})\s+[* ]?(.+?)\s*$")
+          for line in manifest.decode("utf-8-sig").splitlines():
+              match = line_re.match(line)
+              if not match:
+                  raise SystemExit("SHA256SUMS.txt contains a malformed line.")
+              digest, filename = match.groups()
+              if filename in entries:
+                  raise SystemExit(f"SHA256SUMS.txt contains a duplicate entry for {filename}.")
+              entries[filename] = digest.lower()
+          if set(entries) != expected:
+              raise SystemExit("SHA256SUMS.txt does not contain exactly the required release assets.")
+
+          for filename, expected_digest in entries.items():
+              actual_digest = hashlib.sha256((root / filename).read_bytes()).hexdigest()
+              if actual_digest != expected_digest:
+                  raise SystemExit(f"Checksum mismatch for {filename}.")
+          print("Verified signed release manifest and all published package checksums.")
+          PY
+
+      - name: Attach signature and publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" release-assets/SHA256SUMS.txt.sig --clobber
+          gh release edit "$RELEASE_TAG" --draft=false
+
+      - name: Normalize filenames for VirusTotal
+        run: |
+          set -euo pipefail
+          mkdir vt-scan
+          cp release-assets/Paracci-Setup-v*.exe vt-scan/Paracci-Windows-Setup.exe
+          cp release-assets/Paracci-Portable-v*.zip vt-scan/Paracci-Windows-Portable.zip
+          cp release-assets/Paracci-Linux.zip vt-scan/Paracci-Linux.zip
+          cp release-assets/Paracci-*-x86_64.AppImage vt-scan/Paracci-Linux.AppImage
+          cp release-assets/paracci_*_amd64.deb vt-scan/Paracci-Linux.deb
+          cp release-assets/Paracci-*-macOS.dmg vt-scan/Paracci-macOS.dmg
+          if [ -f "release-assets/Paracci-macOS.zip" ]; then
+            cp release-assets/Paracci-macOS.zip vt-scan/Paracci-macOS-Compatibility.zip
+          else
+            cp release-assets/Paracci-macOS vt-scan/Paracci-macOS-Compatibility
+          fi
+
+      - name: VirusTotal Scan
+        id: virustotal
+        uses: crazy-max/ghaction-virustotal@d34968c958ae283fe976efed637081b9f9dcf74f  # v4
+        with:
+          vt_api_key: ${{ secrets.VT_API_KEY }}
+          request_rate: 4
+          files: |
+            vt-scan/Paracci-Windows-Setup.exe
+            vt-scan/Paracci-Windows-Portable.zip
+            vt-scan/Paracci-macOS-Compatibility*
+            vt-scan/Paracci-macOS.dmg
+            vt-scan/Paracci-Linux.zip
+            vt-scan/Paracci-Linux.AppImage
+            vt-scan/Paracci-Linux.deb
+
+      - name: Append VirusTotal links to release body
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          VT_ANALYSIS: ${{ steps.virustotal.outputs.analysis }}
+        run: |
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" --json body --jq '.body' > release-body.md
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          results = []
+          for entry in filter(None, os.environ["VT_ANALYSIS"].split(",")):
+              filename, separator, url = entry.partition("=")
+              if not separator or not url.startswith("https://"):
+                  raise SystemExit("VirusTotal action returned an unexpected analysis result.")
+              results.append(f"| `{Path(filename).name}` | [Report]({url}) |")
+          if not results:
+              raise SystemExit("VirusTotal action returned no analysis results.")
+
+          section = "#### VirusTotal Scan\n\n| File | Analysis |\n|------|----------|\n" + "\n".join(results)
+          body_path = Path("release-body.md")
+          body = body_path.read_text(encoding="utf-8")
+          placeholder = "#### VirusTotal Scan\n\n_VirusTotal scan links are added automatically after the signed draft is published._"
+          if placeholder in body:
+              body = body.replace(placeholder, section)
+          else:
+              body = body.rstrip() + "\n\n" + section + "\n"
+          body_path.write_text(body, encoding="utf-8")
+          PY
+          gh release edit "$RELEASE_TAG" --notes-file release-body.md
