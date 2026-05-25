@@ -33,3 +33,6 @@ LABEL_QUANTUM_V3 = b"paracci.quantum.shield.v3" + LEGACY_V3_LABEL_SUFFIX
 
 # Optional entropy for the Windows DPAPI current-user device-key binding layer.
 DPAPI_DEVICE_KEY_ENTROPY_V1 = b"paracci.device_key.dpapi.current_user.v1"
+
+# Maximum age of an in-progress burn reservation before crash recovery.
+BURN_OPENING_STALE_SECONDS = 300
