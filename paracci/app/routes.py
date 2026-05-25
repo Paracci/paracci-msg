@@ -1928,7 +1928,7 @@ def session_seal(sid: str):
         package_blob = b""
 
 
-def _prepare_open_response(meta, opened, sid, is_ajax):
+def _prepare_open_response(meta, opened, sid, is_ajax, secure_delete_warning=None):
     """Prepares opened message content for visualization."""
     if opened.bond_nonce and meta.role == "Y" and meta.bond_seed is None:
         meta = apply_bond_nonce_to_y(meta, opened.bond_nonce)
@@ -1968,10 +1968,34 @@ def _prepare_open_response(meta, opened, sid, is_ajax):
             "download_url": _preview_url("main.preview_download", pid),
         })
 
+    opened_message = {
+        "text": package.text,
+        "attachments": attachments,
+        "allow_download": effective_allow_download,
+        "time_left": _fmt_time_left(opened.expire_at),
+        "expire_at": opened.expire_at,
+        "evo_step": opened.evo_step,
+        "single_use": opened.single_use,
+        "msg_id_hex": opened.msg_id.hex(),
+        "safety_code": safety_code,
+        "rx_count": updated_meta.rx_count,
+        "security_report": security_report,
+        "secure_delete_warning": secure_delete_warning,
+    }
     if is_ajax:
-        return jsonify({"success": True, "text": package.text, "attachments": attachments, "allow_download": effective_allow_download, "time_left": _fmt_time_left(opened.expire_at), "expire_at": opened.expire_at, "evo_step": opened.evo_step, "single_use": opened.single_use, "msg_id_hex": opened.msg_id.hex(), "safety_code": safety_code, "rx_count": updated_meta.rx_count, "security_report": security_report})
+        return jsonify({"success": True, **opened_message})
 
-    return render_template("session.html", meta=updated_meta, sid=sid, evo_info=evo_info, now=int(time.time()), safety_code=safety_code, opened_msg={"text": package.text, "attachments": attachments, "allow_download": effective_allow_download, "time_left": _fmt_time_left(opened.expire_at), "expire_at": opened.expire_at, "evo_step": opened.evo_step, "single_use": opened.single_use, "msg_id_hex": opened.msg_id.hex(), "security_report": security_report})
+    if secure_delete_warning:
+        flash(secure_delete_warning, "warning")
+    return render_template(
+        "session.html",
+        meta=updated_meta,
+        sid=sid,
+        evo_info=evo_info,
+        now=int(time.time()),
+        safety_code=safety_code,
+        opened_msg=opened_message,
+    )
 
 @bp.route("/session/<sid>/open", methods=["POST"])
 def session_open(sid: str):
@@ -2028,8 +2052,23 @@ def session_open(sid: str):
                 flash(_('session.unexpected_error'), "warning")
                 logger.warning("Bond nonce application failed for session=%s: %s", sid[:8], e)
 
-        guard.post_open_burn(msg_id=opened.msg_id, session_id=opened.session_id, direction=opened.direction, single_use=opened.single_use, file_path=native_file_path)
-        return _prepare_open_response(meta, opened, sid, is_ajax)
+        secure_delete_succeeded = guard.post_open_burn(
+            msg_id=opened.msg_id,
+            session_id=opened.session_id,
+            direction=opened.direction,
+            single_use=opened.single_use,
+            file_path=native_file_path,
+        )
+        secure_delete_warning = (
+            None if secure_delete_succeeded else _('session.secure_delete_failed')
+        )
+        return _prepare_open_response(
+            meta,
+            opened,
+            sid,
+            is_ajax,
+            secure_delete_warning=secure_delete_warning,
+        )
     except (AlreadyBurnedError, TTLExpiredError, EnvelopeTTLError) as e:
         msg = "This message was already opened or has expired."
         return jsonify({"success": False, "error": msg}) if is_ajax else _render_session_error(meta, sid, msg)

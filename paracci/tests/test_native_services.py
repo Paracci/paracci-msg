@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from desktop import services as service_module
 from desktop.services import NativeServices, configure_data_dir
+import core.burn as burn_module
 from core import envelope as envelope_module
 from core.burn import BurnDB
 from core.package import create_package
@@ -58,7 +59,23 @@ def test_native_services_full_message_roundtrip(tmp_path):
     assert opened.text == "Hello **Y**"
     assert opened.single_use is True
     assert opened.allow_download is False
+    assert opened.secure_delete_failed is False
     assert filename.startswith("msg_step_000000_")
+
+
+@oqs_required
+def test_native_services_surfaces_failed_source_secure_delete(tmp_path, monkeypatch):
+    x, y, x_session_id, y_session_id = make_active_services_pair(tmp_path)
+    msg_bytes, _ = x.messages.seal_message(x_session_id, "Sensitive message", [], False, 0)
+    source_path = tmp_path / "incoming.paracci"
+    source_path.write_bytes(msg_bytes)
+    monkeypatch.setattr(burn_module.shield, "secure_delete", lambda _path: False)
+
+    opened = y.messages.open_message(y_session_id, source_path.read_bytes(), source_path)
+
+    assert opened.text == "Sensitive message"
+    assert opened.secure_delete_failed is True
+    assert source_path.exists()
 
 
 @oqs_required

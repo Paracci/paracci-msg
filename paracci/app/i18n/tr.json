@@ -345,6 +345,7 @@
     "close_modal_dont_ask": "Bir daha sorma (Hızlı Çıkış modunu etkinleştir)",
     "close_modal_confirm": "Evet, Kapat",
     "unexpected_error": "Beklenmeyen bir hata oluştu. Lütfen tekrar deneyin.",
+    "secure_delete_failed": "Kaynak .paracci dosyası güvenli şekilde silinemedi. Kalan dosyayı hassas veri olarak kabul edin ve güvenli silme yöntemiyle kaldırın.",
     "package_limit_error": "Mesaj açılamadı: paket boyutu veya yapı limiti aşıldı."
   },
   "profile": {

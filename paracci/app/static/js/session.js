@@ -620,6 +620,11 @@ function renderDecryptedMessage(data) {
                 appendAlert(securityDiv, 'error', warnLabel, risk?.target || risk);
             });
         }
+        if (data.secure_delete_warning) {
+            securityDiv.style.display = 'block';
+            const warnLabel = window.PARACCI_I18N?.security_warning || 'SECURITY WARNING:';
+            appendAlert(securityDiv, 'error', warnLabel, data.secure_delete_warning);
+        }
     }
 
     // Message Content

@@ -1,5 +1,6 @@
 import io
 import json
+import logging
 import os
 import socket
 import struct
@@ -145,11 +146,65 @@ def test_startup_cleanup_preserves_valid_activated_file(tmp_path, monkeypatch):
         instance.get = lambda key: 1 if key == "auto_cleanup_hours" else None
 
     monkeypatch.setattr(ParacciConfig, "__init__", configure)
+    deleted = []
+
+    def fake_secure_delete(path):
+        deleted.append(Path(path))
+        Path(path).unlink()
+        return True
+
+    monkeypatch.setattr(run, "secure_delete", fake_secure_delete)
+    monkeypatch.setattr(
+        run.os,
+        "remove",
+        lambda _path: pytest.fail("auto-cleanup bypassed secure_delete"),
+    )
 
     run.run_auto_cleanup(activated)
 
     assert activated.exists()
     assert not unrelated.exists()
+    assert deleted == [unrelated]
+
+
+def test_startup_cleanup_surfaces_failed_secure_delete_and_continues(
+    tmp_path, monkeypatch, caplog, capsys
+):
+    from core.config import ParacciConfig
+
+    downloads = tmp_path / "downloads"
+    downloads.mkdir()
+    blocked = write_message(downloads / "blocked.paracci")
+    removable = write_message(downloads / "removable.paracci")
+    old_time = 1
+    os.utime(blocked, (old_time, old_time))
+    os.utime(removable, (old_time, old_time))
+
+    def configure(instance):
+        instance.full_downloads_path = str(downloads)
+        instance.get = lambda key: 1 if key == "auto_cleanup_hours" else None
+
+    attempted = []
+
+    def fake_secure_delete(path):
+        selected = Path(path)
+        attempted.append(selected)
+        if selected == blocked:
+            return False
+        selected.unlink()
+        return True
+
+    monkeypatch.setattr(ParacciConfig, "__init__", configure)
+    monkeypatch.setattr(run, "secure_delete", fake_secure_delete)
+
+    with caplog.at_level(logging.ERROR, logger=run.__name__):
+        run.run_auto_cleanup()
+
+    assert set(attempted) == {blocked, removable}
+    assert blocked.exists()
+    assert not removable.exists()
+    assert "could not securely delete 1 expired message file" in caplog.text
+    assert "could not be securely destroyed" in capsys.readouterr().out
 
 
 def test_known_activation_builds_opaque_session_url(tmp_path):

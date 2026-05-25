@@ -345,6 +345,7 @@
     "attachment_sanitization_failed": "Esta imagen adjunta no se pudo procesar y fue rechazada por seguridad. Pruebe con otro archivo.",
     "drop_failed": "Drop failed.",
     "unexpected_error": "Ocurrió un error inesperado. Por favor, inténtalo de nuevo.",
+    "secure_delete_failed": "El archivo .paracci de origen no pudo eliminarse de forma segura. Trate el archivo restante como confidencial y elimínelo con un método de borrado seguro.",
     "package_limit_error": "El mensaje no pudo abrirse: se superó el límite de tamaño o estructura del paquete."
   },
   "profile": {
