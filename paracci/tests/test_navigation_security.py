@@ -1,4 +1,5 @@
 import base64
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -109,6 +110,90 @@ def test_main_pro_api_exposes_expected_methods():
         "install_verified_update",
     ]:
         assert callable(getattr(api, method))
+
+
+def test_open_file_location_launches_explorer_with_managed_file_as_single_argument(tmp_path, monkeypatch):
+    from core.config import ParacciConfig
+
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    target = downloads / "message.paracci"
+    target.write_bytes(b"message")
+    launches = []
+    monkeypatch.setattr(ParacciConfig, "__init__", lambda self: setattr(self, "full_downloads_path", str(downloads)))
+    monkeypatch.setattr(run.subprocess, "Popen", lambda args: launches.append(args))
+
+    result = run.ProApi().open_file_location(str(target))
+
+    assert result == {"success": True}
+    assert launches == [["explorer", f"/select,{os.path.normpath(str(target.resolve()))}"]]
+
+
+def test_open_file_location_rejects_traversal_to_existing_file_outside_managed_downloads(tmp_path, monkeypatch):
+    from core.config import ParacciConfig
+
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_bytes(b"outside")
+    traversal = downloads / ".." / "outside.txt"
+    launches = []
+    monkeypatch.setattr(ParacciConfig, "__init__", lambda self: setattr(self, "full_downloads_path", str(downloads)))
+    monkeypatch.setattr(run.subprocess, "Popen", lambda args: launches.append(args))
+
+    result = run.ProApi().open_file_location(str(traversal))
+
+    assert result == {"success": False, "error": "File location is unavailable."}
+    assert launches == []
+
+
+@pytest.mark.parametrize("path", ["relative.txt", "bad\x00name.txt"])
+def test_open_file_location_rejects_relative_and_null_byte_paths(tmp_path, monkeypatch, path):
+    from core.config import ParacciConfig
+
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    launches = []
+    monkeypatch.setattr(ParacciConfig, "__init__", lambda self: setattr(self, "full_downloads_path", str(downloads)))
+    monkeypatch.setattr(run.subprocess, "Popen", lambda args: launches.append(args))
+
+    result = run.ProApi().open_file_location(path)
+
+    assert result == {"success": False, "error": "File location is unavailable."}
+    assert launches == []
+
+
+def test_open_file_location_keeps_metacharacters_inside_single_explorer_argument(tmp_path, monkeypatch):
+    from core.config import ParacciConfig
+
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    target = downloads / "report;& notes.txt"
+    target.write_bytes(b"report")
+    launches = []
+    monkeypatch.setattr(ParacciConfig, "__init__", lambda self: setattr(self, "full_downloads_path", str(downloads)))
+    monkeypatch.setattr(run.subprocess, "Popen", lambda args: launches.append(args))
+
+    result = run.ProApi().open_file_location(str(target))
+
+    assert result == {"success": True}
+    assert launches == [["explorer", f"/select,{os.path.normpath(str(target.resolve()))}"]]
+
+
+def test_open_file_location_rejects_attack_shaped_nonexistent_input(tmp_path, monkeypatch):
+    from core.config import ParacciConfig
+
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    launches = []
+    attack_path = f'{downloads / "report.txt"}" | calc.exe'
+    monkeypatch.setattr(ParacciConfig, "__init__", lambda self: setattr(self, "full_downloads_path", str(downloads)))
+    monkeypatch.setattr(run.subprocess, "Popen", lambda args: launches.append(args))
+
+    result = run.ProApi().open_file_location(attack_path)
+
+    assert result == {"success": False, "error": "File location is unavailable."}
+    assert launches == []
 
 
 def test_install_update_bridge_closes_only_after_verified_path(tmp_path):
