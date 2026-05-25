@@ -4,7 +4,6 @@ import struct
 import time
 import uuid
 import datetime
-import glob
 import secrets
 import hmac
 import mimetypes
@@ -30,6 +29,7 @@ from core.config import ParacciConfig
 from core.identity import get_or_create_device_identity
 from core.envelope import (
     FILE_VERSION as ENVELOPE_FILE_VERSION,
+    ARGON2_FILE_VERSION as ARGON2_ENVELOPE_FILE_VERSION,
     LEGACY_FILE_VERSION as LEGACY_ENVELOPE_FILE_VERSION,
     seal_envelope,
     open_envelope,
@@ -72,14 +72,11 @@ from core.session import (
 from core.hybrid_kem import HybridKEMError
 from core.evolution import (
     MAX_EVO_STEP,
-    SECURITY_PROFILES,
     seconds_until_expiry,
     session_expires_at,
-    validate_argon2_params,
     validate_session_ttl,
 )
 from core.preview_store import PreviewEntry, preview_store
-from . import APP_DIR
 from .build_info import APP_VERSION
 from .i18n_manager import i18n
 
@@ -699,7 +696,7 @@ def enforce_loopback_security():
     if source_error:
         return source_error
 
-    if request.endpoint in {"main.api_capabilities", "main.api_benchmark_results"}:
+    if request.endpoint == "main.api_capabilities":
         return
 
     if _preview_store_request_token():
@@ -741,7 +738,6 @@ def check_lock():
         "main.unlock_2fa_verify",
         "main.favicon",
         "main.api_capabilities",
-        "main.api_benchmark_results",
         "main.api_update_status",
         "main.api_update_check",
         "main.api_update_history",
@@ -1128,7 +1124,11 @@ def _parse_file_header_raw(file_bytes: bytes) -> dict | None:
     if file_type not in [0x10, 0x11, 0x20]:
         return None
     if file_type == 0x20:
-        if version not in (LEGACY_ENVELOPE_FILE_VERSION, ENVELOPE_FILE_VERSION):
+        if version not in (
+            LEGACY_ENVELOPE_FILE_VERSION,
+            ARGON2_ENVELOPE_FILE_VERSION,
+            ENVELOPE_FILE_VERSION,
+        ):
             return None
     elif version < LEGACY_WRAPPED_HANDSHAKE_FILE_VERSION:
         return None
@@ -1256,7 +1256,6 @@ def session_new():
 
     label            = request.form.get("label", "").strip()
     session_ttl_str  = request.form.get("session_ttl", "0")
-    security_profile = request.form.get("security_profile", "paranoid")
     color            = request.form.get("color")
     custom_color     = request.form.get("custom_color", "").strip()
     if custom_color:
@@ -1276,29 +1275,12 @@ def session_new():
         flash(_('session.invalid_ttl'), "error")
         return render_template("setup.html", mode="new", is_import=False)
 
-    custom_params = None
-    if security_profile != "custom" and security_profile not in SECURITY_PROFILES:
-        flash(_('session.invalid_params'), "error")
-        return render_template("setup.html", mode="new", is_import=False)
-
-    if security_profile == "custom":
-        try:
-            t = int(request.form.get("custom_t", "256"))
-            m = int(request.form.get("custom_m", "2048")) * 1024  # MB to KB
-            p = int(request.form.get("custom_p", "2"))
-            custom_params = validate_argon2_params(t, m, p)
-        except (TypeError, ValueError):
-            flash(_('session.invalid_params'), "error")
-            return render_template("setup.html", mode="new", is_import=False)
-
     cfg = ParacciConfig()
     try:
         identity = _get_device_identity()
         meta, file_bytes = create_initiator_session(
             label=label,
             session_ttl_sec=session_ttl_sec,
-            profile=security_profile,
-            custom_params=custom_params,
             my_username=cfg.get("username"),
             color=color,
             identity_pub=identity.public_key,
@@ -1512,7 +1494,7 @@ def _process_initiator_import(file_bytes, local_label, native_file_id="", native
         )
 
     try:
-        logger.info("Processing Initiator (Argon2id Bond starting)...")
+        logger.info("Processing initiator setup file...")
         start_t = time.time()
         cfg = ParacciConfig()
         identity = _get_device_identity()
@@ -1869,7 +1851,12 @@ def session_seal(sid: str):
         )
         updated = meta._replace(tx_count=meta.tx_count + 1, send_seed=sealed.next_seed)
         _save_session(updated)
-        return send_file(io.BytesIO(sealed.file_bytes), mimetype="application/octet-stream", as_attachment=True, download_name=f"msg_{sealed.msg_id.hex()[:12]}.paracci")
+        return send_file(
+            io.BytesIO(sealed.file_bytes),
+            mimetype="application/octet-stream",
+            as_attachment=True,
+            download_name=f"msg_step_{sealed.next_step - 1:06d}_{sealed.msg_id.hex()[:12]}.paracci",
+        )
     except (MemoryError, KeyboardInterrupt, SystemExit):
         raise
     except Exception:
@@ -2081,7 +2068,6 @@ def session_export(sid: str):
                 y_pub=meta.my_pub,
                 evo_config=meta.evo_config,
                 label=meta.label,
-                y_qseed=meta.my_qseed,
                 x_pub=meta.peer_pub,
                 x_identity_pub=meta.peer_identity_pub,
                 y_identity_pub=meta.my_identity_pub,
@@ -2365,123 +2351,6 @@ def preview_download(pid: str):
         download_name=sanitize_attachment_filename(file_data["filename"])
     )
     return _mark_sensitive_no_store(response)
-
-
-# ---------------------------------------------------------------------------
-# GET /armor-report — Armor Calibration Report
-# ---------------------------------------------------------------------------
-
-@bp.route("/armor-report")
-def armor_report():
-    """Displays the most recent armor report based on the user's language."""
-    lang = session.get('locale', 'tr')
-    reports_dir = APP_DIR / "reports"
-    
-    # Find reports: armor_report_*_{lang}.md
-    report_files = list(reports_dir.glob(f"armor_report_*_{lang}.md"))
-    
-    if not report_files:
-        # If no language-specific report, try default (tr)
-        report_files = list(reports_dir.glob("armor_report_*_tr.md"))
-        
-    if not report_files:
-        abort(404, description="Report file not found.")
-
-    # Get the latest one (sort by name)
-    latest_report = sorted(report_files)[-1]
-
-    try:
-        with open(latest_report, "r", encoding="utf-8") as f:
-            content = f.read()
-    except (OSError, UnicodeDecodeError) as e:
-        logger.warning("Could not read armor report: %s", e)
-        abort(500)
-
-    return render_template("report_viewer.html", content=content, title=_('nav.armor_report'))
-
-
-# ---------------------------------------------------------------------------
-# API: Get Latest Hardware Benchmark Report
-# ---------------------------------------------------------------------------
-
-@bp.route("/api/benchmark-report")
-def api_benchmark_report():
-    """Returns the system verification (benchmark) report in JSON format."""
-    lang = session.get('locale', 'tr')
-    reports_dir = APP_DIR / "reports"
-
-    report_files = list(reports_dir.glob(f"armor_report_*_{lang}.md"))
-    if not report_files:
-        report_files = list(reports_dir.glob("armor_report_*_tr.md"))
-
-    if not report_files:
-        return jsonify({"success": False, "message": _('benchmark.not_found')}), 404
-
-    try:
-        latest_report = sorted(report_files)[-1]
-        with open(latest_report, "r", encoding="utf-8") as f:
-            content = f.read()
-        return jsonify({"success": True, "report": content})
-    except (OSError, UnicodeDecodeError) as e:
-        logger.warning("Could not read armor report file: %s", e)
-        return jsonify({"success": False, "message": "Report file could not be read."}), 500
-    except (MemoryError, KeyboardInterrupt, SystemExit):
-        raise
-    except Exception:
-        logger.exception("Unexpected error reading armor report")
-        return jsonify({"success": False, "message": "Report file could not be read."}), 500
-
-
-@bp.route("/api/benchmark-results")
-def api_benchmark_results():
-    """Returns the parsed benchmark_result.json containing numeric durations."""
-    import json
-    from . import ROOT_DIR
-    result_path = ROOT_DIR / "benchmark_result.json"
-    if not result_path.exists():
-        # Fallback to standard/average durations in case benchmark hasn't been run
-        fallback = {
-            "results": {
-                "standard": {
-                    "init_x": 0.040,
-                    "accept_y": 0.046,
-                    "finalize_x": 0.049,
-                    "bond_y": 0.0001,
-                    "seal": 0.044,
-                    "open": 0.045
-                },
-                "paranoid": {
-                    "init_x": 0.001,
-                    "accept_y": 0.381,
-                    "finalize_x": 0.400,
-                    "bond_y": 0.0001,
-                    "seal": 0.384,
-                    "open": 0.378
-                },
-                "quantum": {
-                    "init_x": 0.001,
-                    "accept_y": 202.9,
-                    "finalize_x": 223.2,
-                    "bond_y": 0.0001,
-                    "seal": 219.2,
-                    "open": 211.7
-                }
-            }
-        }
-        return jsonify({"success": True, "data": fallback})
-
-    try:
-        with open(result_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return jsonify({"success": True, "data": data})
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
-        logger.warning("Could not read benchmark results file: %s", e)
-        return jsonify({"success": False, "message": "Benchmark results file could not be read."}), 500
-    except (MemoryError, KeyboardInterrupt, SystemExit):
-        raise
-    except Exception:
-        logger.exception("Unexpected error reading benchmark results")
-        return jsonify({"success": False, "message": "Benchmark results file could not be read."}), 500
 
 
 # ---------------------------------------------------------------------------

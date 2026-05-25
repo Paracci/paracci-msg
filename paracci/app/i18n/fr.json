@@ -21,7 +21,7 @@
     "iar_marker": "PRO-ORIGINAL-",
     "home_aria": "Paracci home",
     "nav_aria": "Primary navigation",
-    "argon_work_active": "Argon2id maximum actif..."
+    "argon_work_active": "Dérivation de la clé de l'appareil avec Argon2id..."
   },
   "hybrid_kem_legacy_session": "Cette session a été créée avec une ancienne version de Paracci et ne bénéficie pas de la protection post-quantique. Demandez à votre contact de démarrer une nouvelle session.",
   "hybrid_kem_init_failed": "La génération de clé post-quantique a échoué. Veuillez réessayer.",
@@ -31,8 +31,7 @@
     "sessions": "Sessions",
     "new": "Nouveau",
     "import": "Import",
-    "settings": "Paramètres",
-    "armor_report": "Rapport d'armure"
+    "settings": "Paramètres"
   },
   "common": {
     "cancel": "Annuler",
@@ -48,9 +47,6 @@
     "error": "Error",
     "render_error": "Report could not be rendered.",
     "marked_missing": "Markdown renderer not loaded."
-  },
-  "armor": {
-    "report_info": "Ce rapport mesure les performances de dérivation de clé Argon2id à coût élevé de votre appareil. Cela augmente la résistance aux attaques par force brute hors ligne, mais ne garantit PAS de protection cryptographique absolue."
   },
   "index": {
     "title": "sessions",
@@ -74,7 +70,7 @@
     "setup_2fa_enable": "Enable 2FA",
     "setup_2fa_skip": "Skip for Now",
     "setup_2fa_title": "Two-Factor Authentication (2FA)",
-    "armor_active": "Argon2id maximum actif...",
+    "armor_active": "La dérivation de la clé de l'appareil utilise Argon2id",
     "verify_2fa_code": "Verification Code",
     "verify_2fa_desc": "Enter the 6-digit code from your authenticator app to continue.",
     "verify_2fa_title": "2FA Verification",
@@ -121,7 +117,7 @@
     "setup_2fa_enable": "Enable 2FA",
     "setup_2fa_skip": "Skip for Now",
     "setup_2fa_title": "Two-Factor Authentication (2FA)",
-    "armor_active": "Armor Active",
+    "armor_active": "Clé de l'appareil protégée",
     "show_pin": "Show passphrase",
     "status_medium": "Medium",
     "status_short": "Short",
@@ -184,28 +180,6 @@
     "label_placeholder": "ex: Canal sécurisé avec Y",
     "ttl": "Durée de vie de la session",
     "ttl_hint": "La session sera complètement fermée après cette période.",
-    "security_title": "Niveau de sécurité (Time Lock)",
-    "standard": "Standard",
-    "standard_desc": "Rapide et sécurisé. Idéal pour le matériel d'entrée de gamme.",
-    "paranoid": "Paranoïaque",
-    "paranoid_desc": "Équilibre par défaut. Protection Time Lock d'une seconde.",
-    "custom": "Personnalisé",
-    "custom_desc": "Paramètres personnalisés. Construisez votre propre armure.",
-    "custom_title": "Paramètres de sécurité personnalisés (Argon2id)",
-    "est_time_p1": "Temps estimé : ",
-    "est_time_p2": "s",
-    "seal_info_title": "Infos de scellage :",
-    "seal_info_desc_p1": "Ces paramètres sont définitivement inscrits dans le fichier de session (Initiateur). Ils ",
-    "seal_info_desc_bold": "ne peuvent pas être modifiés",
-    "argon_t": "Temps (t)",
-    "argon_m": "Mémoire (MB)",
-    "argon_p": "Parallélisme (p)",
-    "hw_advice": "Conseil matériel :",
-    "hw_advice_desc_p1": "Basé sur des tests locaux, ce profil prendra environ ",
-    "hw_advice_example": "3,3 minutes",
-    "hw_advice_desc_p2": ".",
-    "security_hint": "Ce paramètre détermine la vitesse de déchiffrement du message et la résistance aux attaques par force brute.",
-    "view_benchmark": "Voir le dernier rapport de test matériel",
     "create_btn": "Créer la session et télécharger le fichier",
     "import_title": "importer un fichier",
     "import_subtitle_p1": "Téléchargez un fichier de session ",
@@ -230,19 +204,13 @@
     "pick_color": "Pick from palette",
     "session_color": "Session Color",
     "subtitle": "Commencez par créer une nouvelle session d'échange de fichiers.",
-    "title": "New Session",
-    "hw_report_error": "An error occurred while fetching the report.",
-    "hw_report_title": "Hardware Calibration Report",
-    "maximum": "Maximum",
-    "maximum_desc": "Dérivation de clé Argon2id à coût élevé. Augmente la résistance aux attaques par force brute hors ligne. Ne garantit PAS de protection cryptographique absolue. Feuille de route : l'intégration KEM hybride (ML-KEM/Kyber) est prévue pour une future version.",
-    "argon_work_active": "Argon2id maximum actif..."
+    "title": "New Session"
   },
   "session": {
     "not_found": "Session non trouvée.",
     "not_active": "La session n'est pas active.",
     "label_required": "Le nom de la session ne peut pas être vide.",
     "invalid_ttl": "Valeur de durée invalide.",
-    "invalid_params": "Paramètres personnalisés invalides.",
     "create_error": "Échec de la création de la session : {error}",
     "init_success": "Session démarrée. Téléchargement du fichier Initiateur...",
     "import_file_required": "Veuillez sélectionner un fichier .paracci.",
@@ -282,7 +250,7 @@
     "safety_code_mismatch": "Safety code does not match. Do not use this session until both sides match.",
     "safety_unverified": "Safety code must be confirmed before this session can be used.",
     "legacy_handshake_blocked": "This session was created with an older unsigned handshake and cannot be used safely. Create a new session.",
-    "legacy_handshake_version": "Cette session a été établie avec une ancienne version de Paracci et ne bénéficie pas de la liaison d'identité. Veuillez démarrer une nouvelle session.",
+    "legacy_handshake_version": "Ce fichier de configuration utilise un format obsolète de renforcement de clé. Veuillez démarrer une nouvelle session.",
     "legacy_session_requires_new": "Cette session a été créée sans liaison d'identité. Demandez à votre contact de démarrer une nouvelle session.",
     "state_unverified": "Unverified",
     "msg_opened": "📨 Message ouvert",
@@ -392,9 +360,6 @@
     "nickname_hint": "Affiché uniquement de votre côté pour identifier qui utilise l'application.",
     "avatar_label": "Couleur de l'avatar"
   },
-  "benchmark": {
-    "not_found": "Aucun rapport de benchmark trouvé pour le moment."
-  },
   "preview": {
     "not_found_title": "Aperçu expiré ou fichier non trouvé.",
     "not_found_desc": "Pour des raisons de sécurité, les fichiers sont conservés en RAM pendant une courte période.",
@@ -448,8 +413,8 @@
     "available_title": "Mise à jour disponible",
     "version_line": "Actuelle {current} - Nouvelle {latest}",
     "size": "Taille : {size}",
-    "protocol_warning_title": "Changement du protocole de session",
-    "protocol_warning": "Cette mise à jour modifie le protocole de session. Après la mise à jour, vous devrez établir de nouvelles sessions avec vos contacts.",
+    "protocol_warning_title": "Changement de format de fichier",
+    "protocol_warning": "Cette mise à jour modifie les formats de message et de fichier de configuration. Mettez à jour les deux participants avant d'échanger de nouveaux messages; les échanges de configuration inachevés doivent être redémarrés.",
     "protocol_unknown": "Cette version ne fournit pas d'informations de compatibilité du protocole de session. Après la mise à jour, de nouvelles sessions peuvent être nécessaires.",
     "acknowledge": "Je comprends avant de continuer",
     "update_now": "Mettre à jour",

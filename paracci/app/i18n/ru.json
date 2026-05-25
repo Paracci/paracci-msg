@@ -21,7 +21,7 @@
     "iar_marker": "PRO-ORIGINAL-",
     "home_aria": "Paracci home",
     "nav_aria": "Primary navigation",
-    "argon_work_active": "Максимальный Argon2id активен..."
+    "argon_work_active": "Вывод ключа устройства с помощью Argon2id..."
   },
   "hybrid_kem_legacy_session": "Этот сеанс был создан в более старой версии Paracci и не имеет постквантовой защиты. Попросите вашего контакта начать новый сеанс.",
   "hybrid_kem_init_failed": "Не удалось создать постквантовый ключ. Повторите попытку.",
@@ -31,8 +31,7 @@
     "sessions": "Сессии",
     "new": "Создать",
     "import": "Импорт",
-    "settings": "Настройки",
-    "armor_report": "Отчет брони"
+    "settings": "Настройки"
   },
   "common": {
     "cancel": "Отмена",
@@ -48,9 +47,6 @@
     "error": "Error",
     "render_error": "Report could not be rendered.",
     "marked_missing": "Markdown renderer not loaded."
-  },
-  "armor": {
-    "report_info": "Этот отчет измеряет производительность высокозатратного вывода ключа Argon2id на вашем устройстве. Это повышает устойчивость к офлайн-перебору, но НЕ гарантирует абсолютную криптографическую защиту."
   },
   "index": {
     "title": "сессии",
@@ -74,7 +70,7 @@
     "setup_2fa_enable": "Enable 2FA",
     "setup_2fa_skip": "Skip for Now",
     "setup_2fa_title": "Two-Factor Authentication (2FA)",
-    "armor_active": "Максимальный Argon2id активен...",
+    "armor_active": "Для вывода ключа устройства используется Argon2id",
     "verify_2fa_code": "Verification Code",
     "verify_2fa_desc": "Enter the 6-digit code from your authenticator app to continue.",
     "verify_2fa_title": "2FA Verification",
@@ -121,7 +117,7 @@
     "setup_2fa_enable": "Enable 2FA",
     "setup_2fa_skip": "Skip for Now",
     "setup_2fa_title": "Two-Factor Authentication (2FA)",
-    "armor_active": "Armor Active",
+    "armor_active": "Ключ устройства защищён",
     "show_pin": "Show passphrase",
     "status_medium": "Medium",
     "status_short": "Short",
@@ -184,28 +180,6 @@
     "label_placeholder": "напр., Безопасный канал с Y",
     "ttl": "Время жизни сессии",
     "ttl_hint": "Сессия будет полностью закрыта по истечении этого периода.",
-    "security_title": "Уровень безопасности (Time Lock)",
-    "standard": "Стандартный",
-    "standard_desc": "Быстро и безопасно. Идеально для бюджетного оборудования.",
-    "paranoid": "Параноидальный",
-    "paranoid_desc": "Баланс по умолчанию. Защита Time Lock на 1 секунду.",
-    "custom": "Пользовательский",
-    "custom_desc": "Собственные параметры. Создайте свою броню.",
-    "custom_title": "Пользовательские параметры безопасности (Argon2id)",
-    "est_time_p1": "Оценочное время: ",
-    "est_time_p2": "с",
-    "seal_info_title": "Информация о запечатывании:",
-    "seal_info_desc_p1": "Эти настройки навсегда вшиты в файл сессии (Initiator). Их ",
-    "seal_info_desc_bold": "нельзя изменить",
-    "argon_t": "Время (t)",
-    "argon_m": "Память (МБ)",
-    "argon_p": "Параллелизм (p)",
-    "hw_advice": "Совет по оборудованию:",
-    "hw_advice_desc_p1": "На основе локальных тестов этот профиль займет примерно ",
-    "hw_advice_example": "3,3 минуты",
-    "hw_advice_desc_p2": ".",
-    "security_hint": "Этот параметр определяет скорость расшифровки сообщения и устойчивость к перебору.",
-    "view_benchmark": "Посмотреть последний отчет о тесте оборудования",
     "create_btn": "Создать сессию и скачать файл",
     "import_title": "импорт файла",
     "import_subtitle_p1": "Загрузите файл сессии ",
@@ -230,19 +204,13 @@
     "pick_color": "Pick from palette",
     "session_color": "Session Color",
     "subtitle": "Начните с создания новой сессии обмена файлами.",
-    "title": "New Session",
-    "hw_report_error": "An error occurred while fetching the report.",
-    "hw_report_title": "Hardware Calibration Report",
-    "maximum": "Максимум",
-    "maximum_desc": "Высокозатратный вывод ключа Argon2id. Повышает устойчивость к офлайн-перебору. НЕ гарантирует абсолютную криптографическую защиту. План: интеграция гибридного KEM (ML-KEM/Kyber) запланирована для будущего выпуска.",
-    "argon_work_active": "Максимальный Argon2id активен..."
+    "title": "New Session"
   },
   "session": {
     "not_found": "Сессия не найдена.",
     "not_active": "Сессия не активна.",
     "label_required": "Название сессии не может быть пустым.",
     "invalid_ttl": "Неверное значение времени.",
-    "invalid_params": "Неверные пользовательские параметры.",
     "create_error": "Не удалось создать сессию: {error}",
     "init_success": "Сессия запущена. Загрузка файла инициатора...",
     "import_file_required": "Пожалуйста, выберите файл .paracci.",
@@ -282,7 +250,7 @@
     "safety_code_mismatch": "Safety code does not match. Do not use this session until both sides match.",
     "safety_unverified": "Safety code must be confirmed before this session can be used.",
     "legacy_handshake_blocked": "This session was created with an older unsigned handshake and cannot be used safely. Create a new session.",
-    "legacy_handshake_version": "Этот сеанс был установлен в более старой версии Paracci и не имеет привязки идентичности. Начните новый сеанс.",
+    "legacy_handshake_version": "Этот файл настройки использует устаревший формат усиления ключа. Начните новый сеанс.",
     "legacy_session_requires_new": "Этот сеанс был создан без привязки идентичности. Попросите вашего контакта начать новый сеанс.",
     "state_unverified": "Unverified",
     "msg_opened": "📨 Сообщение открыто",
@@ -392,9 +360,6 @@
     "nickname_hint": "Отображается только на вашей стороне для идентификации того, кто использует приложение.",
     "avatar_label": "Цвет аватара"
   },
-  "benchmark": {
-    "not_found": "Отчеты о тестировании пока не найдены."
-  },
   "preview": {
     "not_found_title": "Срок действия предпросмотра истек или файл не найден.",
     "not_found_desc": "В целях безопасности файлы хранятся в оперативной памяти в течение короткого времени.",
@@ -448,8 +413,8 @@
     "available_title": "Доступно обновление",
     "version_line": "Текущая {current} - Новая {latest}",
     "size": "Размер: {size}",
-    "protocol_warning_title": "Изменение протокола сеанса",
-    "protocol_warning": "Это обновление изменяет протокол сеанса. После обновления потребуется установить новые сеансы с вашими контактами.",
+    "protocol_warning_title": "Изменение формата файлов",
+    "protocol_warning": "Это обновление изменяет форматы сообщений и файлов настройки. Обновите обе стороны до обмена новыми сообщениями; незавершённые обмены файлами настройки необходимо начать заново.",
     "protocol_unknown": "В этом выпуске нет сведений о совместимости протокола сеанса. После обновления могут потребоваться новые сеансы.",
     "acknowledge": "Я понимаю и хочу продолжить",
     "update_now": "Обновить сейчас",

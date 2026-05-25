@@ -13,12 +13,12 @@ the native desktop layer depend on this module:
     )
     open_envelope(file_bytes, session)
 
-The active v2 on-disk format is:
+The active v3 on-disk format is:
 HEADER(52) + payload_len(4) + payload_nonce(12) + payload_ciphertext
 + sync_nonce(12) + sync_ciphertext.
 
-Legacy v1 envelopes appended a 16-byte public-HMAC trailer. New files do not
-write it; old files remain readable by stripping that trailer before AEAD parse.
+Legacy v1 envelopes appended a 16-byte public-HMAC trailer. Version 1 and 2
+payloads used protocol Argon2 and remain readable through a legacy-only path.
 """
 
 import json
@@ -52,7 +52,8 @@ from .session import SessionMeta
 
 MAGIC_BYTES = b"PARC"
 LEGACY_FILE_VERSION = 0x01
-FILE_VERSION = 0x02
+ARGON2_FILE_VERSION = 0x02
+FILE_VERSION = 0x03
 TYPE_MESSAGE = 0x20
 
 DIR_X_TO_Y = 0x01
@@ -149,7 +150,7 @@ def _parse_header(data: bytes) -> EnvelopeHeader:
         raise EnvelopeError("File too short.")
     if data[:4] != MAGIC_BYTES:
         raise EnvelopeError("Invalid file signature.")
-    if data[4] not in (LEGACY_FILE_VERSION, FILE_VERSION):
+    if data[4] not in (LEGACY_FILE_VERSION, ARGON2_FILE_VERSION, FILE_VERSION):
         raise EnvelopeError("Unsupported version.")
     if data[5] != TYPE_MESSAGE:
         raise EnvelopeError("Not a message file.")
@@ -248,20 +249,24 @@ def _prepare_seal_keys(session: SessionMeta) -> tuple[int, bytes, bytes, int]:
     raise EnvelopeError("Invalid session role.")
 
 
-def _compute_work_key(
+def _derive_legacy_payload_key_v1_v2(
     msg_key: bytes,
     header: bytes,
     qseed: Optional[bytes],
     config: EvoConfig,
 ) -> bytes:
-    """Computes a key derived with Argon2id for Quantum Armor (Time-Lock)."""
+    """Derive the payload key used only when opening historical v1/v2 files."""
     config = validate_evo_config(config)
+    if config.legacy_argon2_time is None:
+        raise EnvelopeError(
+            "This legacy message cannot be opened because compatibility key parameters are unavailable."
+        )
     return hash_secret_raw(
         secret=msg_key,
         salt=header + (qseed or b"no-quantum-armor"),
-        time_cost=config.argon2_time,
-        memory_cost=config.argon2_mem,
-        parallelism=config.argon2_par,
+        time_cost=config.legacy_argon2_time,
+        memory_cost=config.legacy_argon2_mem,
+        parallelism=config.legacy_argon2_par,
         hash_len=32,
         type=LowLevelArgon2Type.ID,
     )
@@ -296,8 +301,7 @@ def seal_envelope(
         expire_at,
     )
 
-    work_key = _compute_work_key(msg_key, header, session.my_qseed, session.evo_config)
-    payload_blob = encrypt(work_key, payload_bytes, aad=header)
+    payload_blob = encrypt(msg_key, payload_bytes, aad=header)
 
     is_bond_init = session.role == "X" and step == 0 and session.bond_nonce is not None
     sync_raw = _build_sync_payload(
@@ -347,10 +351,18 @@ def open_envelope(file_bytes: bytes, session: SessionMeta) -> OpenedEnvelope:
     sync_data, bond_nonce = _decrypt_sync_block(header_bytes, sync_blob, session)
     msg_key, next_seed = _derive_receive_keys(header, bond_nonce, session)
 
-    work_key = _compute_work_key(msg_key, header_bytes, session.peer_qseed, session.evo_config)
+    if header.version in (LEGACY_FILE_VERSION, ARGON2_FILE_VERSION):
+        payload_key = _derive_legacy_payload_key_v1_v2(
+            msg_key,
+            header_bytes,
+            session.peer_qseed,
+            session.evo_config,
+        )
+    else:
+        payload_key = msg_key
 
     try:
-        plaintext = decrypt(work_key, payload_blob, aad=header_bytes)
+        plaintext = decrypt(payload_key, payload_blob, aad=header_bytes)
     except Exception as exc:
         detail = str(exc) or "Integrity verification failed."
         raise EnvelopeError(f"Payload decryption failed. Detail: {detail}") from exc
@@ -432,6 +444,7 @@ def _derive_receive_keys(
     else:
         raise EnvelopeError("Bond not established. X's first message is required.")
 
+    # Rejection is deliberate: do not retain skipped receive keys for late messages.
     if header_step < rx_count:
         raise EnvelopeError(
             f"Old message rejected (step {header_step} < current {rx_count})."

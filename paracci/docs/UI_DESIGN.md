@@ -32,7 +32,7 @@ Color roles are defined semantically using HSL color tokens to support harmoniou
 
 ## Front-End Security UX
 
-- **State Indicators**: Safety and key-hardening profiles are displayed transparently (e.g., standard, paranoid, high, and maximum workload indicators).
+- **State Indicators**: Safety-code verification, ordered-message guidance, TTL state, and device-key lock state are displayed transparently.
 - **Burn Semantics Feedback**: Clear messaging indicates when an envelope will be burned on open ("This envelope will be destroyed on this device after reading").
 - **Clipboard & File Selection**: Timeouts for clipboard clearing and staging limits for files are visibly communicated in the UI.
 - **No Path Exposing**: All folder and file selections utilize native OS dialogs managed by `pywebview`, hiding absolute system paths from the Web DOM.
@@ -41,6 +41,6 @@ Color roles are defined semantically using HSL color tokens to support harmoniou
 
 ## Component Directories
 
-- **Jinja2 Templates**: Located in [templates/](paracci/app/templates/). Contains the layout scaffolding (`base.html`), setup flows (`setup.html`), message views (`message.html`), and benchmarks.
+- **Jinja2 Templates**: Located in [templates/](paracci/app/templates/). Contains the layout scaffolding (`base.html`), setup flows (`setup.html`), and message views (`message.html`).
 - **CSS Styles**: Located in [static/css/](paracci/app/static/css/). Contains the design system tokens, typography rules, layout utilities, and component-specific stylesheets.
 - **JS Scripts**: Located in [static/js/](paracci/app/static/js/). Handles client-side forms, drop-zone file events, localized translations, and token authorization.

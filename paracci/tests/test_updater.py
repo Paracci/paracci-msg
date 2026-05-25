@@ -44,7 +44,7 @@ class FakeResponse(io.BytesIO):
 
 def release_payload(
     *,
-    body='<!-- paracci-update: {"protocol_version": 3} --> Notes',
+    body='<!-- paracci-update: {"protocol_version": 4} --> Notes',
     installer=True,
     version="1.4.2",
     published_at="2026-05-20T10:00:00Z",
@@ -136,7 +136,7 @@ def test_release_notes_retain_markdown_but_remove_protocol_marker():
     manager = UpdateManager(
         current_version="1.4.0",
         urlopen=queued_urlopen(
-            release_payload(body='<!-- paracci-update: {"protocol_version": 3} -->\n## Changes\n\n* Fixed updates')
+            release_payload(body='<!-- paracci-update: {"protocol_version": 4} -->\n## Changes\n\n* Fixed updates')
         ),
     )
     manager.check_now()
@@ -513,7 +513,7 @@ def test_update_banner_and_release_workflow_contracts_are_present():
     assert "window.marked.parse" in js
     assert "_updatesManualCheckPending" in js
     assert "source.content?.textContent" in js
-    assert "This update changes the session protocol. After updating, you will need to establish new sessions with your contacts." in js
+    assert "This update changes message and setup file formats. Upgrade both participants before exchanging new messages; unfinished setup exchanges must be restarted." in js
     assert "function startUpdateStatusPollingWhenAuthorized()" in js
     assert "window.ParacciSecurity?.getLoopbackToken?.()" in js
     assert "window.addEventListener('pywebviewready', startUpdateStatusPollingWhenAuthorized)" in js
@@ -526,11 +526,11 @@ def test_update_banner_and_release_workflow_contracts_are_present():
     assert 'Path("VERSION").read_text' in workflow
     assert 'id="updates-check-btn"' in updates_template
     assert 'id="updates-history-list"' in updates_template
-    assert '<!-- paracci-update: {"protocol_version": 3} -->' in workflow
+    assert '<!-- paracci-update: {"protocol_version": 4} -->' in workflow
 
 
 def test_all_locales_contain_update_warning_text():
-    required = "This update changes the session protocol. After updating, you will need to establish new sessions with your contacts."
+    required = "This update changes message and setup file formats. Upgrade both participants before exchanging new messages; unfinished setup exchanges must be restarted."
     english = json.loads((PACKAGE_ROOT / "app" / "i18n" / "en.json").read_text(encoding="utf-8"))
     assert english["update"]["protocol_warning"] == required
     for locale_file in (PACKAGE_ROOT / "app" / "i18n").glob("*.json"):

@@ -215,15 +215,11 @@ class UIApi:
         self,
         label: str,
         export_path: str,
-        profile: str = "standard",
         session_ttl_sec: int = 0,
-        custom_params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         result = self.services.sessions.create_initiator(
             label=label,
             session_ttl_sec=int(session_ttl_sec),
-            profile=profile,
-            custom_params=custom_params,
         )
         self._write_bytes(export_path, result.auto_export_bytes or b"")
         return {
@@ -367,21 +363,6 @@ class UIApi:
             return
         cached.message.attachments.clear()
         cached.message = None
-
-    # ------------------------------------------------------------------
-    # Reports
-    # ------------------------------------------------------------------
-
-    def cmd_armor_report_load(self, locale: str | None = None) -> dict[str, Any]:
-        report_locale = locale or str(self.services.settings.get("language") or "tr")
-        report_dir = Path(__file__).resolve().parents[1] / "app" / "reports"
-        reports = sorted(report_dir.glob(f"armor_report_*_{report_locale}.md")) or sorted(
-            report_dir.glob("armor_report_*_tr.md")
-        )
-        if not reports:
-            return {"markdown": "No report found.", "path": None}
-        path = reports[-1]
-        return {"markdown": path.read_text(encoding="utf-8"), "path": str(path)}
 
     # ------------------------------------------------------------------
     # Helpers

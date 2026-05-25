@@ -15,7 +15,7 @@ import hashlib
 import struct
 import time
 import gc
-from typing import Tuple, NamedTuple, Optional
+from typing import Tuple, NamedTuple
 from argon2 import PasswordHasher, Type as Argon2Type
 from argon2.low_level import hash_secret_raw, Type as LowLevelArgon2Type
 
@@ -27,7 +27,6 @@ from .constants import (
     LABEL_MSG_XY_V3,
     LABEL_MSG_YX_V3,
     LABEL_NEXT_V3,
-    LABEL_QUANTUM_V3,
     LABEL_SYNC_V3,
     SESSION_MASTER_HKDF_LENGTH_V3,
     TRANSCRIPT_DOMAIN,
@@ -61,9 +60,7 @@ from cryptography.hazmat.primitives.serialization import (
 HKDF_HASH      = SHA512()          # Use SHA-512 for HKDF (PyCA support)
 KEY_LEN        = 32                # ChaCha20 key length (bytes)
 NONCE_LEN      = 12                # ChaCha20-Poly1305 nonce length (bytes)
-QUANTUM_SEED_LEN = 128             # 1024-bit Quantum Seed
-
-# Argon2id Parameters (Selected for Future and Quantum Protection)
+# Argon2id parameters for device passphrase protection only.
 # t=2 (iterations), m=65536 (64MB RAM), p=4 (parallelism)
 ARGON2_TIME    = 2
 ARGON2_MEM     = 65536
@@ -79,7 +76,6 @@ LABEL_SYNC     = LABEL_SYNC_V3
 LABEL_EVO_SEED = LABEL_EVO_SEED_V3
 LABEL_EVO_STEP = LABEL_EVO_STEP_V3
 LABEL_NEXT     = LABEL_NEXT_V3
-LABEL_QUANTUM  = LABEL_QUANTUM_V3
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +211,7 @@ def ecdh(private_key_bytes: bytes, peer_public_key_bytes: bytes) -> bytes:
 def derive_master_key(passphrase: str, salt: bytes) -> bytearray:
     """
     Derives the device master key from the user passphrase.
-    Slows down brute-force attacks using Argon2id (Time-Lock / Quantum Protection).
+    Slows down brute-force attacks against low-entropy device passphrases.
     """
     return bytearray(hash_secret_raw(
         secret=passphrase.encode("utf-8"),
@@ -377,37 +373,18 @@ def derive_session_keys(
     x_public: bytes,
     y_public: bytes,
     extra_salt: bytes = b"",
-    quantum_salt: Optional[bytes] = None,
-    a_time: int = 2,
-    a_mem: int = 65536,
-    a_par: int = 4
 ) -> DerivedKeys:
     """
-    Derives all session keys from ECDH shared_secret + public keys.
-    If quantum_salt is provided, performs quantum-resistant derivation via Argon2id.
+    Derives session keys from the high-entropy hybrid shared secret using HKDF.
     """
     # Deterministic salt: binds the identity of the parties
     salt = hashlib.sha3_256(x_public + y_public + extra_salt).digest()
-
-    input_material = shared_secret
-    if quantum_salt:
-        # Quantum Shield Active: Blend ECDH result with Quantum Seed via Argon2id
-        # This process is intentionally heavy and stops quantum attacks.
-        input_material = hash_secret_raw(
-            secret=shared_secret,
-            salt=quantum_salt + salt,
-            time_cost=a_time,
-            memory_cost=a_mem,
-            parallelism=a_par,
-            hash_len=64, # 512-bit for more entropy
-            type=LowLevelArgon2Type.ID
-        )
 
     # Frozen compatibility length from the original v3 derivation.
     length = SESSION_MASTER_HKDF_LENGTH_V3
 
     master = hkdf_derive(
-        input_material,
+        shared_secret,
         length=length,
         info=DOMAIN_SESSION_MASTER_V3,
         salt=salt,

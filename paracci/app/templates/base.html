@@ -86,8 +86,6 @@
       "clipboard_failed": _("session.clipboard_failed", default="Clipboard access failed."),
       "download_failed": _("session.download_failed", default="Download failed"),
       "file_selected": _("setup.file_selected"),
-      "hw_report_title": _("setup.hw_report_title"),
-      "hw_report_error": _("setup.hw_report_error"),
       "close": _("common.close"),
       "preview_label": _("preview.page_title", filename="") | replace(": ", ""),
       "error": _("common.error"),
@@ -97,7 +95,6 @@
       "attachments_added": _("session.attachments_added", count="{count}"),
       "attachment_attached": _("session.attachment_attached", filename="{filename}"),
       "drop_failed": _("session.drop_failed"),
-      "argon_work_active": _("setup.argon_work_active"),
       "render_error": _("common.render_error"),
       "marked_missing": _("common.marked_missing"),
       "update_available_title": _("update.available_title"),
@@ -137,19 +134,6 @@
       <p id="drop-hint-desc">{{ _('base.drop_desc') }}</p>
     </div>
   </div>
-
-  <div id="argonWorkOverlay" class="argon-overlay" aria-live="polite" aria-hidden="true">
-    <div class="argon-panel">
-      <h3 id="argonWorkText" class="argon-text">{{ _('base.argon_work_active') }}</h3>
-      <div class="progress-bar-container">
-        <div id="argonWorkProgress" class="progress-bar-fill" style="width: 0%;"></div>
-      </div>
-      <div id="argonWorkPercent" class="progress-percent">0%</div>
-      <p id="argonWorkSubtext" class="argon-subtext"></p>
-    </div>
-  </div>
-
-
 
   <div id="download-toast" class="download-toast" role="status" aria-live="polite">
     <div class="toast-icon" aria-hidden="true">
@@ -287,7 +271,6 @@
 
 
         <div class="sidebar-utility-row">
-          <a href="{{ url_for('main.armor_report') }}" class="footer-link">{{ _('nav.armor_report') }}</a>
           <div class="lang-switcher">
             <button type="button" class="lang-btn" popovertarget="lang-switcher-dropdown">{{ g.locale | upper }}</button>
             <div class="lang-dropdown" id="lang-switcher-dropdown" popover="auto">

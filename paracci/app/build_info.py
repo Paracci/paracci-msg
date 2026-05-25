@@ -25,4 +25,4 @@ def _read_app_version() -> str:
 APP_VERSION = _read_app_version()
 
 # Keep this synchronized with core.session.HANDSHAKE_VERSION.
-SESSION_PROTOCOL_VERSION = 3
+SESSION_PROTOCOL_VERSION = 4

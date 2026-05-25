@@ -103,7 +103,6 @@ document.addEventListener('DOMContentLoaded', () => {
             export_filename: configEl.dataset.exportFilename,
             prepare_preview_url: configEl.dataset.preparePreviewUrl,
             capabilities_url: configEl.dataset.capabilitiesUrl,
-            armor_text: configEl.dataset.armorText,
             open_error: configEl.dataset.openError,
             preview_label: configEl.dataset.previewLabel || 'Preview'
         };
@@ -411,8 +410,7 @@ function setupForms() {
         const btn = document.getElementById('seal-submit');
         const origText = btn.textContent;
         btn.disabled = true;
-        btn.textContent = window.PARACCI_CONFIG?.armor_text || 'Processing...';
-        if (window.showArgonWorkOverlay) window.showArgonWorkOverlay('seal');
+        btn.textContent = window.PARACCI_I18N?.processing || 'Processing...';
 
         try {
             const response = await fetch(this.action, { method: 'POST', body: new FormData(this) });
@@ -467,7 +465,6 @@ function setupForms() {
         } finally {
             btn.disabled = false;
             btn.textContent = origText;
-            if (window.hideArgonWorkOverlay) window.hideArgonWorkOverlay();
         }
     });
 
@@ -489,8 +486,7 @@ function setupForms() {
         const btn = document.getElementById('btn-open-msg');
         const origText = btn.textContent;
         btn.disabled = true;
-        btn.textContent = window.PARACCI_CONFIG?.armor_text || 'Processing...';
-        if (window.showArgonWorkOverlay) window.showArgonWorkOverlay('open');
+        btn.textContent = window.PARACCI_I18N?.processing || 'Processing...';
 
         const errorContainer = document.getElementById('dynamic-error-container');
         clearElement(errorContainer);
@@ -524,14 +520,9 @@ function setupForms() {
         } finally {
             btn.disabled = false;
             btn.textContent = origText;
-            if (window.hideArgonWorkOverlay) window.hideArgonWorkOverlay();
         }
     });
 
-    // RESPONDER FORM
-    document.getElementById('responder-form')?.addEventListener('submit', function () {
-        if (window.showArgonWorkOverlay) window.showArgonWorkOverlay('finalize');
-    });
 }
 
 function clearElement(el) {
@@ -881,7 +872,6 @@ async function handleSecureCopy() {
 
 async function handleManualDownload(url, filename) {
     try {
-        if (window.showArgonWorkOverlay) window.showArgonWorkOverlay();
         const response = await fetch(url);
         if (!response.ok) throw new Error(window.PARACCI_I18N?.download_failed || 'Download failed');
         const blob = await response.blob();
@@ -906,7 +896,6 @@ async function handleManualDownload(url, filename) {
                     }
                 } finally {
                     b64 = "";
-                    if (window.hideArgonWorkOverlay) window.hideArgonWorkOverlay();
                 }
             };
             reader.readAsDataURL(blob);
@@ -918,11 +907,9 @@ async function handleManualDownload(url, filename) {
             link.download = filename;
             link.click();
             URL.revokeObjectURL(objectUrl);
-            if (window.hideArgonWorkOverlay) window.hideArgonWorkOverlay();
         }
     } catch (err) {
         console.error('Download error:', err);
-        if (window.hideArgonWorkOverlay) window.hideArgonWorkOverlay();
     }
 }
 

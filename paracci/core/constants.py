@@ -17,6 +17,7 @@ HYBRID_KEM_DOMAIN = b"paracci.hybrid.kem.v1"
 TRANSCRIPT_DOMAIN = b"paracci.transcript.v1"
 HANDSHAKE_FILE_VERSION_V4 = 0x04  # legacy, transcript-unbound
 HANDSHAKE_FILE_VERSION_V5 = 0x05
+HANDSHAKE_FILE_VERSION_V6 = 0x06  # current, transcript-bound without protocol Argon2
 HANDSHAKE_TRANSCRIPT_VERSION = 1
 
 # Frozen legacy domain for reading v3 setup files that used the removed
@@ -29,7 +30,6 @@ LABEL_SYNC_V3 = b"paracci.sync.v3" + LEGACY_V3_LABEL_SUFFIX
 LABEL_EVO_SEED_V3 = b"paracci.evo.seed.v3" + LEGACY_V3_LABEL_SUFFIX
 LABEL_EVO_STEP_V3 = b"paracci.evo.step.v3" + LEGACY_V3_LABEL_SUFFIX
 LABEL_NEXT_V3 = b"paracci.evo.next.v3" + LEGACY_V3_LABEL_SUFFIX
-LABEL_QUANTUM_V3 = b"paracci.quantum.shield.v3" + LEGACY_V3_LABEL_SUFFIX
 
 # Optional entropy for the Windows DPAPI current-user device-key binding layer.
 DPAPI_DEVICE_KEY_ENTROPY_V1 = b"paracci.device_key.dpapi.current_user.v1"

@@ -38,10 +38,10 @@ Coordinates the post-quantum side of the session handshake:
 
 ## [session.py](paracci/core/session.py)
 
-Coordinates the two-party hybrid session setup. Active sessions use the v5 signed plaintext JSON handshake format with transcript-bound hybrid key derivation. Handshake files (initiator and responder setup files) carry signed public metadata, including identity keys, ML-KEM public data, and ciphertext. They are integrity-protected but **not confidential**. Session keys are derived from the hybrid X25519 + ML-KEM shared secret plus the SHA3-256 handshake transcript and evolved deterministically. Legacy v4 and older handshakes are rejected with a migration message requiring a new session.
+Coordinates the two-party hybrid session setup. New sessions use the v6 signed plaintext JSON handshake format with transcript-bound hybrid key derivation and no protocol Argon2 parameters. Handshake files (initiator and responder setup files) carry signed public metadata, including identity keys, ML-KEM public data, and ciphertext. They are integrity-protected but **not confidential**. Session keys are derived from the hybrid X25519 + ML-KEM shared secret plus the SHA3-256 handshake transcript and evolved deterministically. Unfinished v5 and older setup exchanges are rejected with a migration message requiring a new session; completed transcript-bound v5 session metadata remains usable.
 
-- Initiator and responder setup file creation (v5 plaintext JSON format).
-- Legacy v4 and older handshake rejection.
+- Initiator and responder setup file creation (v6 plaintext JSON format).
+- Retired setup-format rejection with completed-session compatibility.
 - Session bonding ceremonies.
 - Serialization of encrypted session metadata stored in the database.
 
@@ -61,7 +61,7 @@ seal_envelope(payload_bytes, session, single_use=True, ttl_seconds=0)
 open_envelope(file_bytes, session)
 ```
 
-Envelopes use the active v2 format (HEADER + payload_len + payload_nonce + payload_ciphertext + sync_nonce + sync_ciphertext) and are encrypted and authenticated using ChaCha20-Poly1305 AEAD and session-derived keys, removing the hardcoded HMAC seal used in v1. Each envelope includes a unique message ID and step identifier to prevent replay attacks and unauthorized access. Legacy v1 envelopes with the former outer seal remain readable by stripping that trailer before parsing, but envelope authenticity and integrity are strictly provided by AEAD authentication.
+Envelopes use the active v3 format (HEADER + payload_len + payload_nonce + payload_ciphertext + sync_nonce + sync_ciphertext) and are encrypted and authenticated using ChaCha20-Poly1305 AEAD directly with a ratchet-derived message key. Each envelope includes a unique message ID and step identifier to prevent replay attacks and unauthorized access. Legacy v1/v2 envelopes remain readable through a version-gated Argon2 compatibility path; v1 files with the former outer seal strip that trailer before parsing, and envelope authenticity and integrity are strictly provided by AEAD authentication.
 
 ## [package.py](paracci/core/package.py)
 
@@ -72,7 +72,7 @@ Handles in-memory assembly and parsing of the encrypted envelope ZIP payload con
 Enforces single-use and TTL guarantees:
 - Manages the SQLite-based `BurnDB` store.
 - Enforces burn semantics: once an envelope is registered as opened, it cannot be opened again on this device. Copies of the envelope on other devices or storage locations are unaffected.
-- Manages device-key storage and unlock. The device key uses fixed Argon2id parameters; configurable workload profiles belong to session and envelope key hardening.
+- Manages device-key storage and unlock. The device key uses fixed Argon2id parameters to protect low-entropy passphrases.
 - Integrates local rate-limiting and lockout durations to block automated brute-force attacks on the local vault.
 - Coordinates secure file-overwrite and deletion routines.
 

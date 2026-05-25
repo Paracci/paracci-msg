@@ -21,7 +21,7 @@
     "iar_marker": "PRO-ORIGINAL-",
     "nav_aria": "Ana navigasyon",
     "home_aria": "Paracci ana sayfa",
-    "argon_work_active": "Maksimum Argon2id Devrede..."
+    "argon_work_active": "Cihaz anahtarı Argon2id ile türetiliyor..."
   },
   "hybrid_kem_legacy_session": "Bu oturum Paracci'nin daha eski bir sürümüyle oluşturulmuş ve kuantum sonrası korumaya sahip değil. Lütfen kişinizden yeni bir oturum başlatmasını isteyin.",
   "hybrid_kem_init_failed": "Kuantum sonrası anahtar oluşturma başarısız oldu. Lütfen tekrar deneyin.",
@@ -31,8 +31,7 @@
     "sessions": "Oturumlar",
     "new": "Yeni",
     "import": "Import",
-    "settings": "Ayarlar",
-    "armor_report": "Zırh Raporu"
+    "settings": "Ayarlar"
   },
   "common": {
     "cancel": "İptal",
@@ -48,9 +47,6 @@
     "error": "Hata",
     "render_error": "Rapor oluşturulamadı.",
     "marked_missing": "Markdown işleyici yüklenemedi."
-  },
-  "armor": {
-    "report_info": "Bu rapor, cihazınızın yüksek maliyetli Argon2id anahtar türetme performansını ölçer. Bu, çevrimdışı kaba kuvvet saldırılarına karşı direnci artırır ancak mutlak kriptografik koruma GARANTİ ETMEZ."
   },
   "index": {
     "title": "oturumlar",
@@ -73,7 +69,7 @@
     "verify_2fa_title": "2FA Doğrulaması",
     "verify_2fa_desc": "Devam etmek için doğrulama uygulamanızdaki 6 haneli kodu girin.",
     "verify_2fa_code": "Doğrulama Kodu",
-    "armor_active": "Maksimum Argon2id Devrede",
+    "armor_active": "Cihaz anahtarı türetiminde Argon2id kullanılır",
     "2fa_enabled_success": "2FA başarıyla etkinleştirildi.",
     "2fa_disabled_success": "2FA devre dışı bırakıldı.",
     "invalid_2fa_code": "Hatalı veya süresi dolmuş 2FA kodu.",
@@ -114,7 +110,7 @@
     "status_strong": "Güçlü",
     "show_pin": "Parolayı Göster",
     "hide_pin": "Parolayı Gizle",
-    "armor_active": "Zırh Devrede",
+    "armor_active": "Cihaz anahtarı korunuyor",
     "algo_argon2": "Argon2id",
     "aes_256": "AES-256-GCM",
     "security_note_before": "Parolanız ",
@@ -184,36 +180,12 @@
     "label_placeholder": "örn: Y ile Güvenli Kanal",
     "ttl": "Oturum ömrü",
     "ttl_hint": "Bu süre sonunda oturum tamamen kapanır.",
-    "security_title": "Güvenlik Seviyesi (Zaman Kilidi)",
-    "standard": "Standard",
-    "standard_desc": "Hızlı ve güvenli. Düşük donanımlar için ideal.",
-    "paranoid": "Paranoid",
-    "paranoid_desc": "Varsayılan denge. 1sn zaman kilidi koruması.",
-    "custom": "Custom",
-    "custom_desc": "Özel parametreler. Kendi zırhını kendin ör.",
-    "custom_title": "Özel Güvenlik Parametreleri (Argon2id)",
-    "est_time_p1": "Tahmini Süre: ",
-    "est_time_p2": "s",
-    "seal_info_title": "Mühürleme Bilgisi:",
-    "seal_info_desc_p1": "Bu ayarlar doğrulanmış Initiator setup meta verilerine yazılır. Kenetlenme kurulduktan sonra ",
-    "seal_info_desc_bold": "değiştirilemez",
-    "argon_t": "Zaman (t)",
-    "argon_m": "Bellek (MB)",
-    "argon_p": "Paralellik (p)",
-    "hw_advice": "Donanım Tavsiyesi:",
-    "hw_advice_desc_p1": "Yerel testlerinize göre bu profil yaklaşık ",
-    "hw_advice_example": "3.3 dakika",
-    "hw_advice_desc_p2": " sürecektir.",
-    "security_hint": "Bu ayar, mesajların açılma hızını ve kaba kuvvet saldırı direncini belirler.",
-    "view_benchmark": "Son Donanım Test Raporunu Görüntüle",
     "create_btn": "Oturum oluştur ve dosyayı indir",
     "session_color": "Oturum Rengi",
     "pick_color": "Paletten seç",
     "color_hint": "Bu oturum için bir renk seçin veya özel bir hex kodu girin.",
     "title": "Yeni Oturum",
     "subtitle": "Yeni bir dosya değişim oturumu oluşturun.",
-    "hw_report_title": "Donanım Kalibrasyon Raporu",
-    "hw_report_error": "Rapor alınırken bir hata oluştu.",
     "import_title": "dosya import",
     "import_subtitle_p1": "Bir ",
     "import_subtitle_p2": " oturum dosyasını yükle.",
@@ -232,17 +204,13 @@
     "import_btn": "Import et",
     "import_initiator_title": "Yeni Oturuma Katıl",
     "import_initiator_subtitle": "Initiator dosyasını yükleyerek oturuma katılın. Bu dosya gizli mesaj içeriği değil, doğrulanmış herkese açık meta veriler içerir.",
-    "error_responder_redirect": "Bu bir Responder (yanıt) dosyasıdır. Lütfen bu dosyayı ilgili oturumun içine girerek yükleyin.",
-    "maximum": "Maksimum",
-    "maximum_desc": "Yüksek maliyetli Argon2id anahtar türetme. Çevrimdışı kaba kuvvet saldırılarına karşı direnci artırır. Mutlak kriptografik koruma GARANTİ ETMEZ. Yol haritası: Hibrit KEM (ML-KEM/Kyber) entegrasyonu gelecek bir sürüm için planlanmaktadır.",
-    "argon_work_active": "Maksimum Argon2id Devrede..."
+    "error_responder_redirect": "Bu bir Responder (yanıt) dosyasıdır. Lütfen bu dosyayı ilgili oturumun içine girerek yükleyin."
   },
   "session": {
     "not_found": "Oturum bulunamadı.",
     "not_active": "Oturum aktif değil.",
     "label_required": "Oturum adı boş olamaz.",
     "invalid_ttl": "Geçersiz süre değeri.",
-    "invalid_params": "Geçersiz özel parametreler.",
     "create_error": "Oturum oluşturulamadı: {error}",
     "init_success": "Oturum başlatıldı. Initiator dosyası indiriliyor...",
     "import_file_required": "Lütfen bir .paracci dosyası seçin.",
@@ -282,7 +250,7 @@
     "safety_code_mismatch": "Güvenlik kodu eşleşmiyor. İki taraftaki kod aynı olmadan bu oturumu kullanmayın.",
     "safety_unverified": "Bu oturum kullanılmadan önce güvenlik kodu doğrulanmalıdır.",
     "legacy_handshake_blocked": "Bu oturum eski imzasız el sıkışma ile oluşturulmuş ve güvenle kullanılamaz. Yeni bir oturum oluşturun.",
-    "legacy_handshake_version": "Bu oturum Paracci'nin daha eski bir sürümüyle kurulmuş ve kimlik bağlamasına sahip değil. Lütfen yeni bir oturum başlatın.",
+    "legacy_handshake_version": "Bu kurulum dosyası kullanımdan kaldırılmış bir anahtar güçlendirme biçimi kullanıyor. Lütfen yeni bir oturum başlatın.",
     "legacy_session_requires_new": "Bu oturum kimlik bağlaması olmadan oluşturulmuş. Lütfen kişinizden yeni bir oturum başlatmasını isteyin.",
     "state_unverified": "Doğrulanmadı",
     "msg_opened": "📨 Mesaj açıldı",
@@ -392,9 +360,6 @@
     "nickname_hint": "Sadece sizin tarafınızda, uygulamayı kimin kullandığını anlamak için gösterilir.",
     "avatar_label": "Avatar Rengi"
   },
-  "benchmark": {
-    "not_found": "Henüz bir benchmark raporu oluşturulmamış."
-  },
   "preview": {
     "not_found_title": "Önizleme süresi dolmuş veya dosya bulunamadı.",
     "not_found_desc": "Güvenlik nedeniyle dosyalar RAM'de kısa süreli tutulur.",
@@ -448,8 +413,8 @@
     "available_title": "Güncelleme mevcut",
     "version_line": "Mevcut {current} - Yeni {latest}",
     "size": "Boyut: {size}",
-    "protocol_warning_title": "Oturum protokolü değişikliği",
-    "protocol_warning": "Bu güncelleme oturum protokolünü değiştirir. Güncellemeden sonra kişilerinizle yeni oturumlar kurmanız gerekecektir.",
+    "protocol_warning_title": "Dosya biçimi değişikliği",
+    "protocol_warning": "Bu güncelleme ileti ve kurulum dosyası biçimlerini değiştirir. Yeni iletiler gönderilmeden önce her iki katılımcı da güncellenmelidir; tamamlanmamış kurulum alışverişleri yeniden başlatılmalıdır.",
     "protocol_unknown": "Bu sürüm oturum protokolü uyumluluk bilgisi sağlamıyor. Güncellemeden sonra kişilerinizle yeni oturumlar kurmanız gerekebilir.",
     "acknowledge": "Devam etmeden önce anlıyorum",
     "update_now": "Şimdi Güncelle",

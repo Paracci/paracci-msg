@@ -29,7 +29,7 @@ python -m pip_audit -r requirements.lock -r requirements-dev.lock
 
 ### 1. Cryptography Primitives
 - Key generation, signature validation, and shared secret derivation (X25519).
-- Key derivation and hardening (HKDF-SHA512, HKDF-SHA256, and Argon2id profiles).
+- Key derivation and hardening (HKDF-SHA512/HKDF-SHA256 current protocol keys, fixed Argon2id passphrase derivation, and legacy envelope-read compatibility).
 - Symmetric envelope encryption and tamper/modification detection (ChaCha20-Poly1305 AEAD).
 - Process memory sanitation (wipe buffers and arrays).
 
@@ -41,7 +41,8 @@ python -m pip_audit -r requirements.lock -r requirements-dev.lock
 
 ### 3. Envelope Protocol
 - Sealing and opening `.paracci` message packages.
-- Rate limits, step-based evolution ratchets, and anti-replay counters.
+- Rate limits, step-based evolution ratchets, deliberate out-of-order rejection, and anti-replay counters.
+- Legacy v1/v2 message reads and current v3 direct message-key encryption.
 - Expiration checks and Time-To-Live (TTL) enforcement.
 - Safe assembly/extraction of zipped payload contents (limit verification).
 

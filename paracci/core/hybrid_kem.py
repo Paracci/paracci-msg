@@ -14,7 +14,7 @@ from .quantum_kem import (
     kem_generate_keypair,
 )
 
-HYBRID_HANDSHAKE_VERSION = 3
+HYBRID_HANDSHAKE_VERSION = 4
 SIGNED_X25519_HANDSHAKE_VERSION = 2
 LEGACY_HANDSHAKE_VERSION = 1
 
@@ -117,7 +117,7 @@ def initiator_kem_complete(
 
 def validate_hybrid_handshake_payload(payload: dict, *, expected_kind: str) -> None:
     """
-    Validate future v3 hybrid handshake metadata and reject legacy setup files.
+    Validate the current hybrid handshake metadata and reject legacy setup files.
 
     expected_kind must be "initiator" or "responder"; the helper stays isolated
     in Phase 4B and is intended to be called from session.py in Phase 4C.

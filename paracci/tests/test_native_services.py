@@ -29,7 +29,7 @@ def make_active_services_pair(tmp_path):
     x = make_services(tmp_path / "x")
     y = make_services(tmp_path / "y")
 
-    created = x.sessions.create_initiator("X to Y", profile="standard")
+    created = x.sessions.create_initiator("X to Y")
     imported = y.sessions.import_handshake(created.auto_export_bytes, "Y to X")
     finalized = x.sessions.import_handshake(imported.auto_export_bytes, "unused")
     x.sessions.confirm_safety(finalized.session_id_hex, finalized.safety_code)
@@ -52,12 +52,13 @@ def legacy_package(text: str, allow_download):
 def test_native_services_full_message_roundtrip(tmp_path):
     x, y, x_session_id, y_session_id = make_active_services_pair(tmp_path)
 
-    msg_bytes, _ = x.messages.seal_message(x_session_id, "Hello **Y**", [], False, 0)
+    msg_bytes, filename = x.messages.seal_message(x_session_id, "Hello **Y**", [], False, 0)
     opened = y.messages.open_message(y_session_id, msg_bytes)
 
     assert opened.text == "Hello **Y**"
     assert opened.single_use is True
     assert opened.allow_download is False
+    assert filename.startswith("msg_step_000000_")
 
 
 @oqs_required
@@ -85,29 +86,22 @@ def test_native_bound_header_policy_overrides_package_metadata(tmp_path, monkeyp
     assert opened.attachments[0].allow_download is False
 
 
-@pytest.mark.parametrize("legacy_v1", [False, True])
 @pytest.mark.parametrize("metadata_allow_download", [False, True, None])
 @oqs_required
-def test_native_marker_free_legacy_envelope_uses_package_policy(
+def test_native_marker_free_current_envelope_uses_package_policy(
     tmp_path,
     monkeypatch,
-    legacy_v1,
     metadata_allow_download,
 ):
     x, y, x_session_id, y_session_id = make_active_services_pair(tmp_path)
     with monkeypatch.context() as patch:
         patch.setattr(envelope_module, "FLAG_HAS_DOWNLOAD_POLICY", 0)
-        if legacy_v1:
-            patch.setattr(envelope_module, "FILE_VERSION", envelope_module.LEGACY_FILE_VERSION)
         patch.setattr(
             service_module,
             "create_package",
             lambda text, files, allow_download: legacy_package(text, metadata_allow_download),
         )
         msg_bytes, _ = x.messages.seal_message(x_session_id, "Legacy policy", [], False, 0)
-
-    if legacy_v1:
-        msg_bytes += b"\xff" * envelope_module.LEGACY_SEAL_SIZE
 
     opened = y.messages.open_message(y_session_id, msg_bytes)
     expected = True if metadata_allow_download is None else metadata_allow_download

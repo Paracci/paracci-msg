@@ -88,7 +88,7 @@ def test_ui_api_session_roundtrip_and_attachment_cache(tmp_path):
 
     created = x.dispatch(
         "session_create",
-        {"label": "X", "export_path": str(init_path), "profile": "standard"},
+        {"label": "X", "export_path": str(init_path)},
     )
     imported = y.dispatch(
         "session_import",
@@ -119,6 +119,7 @@ def test_ui_api_session_roundtrip_and_attachment_cache(tmp_path):
         },
     )
     assert msg_path.exists()
+    assert sealed["filename"].startswith("msg_step_000000_")
     assert sealed["filename"].endswith(".paracci")
 
     opened = y.dispatch(

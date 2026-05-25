@@ -461,12 +461,9 @@
      data-export-filename="session_{{ sid[:8] }}.paracci"
      data-prepare-preview-url="{{ url_for('main.api_prepare_preview') }}"
      data-capabilities-url="{{ url_for('main.api_capabilities') }}"
-     data-armor-text="{{ _('base.argon_work_active') }}"
      data-open-error="{{ _('session.invalid_file') }}"
      data-preview-label="{{ _('preview.page_title', filename='') | replace(': ', '') }}"
-     data-security-t="{{ meta.evo_config.argon2_time }}"
-     data-security-m="{{ meta.evo_config.argon2_mem }}"
-     data-security-p="{{ meta.evo_config.argon2_par }}">
+     >
 </div>
 <script src="{{ url_for('static', filename='js/session.js') }}"></script>
 

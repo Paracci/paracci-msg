@@ -2,9 +2,8 @@
 Paracci — core/evolution.py  (v2.1)
 Evolution chain — message count based, bond_seed system.
 
-CHANGES v2.1:
-  - Argon2id parameters (time, mem, par) added to EvoConfig.
-  - Support for customizable security profiles added.
+Current configurations contain only lifetime metadata. Historical Argon2
+parameters are parsed only so queued v1/v2 message envelopes remain readable.
 """
 
 import struct
@@ -22,34 +21,27 @@ from .crypto import (
 
 EVO_UNLIMITED = 0
 
-# Security Profiles: Argon2id workload settings (Time-Lock)
-# t: time_cost (iterations), m: memory_cost (KB), p: parallelism
-SECURITY_PROFILES = {
-    "standard": {"t": 2, "m": 65536, "p": 2},
-    "paranoid": {"t": 8, "m": 262144, "p": 4},
-    "quantum": {"t": 256, "m": 2097152, "p": 2},
-}
-
-MIN_ARGON2_TIME = 1
-MIN_ARGON2_MEM_KB = 16384
-MIN_ARGON2_PAR = 1
-MAX_ARGON2_TIME = max(profile["t"] for profile in SECURITY_PROFILES.values())
-MAX_ARGON2_MEM_KB = max(profile["m"] for profile in SECURITY_PROFILES.values())
-MAX_ARGON2_PAR = max(profile["p"] for profile in SECURITY_PROFILES.values())
+# Historical envelope formats stored Argon2 parameters in session metadata.
+# Keep bounded parsing solely for decrypting queued v1/v2 envelopes.
+MIN_LEGACY_ARGON2_TIME = 1
+MIN_LEGACY_ARGON2_MEM_KB = 16384
+MIN_LEGACY_ARGON2_PAR = 1
+MAX_LEGACY_ARGON2_TIME = 256
+MAX_LEGACY_ARGON2_MEM_KB = 2097152
+MAX_LEGACY_ARGON2_PAR = 4
 MAX_SESSION_TTL_SEC = 2592000
 MAX_EVO_STEP = 100000
 MAX_UINT32 = 0xFFFFFFFF
+CURRENT_EVO_CONFIG_PREFIX = b"\x03\x00"
 
 
 class EvoConfig(NamedTuple):
-    """
-    v2.1: TTL, Created, and Argon2id workload parameters.
-    """
+    """Session lifetime plus optional legacy envelope-read parameters."""
     session_ttl_sec: int
     created_at:      int
-    argon2_time:     int
-    argon2_mem:      int
-    argon2_par:      int
+    legacy_argon2_time: Optional[int] = None
+    legacy_argon2_mem:  Optional[int] = None
+    legacy_argon2_par:  Optional[int] = None
 
 
 class EvoStep(NamedTuple):
@@ -76,18 +68,18 @@ def _require_uint32(value, label: str) -> int:
     return value
 
 
-def validate_argon2_params(time_cost: int, memory_cost: int, parallelism: int) -> dict:
-    """Validates Argon2id workload settings. memory_cost is measured in KB."""
+def validate_legacy_argon2_params(time_cost: int, memory_cost: int, parallelism: int) -> dict:
+    """Validate compatibility metadata for historical Argon2-encrypted envelopes."""
     time_cost = _require_int(time_cost, "Argon2 time cost")
     memory_cost = _require_int(memory_cost, "Argon2 memory cost")
     parallelism = _require_int(parallelism, "Argon2 parallelism")
 
-    if not (MIN_ARGON2_TIME <= time_cost <= MAX_ARGON2_TIME):
-        raise EvoConfigValidationError("Argon2 time cost is outside the supported range.")
-    if not (MIN_ARGON2_MEM_KB <= memory_cost <= MAX_ARGON2_MEM_KB):
-        raise EvoConfigValidationError("Argon2 memory cost is outside the supported range.")
-    if not (MIN_ARGON2_PAR <= parallelism <= MAX_ARGON2_PAR):
-        raise EvoConfigValidationError("Argon2 parallelism is outside the supported range.")
+    if not (MIN_LEGACY_ARGON2_TIME <= time_cost <= MAX_LEGACY_ARGON2_TIME):
+        raise EvoConfigValidationError("Legacy Argon2 time cost is outside the supported range.")
+    if not (MIN_LEGACY_ARGON2_MEM_KB <= memory_cost <= MAX_LEGACY_ARGON2_MEM_KB):
+        raise EvoConfigValidationError("Legacy Argon2 memory cost is outside the supported range.")
+    if not (MIN_LEGACY_ARGON2_PAR <= parallelism <= MAX_LEGACY_ARGON2_PAR):
+        raise EvoConfigValidationError("Legacy Argon2 parallelism is outside the supported range.")
 
     return {"t": time_cost, "m": memory_cost, "p": parallelism}
 
@@ -109,17 +101,22 @@ def validate_evo_step(step: int) -> int:
 def validate_evo_config(config: EvoConfig) -> EvoConfig:
     ttl = validate_session_ttl(config.session_ttl_sec)
     created_at = _require_uint32(config.created_at, "EvoConfig created_at")
-    params = validate_argon2_params(
-        config.argon2_time,
-        config.argon2_mem,
-        config.argon2_par,
+    legacy_values = (
+        config.legacy_argon2_time,
+        config.legacy_argon2_mem,
+        config.legacy_argon2_par,
     )
+    if all(value is None for value in legacy_values):
+        return EvoConfig(ttl, created_at)
+    if any(value is None for value in legacy_values):
+        raise EvoConfigValidationError("Legacy Argon2 compatibility parameters are incomplete.")
+    params = validate_legacy_argon2_params(*legacy_values)
     return EvoConfig(
         session_ttl_sec=ttl,
         created_at=created_at,
-        argon2_time=params["t"],
-        argon2_mem=params["m"],
-        argon2_par=params["p"],
+        legacy_argon2_time=params["t"],
+        legacy_argon2_mem=params["m"],
+        legacy_argon2_par=params["p"],
     )
 
 
@@ -195,47 +192,43 @@ def seconds_until_expiry(config: EvoConfig) -> int:
 def make_evo_config(
     session_ttl_sec: int = EVO_UNLIMITED,
     created_at: Optional[int] = None,
-    argon2_time: int = 2,
-    argon2_mem: int = 65536,
-    argon2_par: int = 4,
 ) -> EvoConfig:
     """Creates a new evolution configuration (EvoConfig)."""
     if created_at is None:
         created_at = int(time.time())
-    return validate_evo_config(EvoConfig(
-        session_ttl_sec=session_ttl_sec,
-        created_at=created_at,
-        argon2_time=argon2_time,
-        argon2_mem=argon2_mem,
-        argon2_par=argon2_par
-    ))
+    return validate_evo_config(EvoConfig(session_ttl_sec, created_at))
 
 
 def serialize_evo_config(config: EvoConfig) -> bytes:
     """Converts the EvoConfig object to binary data."""
     config = validate_evo_config(config)
-    # v2.1: TTL(4) + Created(4) + Time(2) + Mem(4) + Par(4) = 18 bytes
-    return struct.pack(">IIHII", 
-        config.session_ttl_sec, 
-        config.created_at,
-        config.argon2_time,
-        config.argon2_mem,
-        config.argon2_par
-    )
+    if config.legacy_argon2_time is not None:
+        return struct.pack(
+            ">IIHII",
+            config.session_ttl_sec,
+            config.created_at,
+            config.legacy_argon2_time,
+            config.legacy_argon2_mem,
+            config.legacy_argon2_par,
+        )
+    return CURRENT_EVO_CONFIG_PREFIX + struct.pack(">II", config.session_ttl_sec, config.created_at)
 
 
 def deserialize_evo_config(data: bytes) -> EvoConfig:
     """Converts binary data to an EvoConfig object."""
+    if data.startswith(CURRENT_EVO_CONFIG_PREFIX) and len(data) >= 10:
+        ttl, created = struct.unpack(">II", data[2:10])
+        return validate_evo_config(EvoConfig(ttl, created))
     if len(data) >= 18:
-        # v2.1 format: TTL(4), Created(4), Time(2), Mem(4), Par(4)
+        # Historical protocol-Argon2 format.
         ttl, created, a_time, a_mem, a_par = struct.unpack(">IIHII", data[:18])
         return validate_evo_config(EvoConfig(ttl, created, a_time, a_mem, a_par))
     elif len(data) >= 16:
-        # v1 compatibility: if 4 fields exist, ttl=3rd, created_at=4th
+        # Earlier files used the fixed legacy workload when no parameters existed.
         _a, _b, ttl, created = struct.unpack(">IIII", data[:16])
         return validate_evo_config(EvoConfig(ttl, created, 2, 65536, 4))
     elif len(data) >= 8:
-        # v2.0 format (fallback)
+        # Historical v2.0 format.
         ttl, created = struct.unpack(">II", data[:8])
         return validate_evo_config(EvoConfig(ttl, created, 2, 65536, 4))
     raise ValueError("EvoConfig data too short.")
