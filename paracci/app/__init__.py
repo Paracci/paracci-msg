@@ -10,6 +10,7 @@ from pathlib import Path
 from flask import Flask
 from .i18n_manager import i18n
 from core.burn import BurnDB
+from core.crypto import wipe
 
 # Project root directory: paracci/
 # _MEIPASS check for PyInstaller compatibility
@@ -90,6 +91,18 @@ def create_app() -> Flask:
     if not loopback_token or not loopback_port:
         raise RuntimeError("Paracci loopback security token and port must be set before app initialization.")
     loopback_origin = f"http://{loopback_host}:{loopback_port}"
+    if db is not None:
+        db.release_device_key()
+    for pending in PENDING_UNLOCKS.values():
+        pending_db = pending.get("db")
+        if pending_db is not None:
+            pending_db.release_device_key()
+        pending_key = pending.get("device_key")
+        if isinstance(pending_key, bytearray):
+            wipe(pending_key)
+    PENDING_UNLOCKS.clear()
+    if isinstance(device_key, bytearray):
+        wipe(device_key)
     device_key = None
     active_client_id = None
 

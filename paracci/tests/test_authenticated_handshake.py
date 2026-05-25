@@ -218,8 +218,8 @@ def test_safety_confirmation_rejects_wrong_code():
 
 
 def test_identity_keypair_persists_encrypted_in_device_metadata(tmp_path):
-    db = BurnDB(tmp_path / "sessions.db")
     device_key = random_bytes(32)
+    db = BurnDB(tmp_path / "sessions.db", device_key=device_key)
 
     first = get_or_create_device_identity(db, device_key)
     second = get_or_create_device_identity(db, device_key)

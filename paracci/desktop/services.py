@@ -352,13 +352,25 @@ class DeviceService:
 
     def initialize(self, pin: str) -> bytearray:
         self.device_binding_warning = None
-        self.device_key = initialize_device_with_binding(self.db, pin)
+        device_key = initialize_device_with_binding(self.db, pin)
+        try:
+            self._activate_keyed_db(device_key)
+        except Exception:
+            wipe(device_key)
+            raise
+        self.device_key = device_key
         self.device_binding_warning = consume_device_binding_warning()
         return self.device_key
 
     def unlock(self, pin: str) -> bytearray:
         self.device_binding_warning = None
-        self.device_key = unlock_device_with_binding(self.db, pin)
+        device_key = unlock_device_with_binding(self.db, pin)
+        try:
+            self._activate_keyed_db(device_key)
+        except Exception:
+            wipe(device_key)
+            raise
+        self.device_key = device_key
         self.device_binding_warning = consume_device_binding_warning()
         self._verify_stored_sessions_decryptable()
         return self.device_key
@@ -367,7 +379,14 @@ class DeviceService:
         if self.device_key is not None:
             wipe(self.device_key)
         self.device_key = None
+        self.db.release_device_key()
+        self.db = BurnDB(self.data_dir / "sessions.db")
         self.device_binding_warning = None
+
+    def _activate_keyed_db(self, device_key: bytes | bytearray) -> None:
+        keyed_db = self.db.with_device_key(device_key)
+        self.db.release_device_key()
+        self.db = keyed_db
 
     def ensure_unlocked(self) -> bytearray:
         if self.device_key is None:
@@ -378,7 +397,9 @@ class DeviceService:
         device_key = self.ensure_unlocked()
         return get_or_create_device_identity(self.db, device_key)
 
-    def is_2fa_enabled(self) -> bool:
+    def is_2fa_enabled(self) -> bool | None:
+        if not self.is_unlocked:
+            return None
         return self.db.is_2fa_enabled()
 
     def new_2fa_secret(self) -> str:
@@ -423,8 +444,7 @@ class DeviceService:
                     continue
                 deserialize_session_meta(stored[2], self.device_key)
         except Exception as exc:
-            wipe(self.device_key)
-            self.device_key = None
+            self.lock()
             raise DeviceError(
                 "Device unlocked, but stored session metadata could not be decrypted."
             ) from exc

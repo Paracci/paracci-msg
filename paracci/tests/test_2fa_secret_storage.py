@@ -1,4 +1,5 @@
 import sys
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -15,7 +16,7 @@ TOTP_SECRET = "JBSWY3DPEHPK3PXP"
 def _initialized_db(tmp_path):
     db = BurnDB(tmp_path / "sessions.db")
     device_key = init_device(db, PASS_PHRASE)
-    return db, device_key
+    return db.with_device_key(device_key), device_key
 
 
 def test_set_2fa_secret_encrypts_metadata(tmp_path):
@@ -30,8 +31,14 @@ def test_set_2fa_secret_encrypts_metadata(tmp_path):
 
 
 def test_legacy_plaintext_2fa_secret_is_migrated(tmp_path):
-    db, device_key = _initialized_db(tmp_path)
-    db.set_device_meta("2fa_secret", TOTP_SECRET)
+    db = BurnDB(tmp_path / "sessions.db")
+    device_key = init_device(db, PASS_PHRASE)
+    with sqlite3.connect(db.db_path) as conn:
+        conn.execute(
+            "INSERT INTO device_meta (key, value) VALUES (?, ?)",
+            ("2fa_secret", TOTP_SECRET),
+        )
+    db = db.with_device_key(device_key)
 
     assert db.get_2fa_secret(device_key) == TOTP_SECRET
 

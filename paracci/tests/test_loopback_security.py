@@ -146,12 +146,9 @@ def test_stage_attachment_rejects_web_submitted_path_without_disk_read(tmp_path,
     ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
     client = flask_app.test_client()
     bootstrap(client)
-    from core.burn import init_device
     import app.routes as routes_module
 
-    ag_app.device_key = init_device(ag_app.db, "Correct-Horse-95175328")
-    with client.session_transaction(base_url=ORIGIN) as sess:
-        ag_app.active_client_id = sess["paracci_client_id"]
+    _unlock_test_client(ag_app, client)
 
     def fail_if_called(_path):
         raise AssertionError("web-submitted paths must not reach disk reads")
@@ -280,11 +277,7 @@ def test_second_bootstrapped_client_cannot_reuse_unlocked_device_key(tmp_path, m
     bootstrap(client_one)
     bootstrap(client_two)
 
-    from core.burn import init_device
-
-    ag_app.device_key = init_device(ag_app.db, "Correct-Horse-95175328")
-    with client_one.session_transaction(base_url=ORIGIN) as sess:
-        ag_app.active_client_id = sess["paracci_client_id"]
+    _unlock_test_client(ag_app, client_one)
 
     response = client_two.get("/", base_url=ORIGIN, headers={"Host": HOST})
 
@@ -354,6 +347,7 @@ def _unlock_test_client(ag_app, client):
     from core.burn import init_device
 
     ag_app.device_key = init_device(ag_app.db, "Correct-Horse-95175328")
+    ag_app.db = ag_app.db.with_device_key(ag_app.device_key)
     with client.session_transaction(base_url=ORIGIN) as sess:
         ag_app.active_client_id = sess["paracci_client_id"]
 
@@ -481,6 +475,7 @@ def test_file_activation_queues_native_message_after_2fa_unlock(tmp_path, monkey
         headers=auth_headers(client),
     )
     assert first_step.headers["Location"].endswith("/unlock/2fa/verify")
+    assert ag_app.db.has_device_key is False
 
     second_step = client.post(
         "/unlock/2fa/verify",
