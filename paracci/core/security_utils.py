@@ -1,24 +1,61 @@
-import unicodedata
 import re
+import unicodedata
+from urllib.parse import urlparse
+
+_URL_PATTERN = re.compile(r'https?://[^\s<>"]+|www\.[^\s<>"]+')
+_IDN_DOT_TRANSLATION = str.maketrans({
+    '\u3002': '.',
+    '\uff0e': '.',
+    '\uff61': '.',
+})
+
+
+def _extract_urls(text: str) -> list[str]:
+    return _URL_PATTERN.findall(text)
+
+
+def _script_for_letter(char: str) -> str | None:
+    if not unicodedata.category(char).startswith('L'):
+        return None
+    name = unicodedata.name(char, '')
+    return name.split()[0] if name else None
+
+
+def _decoded_label(label: str) -> str:
+    if label.lower().startswith('xn--'):
+        try:
+            return label.encode('ascii').decode('idna')
+        except UnicodeError:
+            return label
+    return label
+
+
+def _url_has_mixed_script_label(url: str) -> bool:
+    parse_target = f'//{url}' if url.startswith('www.') else url
+    try:
+        hostname = urlparse(parse_target).hostname
+    except ValueError:
+        return False
+    if not hostname:
+        return False
+
+    hostname = hostname.translate(_IDN_DOT_TRANSLATION)
+    for label in hostname.split('.'):
+        scripts = {
+            script
+            for char in _decoded_label(label)
+            if (script := _script_for_letter(char)) is not None
+        }
+        if len(scripts) > 1:
+            return True
+    return False
+
 
 def is_homograph_attack(text: str) -> bool:
     """
-    Simple homograph attack detection. 
-    Returns True if there are mixed scripts (like Latin + Cyrillic) in the text.
+    Return True if a URL in text has a domain label containing mixed scripts.
     """
-    scripts = set()
-    for char in text:
-        cat = unicodedata.category(char)
-        if cat.startswith('L'): # Letter
-            try:
-                # Get script name (e.g., 'LATIN', 'CYRILLIC')
-                script = unicodedata.name(char).split()[0]
-                scripts.add(script)
-            except:
-                pass
-    
-    # If there are multiple scripts and one of them is Latin, consider it suspicious
-    return len(scripts) > 1 and 'LATIN' in scripts
+    return any(_url_has_mixed_script_label(url) for url in _extract_urls(text))
 
 def has_bidi_controls(text: str) -> bool:
     """
@@ -38,12 +75,9 @@ def scan_text_for_security(text: str) -> dict:
     """
     Scans text for security risks.
     """
-    # Find URLs
-    urls = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', text)
-    
     risks = []
-    for url in urls:
-        if is_homograph_attack(url):
+    for url in _extract_urls(text):
+        if _url_has_mixed_script_label(url):
             risks.append({"type": "homograph", "target": url})
             
     if has_bidi_controls(text):
