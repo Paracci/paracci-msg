@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -14,14 +16,17 @@ sys.path.insert(0, str(PACKAGE_ROOT))
 
 from app.build_info import APP_VERSION, SESSION_PROTOCOL_VERSION
 from core.session import HANDSHAKE_VERSION
+import desktop.updater as updater_module
 from desktop.updater import (
     CHECKSUM_FILENAME,
     LATEST_RELEASE_URL,
     RECENT_RELEASES_URL,
+    SIGNATURE_FILENAME,
     UpdateManager,
     expected_checksum,
     extract_protocol_version,
     is_newer_version,
+    verify_checksum_signature,
 )
 
 
@@ -30,6 +35,16 @@ HOST = "127.0.0.1:18080"
 ORIGIN = f"http://{HOST}"
 INSTALLER_BYTES = b"verified installer payload"
 INSTALLER_NAME = "Paracci-Setup-v1.4.2.exe"
+CHECKSUM_URL = "https://github.com/Paracci/paracci-msg/releases/download/v1.4.2/SHA256SUMS.txt"
+SIGNATURE_URL = "https://github.com/Paracci/paracci-msg/releases/download/v1.4.2/SHA256SUMS.txt.sig"
+TEST_SIGNING_PRIVATE_KEY = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
+TEST_SIGNING_PUBLIC_KEY = TEST_SIGNING_PRIVATE_KEY.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+COMMITTED_SIGNING_PUBLIC_KEY = updater_module.UPDATE_SIGNING_PUBLIC_KEY
+
+
+@pytest.fixture(autouse=True)
+def use_test_release_signing_key(monkeypatch):
+    monkeypatch.setattr(updater_module, "UPDATE_SIGNING_PUBLIC_KEY", TEST_SIGNING_PUBLIC_KEY)
 
 
 class FakeResponse(io.BytesIO):
@@ -46,6 +61,7 @@ def release_payload(
     *,
     body='<!-- paracci-update: {"protocol_version": 4} --> Notes',
     installer=True,
+    signature=True,
     version="1.4.2",
     published_at="2026-05-20T10:00:00Z",
 ):
@@ -61,10 +77,18 @@ def release_payload(
         assets.append(
             {
                 "name": CHECKSUM_FILENAME,
-                "browser_download_url": "https://github.com/Paracci/paracci-msg/releases/download/v1.4.2/SHA256SUMS.txt",
+                "browser_download_url": CHECKSUM_URL,
                 "size": 100,
             }
         )
+        if signature:
+            assets.append(
+                {
+                    "name": SIGNATURE_FILENAME,
+                    "browser_download_url": SIGNATURE_URL,
+                    "size": 64,
+                }
+            )
     return {
         "tag_name": f"v{version}",
         "assets": assets,
@@ -81,19 +105,30 @@ def queued_urlopen(
     installer_bytes=INSTALLER_BYTES,
     checksum_bytes=INSTALLER_BYTES,
     checksum_filename=INSTALLER_NAME,
+    checksum_manifest=None,
+    signature_bytes=None,
+    signing_key=TEST_SIGNING_PRIVATE_KEY,
+    requested_urls=None,
 ):
     checksum = hashlib.sha256(checksum_bytes).hexdigest()
+    manifest = (
+        checksum_manifest
+        if checksum_manifest is not None
+        else f"{checksum}  {checksum_filename}\n".encode("utf-8")
+    )
+    signature = signature_bytes if signature_bytes is not None else signing_key.sign(manifest)
     responses = {
         LATEST_RELEASE_URL: json.dumps(payload).encode("utf-8"),
-        "https://github.com/Paracci/paracci-msg/releases/download/v1.4.2/SHA256SUMS.txt": (
-            f"{checksum}  {checksum_filename}\n".encode("utf-8")
-        ),
+        CHECKSUM_URL: manifest,
+        SIGNATURE_URL: signature,
         "https://github.com/Paracci/paracci-msg/releases/download/v1.4.2/" + INSTALLER_NAME: installer_bytes,
     }
 
     def opener(request, timeout):
         assert timeout <= 5
         url = request.full_url
+        if requested_urls is not None:
+            requested_urls.append(url)
         return FakeResponse(responses[url], url)
 
     return opener
@@ -120,6 +155,14 @@ def test_version_comparison(current, latest, expected):
 def test_build_protocol_version_tracks_active_handshake():
     assert APP_VERSION == (REPO_ROOT / "VERSION").read_text(encoding="ascii").strip()
     assert SESSION_PROTOCOL_VERSION == HANDSHAKE_VERSION
+
+
+def test_committed_update_signing_key_is_a_real_public_key():
+    source = (PACKAGE_ROOT / "desktop" / "updater.py").read_text(encoding="utf-8")
+    assert len(COMMITTED_SIGNING_PUBLIC_KEY) == 32
+    assert COMMITTED_SIGNING_PUBLIC_KEY != bytes(32)
+    assert "UPDATE_SIGNING_PUBLIC_KEY = bytes.fromhex(" in source
+    assert '"0000000000000000000000000000000000000000000000000000000000000000"' not in source
 
 
 def test_installed_version_matching_latest_release_does_not_show_update():
@@ -180,6 +223,13 @@ def test_exact_checksum_matching_rejects_missing_or_duplicate_entry():
     assert expected_checksum(f"{digest}  {INSTALLER_NAME}\n{digest}  {INSTALLER_NAME}\n", INSTALLER_NAME) is None
 
 
+def test_signed_checksum_verification_covers_exact_manifest_bytes():
+    manifest = b"\xef\xbb\xbf" + hashlib.sha256(INSTALLER_BYTES).hexdigest().encode("ascii") + b"  " + INSTALLER_NAME.encode("ascii") + b"\r\n"
+    signature = TEST_SIGNING_PRIVATE_KEY.sign(manifest)
+    assert verify_checksum_signature(manifest, signature) is True
+    assert verify_checksum_signature(manifest.replace(b"\r\n", b"\n"), signature) is False
+
+
 def test_valid_installer_is_downloaded_only_to_temp_and_prepared_for_launch(tmp_path):
     manager = UpdateManager(
         current_version="1.4.0",
@@ -235,6 +285,82 @@ def test_invalid_installer_never_reaches_ready_state(tmp_path, checksum_filename
     assert manager.prepare_installer_launch() is None
 
 
+@pytest.mark.parametrize(
+    "signature_bytes",
+    [
+        b"x" * 63,
+        b"x" * 64,
+        b"x" * 65,
+    ],
+)
+def test_invalid_manifest_signature_never_downloads_installer(tmp_path, signature_bytes):
+    requested_urls = []
+    manager = UpdateManager(
+        current_version="1.4.0",
+        platform_id="win32",
+        distribution_mode="standard",
+        urlopen=queued_urlopen(
+            release_payload(),
+            signature_bytes=signature_bytes,
+            requested_urls=requested_urls,
+        ),
+        temp_root=tmp_path,
+    )
+    manager.check_now()
+    manager.begin_update()
+    finish_worker(manager)
+
+    assert manager.public_status()["state"] == "failed"
+    assert manager.public_status()["error_code"] == "signature_failed"
+    assert requested_urls[-1] == SIGNATURE_URL
+    assert not any(url.endswith(INSTALLER_NAME) for url in requested_urls)
+    assert list(tmp_path.iterdir()) == []
+    assert manager.prepare_installer_launch() is None
+
+
+def test_tampered_manifest_and_replaced_installer_are_rejected_before_download(tmp_path):
+    original = f"{hashlib.sha256(INSTALLER_BYTES).hexdigest()}  {INSTALLER_NAME}\n".encode("ascii")
+    attacker_installer = b"x" * len(INSTALLER_BYTES)
+    tampered = f"{hashlib.sha256(attacker_installer).hexdigest()}  {INSTALLER_NAME}\n".encode("ascii")
+    requested_urls = []
+    manager = UpdateManager(
+        current_version="1.4.0",
+        platform_id="win32",
+        distribution_mode="standard",
+        urlopen=queued_urlopen(
+            release_payload(),
+            installer_bytes=attacker_installer,
+            checksum_manifest=tampered,
+            signature_bytes=TEST_SIGNING_PRIVATE_KEY.sign(original),
+            requested_urls=requested_urls,
+        ),
+        temp_root=tmp_path,
+    )
+    manager.check_now()
+    manager.begin_update()
+    finish_worker(manager)
+
+    assert manager.public_status()["error_code"] == "signature_failed"
+    assert not any(url.endswith(INSTALLER_NAME) for url in requested_urls)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_wrong_release_signing_key_is_rejected(tmp_path):
+    wrong_key = Ed25519PrivateKey.generate()
+    manager = UpdateManager(
+        current_version="1.4.0",
+        platform_id="win32",
+        distribution_mode="standard",
+        urlopen=queued_urlopen(release_payload(), signing_key=wrong_key),
+        temp_root=tmp_path,
+    )
+    manager.check_now()
+    manager.begin_update()
+    finish_worker(manager)
+    assert manager.public_status()["error_code"] == "signature_failed"
+    assert manager.prepare_installer_launch() is None
+
+
 def test_network_timeout_during_check_is_silent():
     def timeout(_request, timeout):
         assert timeout <= 5
@@ -287,6 +413,24 @@ def test_distribution_mode_and_asset_policy(platform_id, distribution_mode, inst
     )
     manager.check_now()
     assert manager.public_status()["action"] == expected_action
+
+
+def test_missing_signature_disables_native_install_and_reports_safe_fallback():
+    opened = []
+    manager = UpdateManager(
+        current_version="1.4.0",
+        platform_id="win32",
+        distribution_mode="standard",
+        urlopen=queued_urlopen(release_payload(signature=False)),
+        browser_open=lambda url: opened.append(url) or True,
+    )
+    manager.check_now()
+    status = manager.public_status()
+    assert status["action"] == "browser"
+    assert status["error_code"] == "signature_missing"
+    manager.begin_update()
+    assert opened == ["https://github.com/Paracci/paracci-msg/releases"]
+    assert manager.prepare_installer_launch() is None
 
 
 def test_installer_asset_name_requires_v_prefixed_version():
@@ -501,6 +645,7 @@ def test_update_banner_and_release_workflow_contracts_are_present():
     updates_template = (PACKAGE_ROOT / "app" / "templates" / "updates.html").read_text(encoding="utf-8")
     runtime = (REPO_ROOT / "run.py").read_text(encoding="utf-8")
     workflow = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    publish_workflow = (REPO_ROOT / ".github" / "workflows" / "publish_signed_release.yml").read_text(encoding="utf-8")
     for marker in (
         'id="update-banner"',
         'id="update-protocol-warning"',
@@ -523,7 +668,18 @@ def test_update_banner_and_release_workflow_contracts_are_present():
     assert "overflow-y: auto" in css
     assert ".updates-page-actions [hidden]" in updates_css
     assert "/api/update/download" in js
+    assert "update_error_signature_missing" in template
+    assert "signature_failed" in js
     assert 'Path("VERSION").read_text' in workflow
+    assert "draft: true" in workflow
+    assert "SHA256SUMS.txt.sig" in workflow
+    assert "\n  virustotal:" not in workflow
+    assert "workflow_dispatch:" in publish_workflow
+    assert "manifest_signature_b64:" in publish_workflow
+    assert "verify_checksum_signature" in publish_workflow
+    assert "SHA256SUMS.txt.sig" in publish_workflow
+    assert publish_workflow.index("verify_checksum_signature") < publish_workflow.index('gh release edit "$RELEASE_TAG" --draft=false')
+    assert publish_workflow.index('gh release edit "$RELEASE_TAG" --draft=false') < publish_workflow.index("VirusTotal Scan")
     assert 'id="updates-check-btn"' in updates_template
     assert 'id="updates-history-list"' in updates_template
     assert '<!-- paracci-update: {"protocol_version": 4} -->' in workflow
@@ -539,4 +695,6 @@ def test_all_locales_contain_update_warning_text():
         assert payload["update"]["protocol_warning"]
         assert payload["update"]["check_now"]
         assert payload["update"]["history_title"]
+        assert payload["update"]["error_signature_missing"]
+        assert payload["update"]["error_signature_failed"]
         assert payload["settings"]["updates_title"]

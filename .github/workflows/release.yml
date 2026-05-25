@@ -583,14 +583,10 @@ jobs:
   # Runs only on version tags, after all builds succeed.
   # ═══════════════════════════════════════════════════════════════════════════
   release:
-    name: Create GitHub Release
+    name: Create Draft GitHub Release
     needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
-    # Output the release upload_url so the VT job can add scan results later
-    outputs:
-      release_id: ${{ steps.gh_release.outputs.id }}
-
     steps:
       - name: Checkout repository metadata
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -665,13 +661,13 @@ jobs:
           echo "package_version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
 
       # ── Create the Release ──────────────────────────────────────────────────
-      - name: Create GitHub Release
+      - name: Create draft GitHub Release
         id: gh_release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
         with:
           tag_name: ${{ github.ref_name }}
           name: "Paracci ${{ github.ref_name }}"
-          draft: false
+          draft: true
           prerelease: false
           generate_release_notes: true
           body: |
@@ -695,7 +691,11 @@ jobs:
             ### 🔐 Security & Integrity
 
             #### SHA-256 Checksums
-            Verify your download matches `SHA256SUMS.txt` (attached below):
+            Published releases attach `SHA256SUMS.txt` and its offline Ed25519
+            signature `SHA256SUMS.txt.sig`. Paracci verifies this signature
+            before trusting installer checksums.
+
+            To verify a downloaded package checksum after verifying the manifest signature:
             ```
             # Windows (PowerShell):  Get-FileHash Paracci-Setup-${{ github.ref_name }}.exe -Algorithm SHA256
             # Windows portable:     Get-FileHash Paracci-Portable-${{ github.ref_name }}.zip -Algorithm SHA256
@@ -719,7 +719,7 @@ jobs:
             https://github.com/${{ github.repository }}/attestations
 
             #### VirusTotal Scan
-            _VirusTotal scan links are added automatically below after this release is published._
+            _VirusTotal scan links are added automatically after the signed draft is published._
             > **Why might antivirus flag it?** PyInstaller bundles the Python interpreter
             > inside the executable. This "packing" technique is sometimes flagged as
             > heuristic-suspicious by AV engines even when the code is clean.
@@ -739,74 +739,3 @@ jobs:
             SHA256SUMS.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # JOB 4 — VirusTotal Scan
-  # Runs after the Release is published. Submits published packages to VT and
-  # appends the scan report URLs to the release body automatically.
-  #
-  # SETUP REQUIRED:
-  #   Add your free VirusTotal API key as a repository secret named VT_API_KEY:
-  #   Repository → Settings → Secrets and variables → Actions → New secret
-  #   Get a free key at: https://www.virustotal.com/gui/join-us
-  # ═══════════════════════════════════════════════════════════════════════════
-  virustotal:
-    name: VirusTotal Scan
-    needs: release
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-
-    steps:
-      - name: Download Windows artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
-        with:
-          name: Paracci-Windows
-          path: vt-scan/windows
-
-      - name: Download macOS artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
-        with:
-          name: Paracci-macOS
-          path: vt-scan/macos
-
-      - name: Download Linux artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
-        with:
-          name: Paracci-Linux
-          path: vt-scan/linux
-
-      # Rename files to clean names for VT display
-      - name: Normalize filenames for VT
-        run: |
-          mv vt-scan/windows/Paracci-Setup-v*.exe           vt-scan/Paracci-Windows-Setup.exe || true
-          mv vt-scan/windows/Paracci-Portable-v*.zip        vt-scan/Paracci-Windows-Portable.zip || true
-          mv vt-scan/linux/Paracci-Linux.zip                vt-scan/Paracci-Linux.zip || true
-          mv vt-scan/linux/Paracci-*-x86_64.AppImage        vt-scan/Paracci-Linux.AppImage || true
-          mv vt-scan/linux/paracci_*_amd64.deb              vt-scan/Paracci-Linux.deb || true
-          mv vt-scan/macos/Paracci-*-macOS.dmg              vt-scan/Paracci-macOS.dmg || true
-
-          # macOS: prefer .zip, fall back to bare binary
-          if [ -f "vt-scan/macos/Paracci-macOS.zip" ]; then
-            mv vt-scan/macos/Paracci-macOS.zip   vt-scan/Paracci-macOS.zip
-          else
-            mv vt-scan/macos/Paracci-macOS        vt-scan/Paracci-macOS || true
-          fi
-
-          ls -lah vt-scan/
-
-      # ── Submit to VirusTotal and append scan URLs to the release body ───────
-      - name: VirusTotal Scan
-        uses: crazy-max/ghaction-virustotal@d34968c958ae283fe976efed637081b9f9dcf74f  # v4
-        with:
-          vt_api_key: ${{ secrets.VT_API_KEY }}
-          request_rate: 4          # free API: max 4 requests/min
-          update_release_body: true
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          files: |
-            vt-scan/Paracci-Windows-Setup.exe
-            vt-scan/Paracci-Windows-Portable.zip
-            vt-scan/Paracci-macOS.zip
-            vt-scan/Paracci-macOS.dmg
-            vt-scan/Paracci-Linux.zip
-            vt-scan/Paracci-Linux.AppImage
-            vt-scan/Paracci-Linux.deb

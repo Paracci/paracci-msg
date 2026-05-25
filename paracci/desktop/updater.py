@@ -17,6 +17,8 @@ from typing import Callable
 from urllib.parse import urlparse
 
 from packaging.version import InvalidVersion, Version
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from app.build_info import APP_VERSION, SESSION_PROTOCOL_VERSION
 
@@ -25,11 +27,16 @@ LATEST_RELEASE_URL = "https://api.github.com/repos/Paracci/paracci-msg/releases/
 RECENT_RELEASES_URL = "https://api.github.com/repos/Paracci/paracci-msg/releases?per_page=10"
 RELEASES_PAGE_URL = "https://github.com/Paracci/paracci-msg/releases"
 CHECKSUM_FILENAME = "SHA256SUMS.txt"
+SIGNATURE_FILENAME = "SHA256SUMS.txt.sig"
 REQUEST_TIMEOUT_SECONDS = 5.0
 MAX_RELEASE_BYTES = 512 * 1024
 MAX_RELEASE_HISTORY_BYTES = 2 * 1024 * 1024
 MAX_CHECKSUM_BYTES = 128 * 1024
+MAX_SIGNATURE_BYTES = 64
 DOWNLOAD_CHUNK_SIZE = 64 * 1024
+UPDATE_SIGNING_PUBLIC_KEY = bytes.fromhex(
+    "451447d8e67143b01d8601990d77a823a7ca9c313d80f87799686bd58c91b4d7"
+)
 _PROTOCOL_MARKER_RE = re.compile(
     r"<!--\s*paracci-update:\s*(\{.*?\})\s*-->",
     re.IGNORECASE | re.DOTALL,
@@ -67,6 +74,7 @@ class ReleaseInfo:
     protocol_unknown: bool
     installer_asset: ReleaseAsset | None
     checksum_asset: ReleaseAsset | None
+    signature_asset: ReleaseAsset | None
 
 
 def is_newer_version(current: str, latest: str) -> bool:
@@ -105,6 +113,23 @@ def expected_checksum(checksum_text: str, filename: str) -> str | None:
             return None
         found = match.group(1).lower()
     return found
+
+
+def verify_checksum_signature(checksum_bytes: bytes, signature_bytes: bytes) -> bool:
+    """Return whether the embedded update key signed the exact checksum bytes."""
+    if (
+        not isinstance(checksum_bytes, bytes)
+        or not isinstance(signature_bytes, bytes)
+        or len(UPDATE_SIGNING_PUBLIC_KEY) != 32
+        or len(signature_bytes) != MAX_SIGNATURE_BYTES
+    ):
+        return False
+    try:
+        public_key = Ed25519PublicKey.from_public_bytes(UPDATE_SIGNING_PUBLIC_KEY)
+        public_key.verify(signature_bytes, checksum_bytes)
+        return True
+    except (InvalidSignature, ValueError, TypeError):
+        return False
 
 
 def _https_url(value: object) -> str | None:
@@ -353,7 +378,7 @@ class UpdateManager:
                 )
                 self._downloaded_bytes = 0
                 self._verification_status = ""
-                self._error_code = ""
+                self._error_code = "signature_missing" if self._requires_signed_browser_fallback(release) else ""
         except Exception:
             if user_initiated:
                 self._set_check_failed()
@@ -384,6 +409,7 @@ class UpdateManager:
             protocol_unknown=protocol_unknown,
             installer_asset=self._find_asset(assets, installer_name),
             checksum_asset=self._find_asset(assets, CHECKSUM_FILENAME),
+            signature_asset=self._find_asset(assets, SIGNATURE_FILENAME),
         )
 
     def _find_asset(self, assets: list, expected_name: str) -> ReleaseAsset | None:
@@ -400,21 +426,48 @@ class UpdateManager:
     def _select_action(self, release: ReleaseInfo) -> str:
         if self.platform_id != "win32" or self.distribution_mode != "standard":
             return "browser"
-        if release.installer_asset is None or release.checksum_asset is None:
+        if (
+            release.installer_asset is None
+            or release.checksum_asset is None
+            or release.signature_asset is None
+        ):
             return "browser"
         return "download"
+
+    def _requires_signed_browser_fallback(self, release: ReleaseInfo) -> bool:
+        return (
+            self.platform_id == "win32"
+            and self.distribution_mode == "standard"
+            and release.installer_asset is not None
+            and release.checksum_asset is not None
+            and release.signature_asset is None
+        )
 
     def _download_worker(self) -> None:
         temp_dir: Path | None = None
         try:
             with self._lock:
                 release = self._release
-            if release is None or release.installer_asset is None or release.checksum_asset is None:
+            if (
+                release is None
+                or release.installer_asset is None
+                or release.checksum_asset is None
+                or release.signature_asset is None
+            ):
                 raise UpdateActionError("asset_missing")
             checksum_bytes = self._read_bounded_url(
                 release.checksum_asset.download_url,
                 MAX_CHECKSUM_BYTES,
             )
+            try:
+                signature_bytes = self._read_bounded_url(
+                    release.signature_asset.download_url,
+                    MAX_SIGNATURE_BYTES,
+                )
+            except ValueError as exc:
+                raise UpdateActionError("signature_failed") from exc
+            if not verify_checksum_signature(checksum_bytes, signature_bytes):
+                raise UpdateActionError("signature_failed")
             checksum = expected_checksum(checksum_bytes.decode("utf-8-sig"), release.installer_asset.name)
             if checksum is None:
                 raise UpdateActionError("checksum_missing")
