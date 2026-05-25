@@ -21,7 +21,7 @@
     "iar_marker": "PRO-ORIGINAL-",
     "nav_aria": "Primary navigation",
     "home_aria": "Paracci home",
-    "argon_work_active": "Maximum Argon2id Active..."
+    "argon_work_active": "Deriving device key with Argon2id..."
   },
   "hybrid_kem_legacy_session": "This session was created with an older version of Paracci and does not have post-quantum protection. Please ask your contact to start a new session.",
   "hybrid_kem_init_failed": "Post-quantum key generation failed. Please try again.",
@@ -31,8 +31,7 @@
     "sessions": "Sessions",
     "new": "New",
     "import": "Import",
-    "settings": "Settings",
-    "armor_report": "Armor Report"
+    "settings": "Settings"
   },
   "common": {
     "cancel": "Cancel",
@@ -48,9 +47,6 @@
     "error": "Error",
     "render_error": "Report could not be rendered.",
     "marked_missing": "Markdown renderer not loaded."
-  },
-  "armor": {
-    "report_info": "This report measures your device's high-cost Argon2id key-derivation performance. This increases offline brute-force resistance but does NOT guarantee absolute cryptographic protection."
   },
   "index": {
     "title": "sessions",
@@ -73,7 +69,7 @@
     "verify_2fa_title": "2FA Verification",
     "verify_2fa_desc": "Enter the 6-digit code from your authenticator app to continue.",
     "verify_2fa_code": "Verification Code",
-    "armor_active": "Maximum Argon2id Active",
+    "armor_active": "Device key derivation uses Argon2id",
     "2fa_enabled_success": "2FA enabled successfully.",
     "2fa_disabled_success": "2FA disabled successfully.",
     "invalid_2fa_code": "Invalid or expired 2FA code.",
@@ -114,7 +110,7 @@
     "status_strong": "Strong",
     "show_pin": "Show passphrase",
     "hide_pin": "Hide passphrase",
-    "armor_active": "Armor Active",
+    "armor_active": "Device key protected",
     "algo_argon2": "Argon2id",
     "aes_256": "AES-256-GCM",
     "security_note_before": "Your passphrase is processed with the ",
@@ -184,36 +180,12 @@
     "label_placeholder": "e.g., Secure Channel with Y",
     "ttl": "Session lifetime",
     "ttl_hint": "Session will be completely closed after this period.",
-    "security_title": "Security Level (Time Lock)",
-    "standard": "Standard",
-    "standard_desc": "Fast and secure. Ideal for low-end hardware.",
-    "paranoid": "Paranoid",
-    "paranoid_desc": "Default balance. 1s time lock protection.",
-    "custom": "Custom",
-    "custom_desc": "Custom parameters. Build your own armor.",
-    "custom_title": "Custom Security Parameters (Argon2id)",
-    "est_time_p1": "Estimated Time: ",
-    "est_time_p2": "s",
-    "seal_info_title": "Sealing Info:",
-    "seal_info_desc_p1": "These settings are written into the authenticated Initiator setup metadata. They ",
-    "seal_info_desc_bold": "cannot be changed",
-    "argon_t": "Time (t)",
-    "argon_m": "Memory (MB)",
-    "argon_p": "Parallelism (p)",
-    "hw_advice": "Hardware Advice:",
-    "hw_advice_desc_p1": "Based on local tests, this profile will take approximately ",
-    "hw_advice_example": "3.3 minutes",
-    "hw_advice_desc_p2": ".",
-    "security_hint": "This setting determines message decryption speed and brute-force resistance.",
-    "view_benchmark": "View Latest Hardware Test Report",
     "create_btn": "Create session and download file",
     "session_color": "Session Color",
     "pick_color": "Pick from palette",
     "color_hint": "Select a color for this session or enter a custom hex code.",
     "title": "New Session",
     "subtitle": "Start by creating a new file-exchange session.",
-    "hw_report_title": "Hardware Calibration Report",
-    "hw_report_error": "An error occurred while fetching the report.",
     "import_title": "import file",
     "import_subtitle_p1": "Upload a ",
     "import_subtitle_p2": " session file.",
@@ -232,17 +204,13 @@
     "import_btn": "Import",
     "import_initiator_title": "Join New Session",
     "import_initiator_subtitle": "Join a session by uploading the Initiator file. It contains authenticated public metadata, not confidential message content.",
-    "error_responder_redirect": "This is a Responder (reply) file. Please upload it inside the relevant session page.",
-    "maximum": "Maximum",
-    "maximum_desc": "High-cost Argon2id key derivation. Increases offline brute-force resistance. Does NOT guarantee absolute cryptographic protection. Roadmap: Hybrid KEM (ML-KEM/Kyber) integration is planned for a future release.",
-    "argon_work_active": "Maximum Argon2id Active..."
+    "error_responder_redirect": "This is a Responder (reply) file. Please upload it inside the relevant session page."
   },
   "session": {
     "not_found": "Session not found.",
     "not_active": "Session is not active.",
     "label_required": "Session name cannot be empty.",
     "invalid_ttl": "Invalid duration value.",
-    "invalid_params": "Invalid custom parameters.",
     "create_error": "Failed to create session: {error}",
     "init_success": "Session started. Downloading Initiator file...",
     "import_file_required": "Please select a .paracci file.",
@@ -282,7 +250,7 @@
     "safety_code_mismatch": "Safety code does not match. Do not use this session until both sides match.",
     "safety_unverified": "Safety code must be confirmed before this session can be used.",
     "legacy_handshake_blocked": "This session was created with an older unsigned handshake and cannot be used safely. Create a new session.",
-    "legacy_handshake_version": "This session was established with an older version of Paracci and does not have identity binding. Please start a new session.",
+    "legacy_handshake_version": "This setup file uses a retired key-hardening format. Please start a new session.",
     "legacy_session_requires_new": "This session was created without identity binding. Please ask your contact to start a new session.",
     "state_unverified": "Unverified",
     "msg_opened": "📨 Message opened",
@@ -392,9 +360,6 @@
     "nickname_hint": "Only shown on your side to identify who is using the app.",
     "avatar_label": "Avatar Color"
   },
-  "benchmark": {
-    "not_found": "No benchmark report found yet."
-  },
   "preview": {
     "not_found_title": "Preview expired or file not found.",
     "not_found_desc": "For security reasons, files are kept in RAM for a short time.",
@@ -448,8 +413,8 @@
     "available_title": "Update available",
     "version_line": "Current {current} - New {latest}",
     "size": "Size: {size}",
-    "protocol_warning_title": "Session protocol change",
-    "protocol_warning": "This update changes the session protocol. After updating, you will need to establish new sessions with your contacts.",
+    "protocol_warning_title": "File format change",
+    "protocol_warning": "This update changes message and setup file formats. Upgrade both participants before exchanging new messages; unfinished setup exchanges must be restarted.",
     "protocol_unknown": "This release does not provide session protocol compatibility information. After updating, you may need to establish new sessions with your contacts.",
     "acknowledge": "I understand before continuing",
     "update_now": "Update Now",

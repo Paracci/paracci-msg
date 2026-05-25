@@ -26,9 +26,30 @@ Platform routing and fallbacks are coordinated by [device_key_binding.py](paracc
 
 ## Key Hardening (Argon2id)
 
-The local device key is derived from the user's passphrase using Argon2id with fixed parameters (t=2, m=64MB, p=4), which meet OWASP minimum recommendations. Configurable cost profiles (standard, paranoid, and quantum/Maximum) are applied to session and envelope key hardening, not to device key derivation.
-- **Post-Quantum Security**: Paracci uses a hybrid X25519 + ML-KEM-768 key exchange. Both classical and post-quantum secrets must be compromised to break the session key. Argon2id hardening is a separate key-hardening layer, not a replacement for the hybrid exchange.
+The local device key is derived from the user's passphrase using Argon2id with fixed parameters (t=2, m=64MB, p=4), which meet OWASP minimum recommendations. This is the correct use of Argon2id for low-entropy user input. Active session and message keys come from high-entropy hybrid X25519 + ML-KEM-768 material expanded with HKDF-SHA512; they are not processed with Argon2id. A legacy-only Argon2 read path remains for queued v1/v2 envelopes created by older versions.
+- **Post-Quantum Security**: Paracci uses a hybrid X25519 + ML-KEM-768 key exchange. Both classical and post-quantum secrets must be compromised to break the session key.
 - **Transcript Identity Binding**: Session keys are bound to both parties' Ed25519 identity keys via a handshake transcript (SHA3-256). Unknown-key-share resistance is reinforced at the key derivation layer, not only at the signature verification layer.
+
+---
+
+## Ordered Message Opening and Ratchet Progression
+
+Paracci intentionally enforces monotonic receive-key progression. If a user opens
+`msg_step_000010_*.paracci` before `msg_step_000009_*.paracci`, the receive
+ratchet advances through step 10. The step 9 envelope is then older than the
+current receive state and can never be decrypted on that device.
+
+This is deliberate. Supporting late or out-of-order decryption would require
+retaining skipped receive-key material or intermediate ratchet states, increasing
+sensitive state and attack surface. Paracci prioritizes key hygiene over delivery
+flexibility.
+
+Open message envelopes in received step order. New message filenames include the
+step number to help users sort pending files before opening; older filenames may
+not.
+
+Known limitation: this protocol is intended for careful, ordered file exchange,
+not high-volume or out-of-order messaging.
 
 ---
 

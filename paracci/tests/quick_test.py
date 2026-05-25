@@ -16,13 +16,12 @@ from core.envelope import seal_envelope, open_envelope
 
 def quick_test():
     try:
-        print("Starting Quick Integration Test (Standard Profile)...")
+        print("Starting Quick Integration Test...")
         x_identity_priv, x_identity_pub = generate_identity_keypair()
         y_identity_priv, y_identity_pub = generate_identity_keypair()
         # Step 1: X Init
         meta_x_init, init_file = create_initiator_session(
             "Quick Test",
-            profile="standard",
             identity_pub=x_identity_pub,
             identity_priv=x_identity_priv,
         )

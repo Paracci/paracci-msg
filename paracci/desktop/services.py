@@ -31,6 +31,7 @@ from core.config import ParacciConfig
 from core.crypto import EncryptedBlob, decrypt, encrypt, wipe
 from core.envelope import (
     FILE_VERSION as ENVELOPE_FILE_VERSION,
+    ARGON2_FILE_VERSION as ARGON2_ENVELOPE_FILE_VERSION,
     LEGACY_FILE_VERSION as LEGACY_ENVELOPE_FILE_VERSION,
     EnvelopeError,
     EnvelopeTTLError,
@@ -299,7 +300,11 @@ def parse_file_header(file_bytes: bytes) -> dict | None:
     if file_type not in (TYPE_INITIATOR, TYPE_RESPONDER, TYPE_MESSAGE):
         return None
     if file_type == TYPE_MESSAGE:
-        if file_version not in (LEGACY_ENVELOPE_FILE_VERSION, ENVELOPE_FILE_VERSION):
+        if file_version not in (
+            LEGACY_ENVELOPE_FILE_VERSION,
+            ARGON2_ENVELOPE_FILE_VERSION,
+            ENVELOPE_FILE_VERSION,
+        ):
             return None
     elif file_version < LEGACY_WRAPPED_HANDSHAKE_FILE_VERSION:
         return None
@@ -502,16 +507,12 @@ class SessionService:
         self,
         label: str,
         session_ttl_sec: int = EVO_UNLIMITED,
-        profile: str = "paranoid",
-        custom_params: Optional[dict] = None,
     ) -> ImportResult:
         identity = self.device.identity()
         try:
             meta, init_bytes = create_initiator_session(
                 label=label.strip(),
                 session_ttl_sec=session_ttl_sec,
-                profile=profile,
-                custom_params=custom_params,
                 identity_pub=identity.public_key,
                 identity_priv=identity.private_key,
             )
@@ -584,7 +585,6 @@ class SessionService:
                         y_pub=meta.my_pub,
                         evo_config=meta.evo_config,
                         label=meta.label,
-                        y_qseed=meta.my_qseed,
                         x_pub=meta.peer_pub,
                         x_identity_pub=meta.peer_identity_pub,
                         y_identity_pub=meta.my_identity_pub,
@@ -657,7 +657,7 @@ class MessageService:
             allow_download=allow_download,
         )
         self.sessions.save(meta._replace(tx_count=meta.tx_count + 1, send_seed=sealed.next_seed))
-        return sealed.file_bytes, f"msg_{sealed.msg_id.hex()[:12]}.paracci"
+        return sealed.file_bytes, f"msg_step_{sealed.next_step - 1:06d}_{sealed.msg_id.hex()[:12]}.paracci"
 
     def open_message(
         self,

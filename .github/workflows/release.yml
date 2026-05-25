@@ -350,7 +350,6 @@ jobs:
                   {
                       "label": "Release smoke",
                       "session_ttl": "0",
-                      "security_profile": "standard",
                   },
                   csrf,
               )
@@ -677,7 +676,7 @@ jobs:
           generate_release_notes: true
           body: |
             ## Paracci ${{ github.ref_name }}
-            <!-- paracci-update: {"protocol_version": 3} -->
+            <!-- paracci-update: {"protocol_version": 4} -->
 
             ### 📦 Download
 

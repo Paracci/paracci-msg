@@ -28,7 +28,7 @@ Think of it as a **locked envelope** that only the intended recipient can open, 
 
 ## How It Works
 
-1. **Session Setup** — Alice and Bob perform a one-time authenticated handshake by exchanging two setup files (initiator and responder). These files contain signed public metadata: identity keys, session parameters, and evolution settings. They are integrity-protected but **not confidential**. No server is involved.
+1. **Session Setup** — Alice and Bob perform a one-time authenticated handshake by exchanging two setup files (initiator and responder). These files contain signed public key-exchange metadata and identity keys. They are integrity-protected but **not confidential**. No server is involved.
 2. **Sealing a Message** — Alice writes a message, optionally attaches files, and seals it. Paracci produces a fully authenticated and encrypted `.paracci` message envelope (`.msg`) that only the intended recipient can decrypt with session-derived keys. Alice sends the file to Bob through any trusted channel.
 3. **Opening a Message** — Bob opens the envelope in his Paracci app. The message is decrypted in memory and displayed once. Once opened, the envelope cannot be opened again on this device. Copies of this file on other devices or storage locations are not affected by this local registry.
 
@@ -40,10 +40,10 @@ Think of it as a **locked envelope** that only the intended recipient can open, 
 
 - **Authenticated Key Exchange**: Session setup uses signed identity keypairs with safety-code confirmation. The setup files (initiator/responder) carry signed public metadata; they are integrity-protected but not confidential. Both parties must verify the safety code out-of-band before the session is active.
 - **Hybrid Post-Quantum Key Exchange**: Paracci uses a hybrid X25519 + ML-KEM-768 key exchange. Both classical and post-quantum secrets must be compromised to break the session key. Session keys are additionally bound to the Ed25519 identity keys of both parties and the exact key material exchanged (ML-KEM public key and ciphertext) via a SHA3-256 handshake transcript. This prevents unknown-key-share attacks and cryptographically ties each session to the specific identities of Alice and Bob.
-- **Envelope Encryption**: Every message envelope is sealed with AEAD (ChaCha20-Poly1305) using session-derived keys. ChaCha20-Poly1305 authentication is the message-envelope integrity and tamper-detection boundary. Legacy v1 files with the former outer seal remain readable, but the seal is not trusted as authenticity.
-- **Forward-Advancing Key Chain**: Session send/receive keys advance with each message step using an HKDF-based ratchet. Replaying an old envelope is rejected by the local registry and step counter.
+- **Envelope Encryption**: Current message envelopes are sealed with AEAD (ChaCha20-Poly1305) directly using a 32-byte, ratchet-derived message key. ChaCha20-Poly1305 authentication is the message-envelope integrity and tamper-detection boundary. Legacy v1/v2 files remain readable through a compatibility-only payload-key path.
+- **Forward-Advancing Key Chain**: Session send/receive keys advance with each message step using an HKDF-based ratchet. Opening a later-step envelope permanently rejects earlier pending envelopes on that device; this ordered-opening requirement is deliberate.
 - **Single-Use Burn Tracking**: Every envelope carries a unique ID. Paracci atomically registers opens in a local SQLite database (`BurnDB`). An opened envelope cannot be opened again on this device. Copies on other devices or storage locations are not affected by this local registry.
-- **Key Hardening**: The local device key is derived from a user passphrase using Argon2id with fixed parameters (t=2, m=64MB, p=4), which meet OWASP minimum recommendations. Configurable cost profiles (standard, paranoid, and quantum/Maximum) are applied to session and envelope key hardening.
+- **Key Hardening**: The local device key is derived from a user passphrase using Argon2id with fixed parameters (t=2, m=64MB, p=4), which meet OWASP minimum recommendations. Current high-entropy session and message keys use HKDF derivation without Argon2id. Argon2id payload derivation remains only for reading older v1/v2 message envelopes.
 
 ### Device Key Protection
 
@@ -59,7 +59,7 @@ Platform dispatching is handled dynamically by [device_key_binding.py](paracci/d
 
 Paracci does **not** implement a Double Ratchet or post-compromise recovery protocol. If a session's key material is compromised, past and future messages in that session may be at risk until the users establish a new session. For most offline file-exchange use cases this is an acceptable trade-off; users who require post-compromise recovery should establish new sessions periodically.
 
-Paracci uses a hybrid X25519 + ML-KEM-768 key exchange. Both classical and post-quantum secrets must be compromised to break the session key, and active sessions bind the derived keys to both parties' Ed25519 identities through a SHA3-256 handshake transcript. The higher-cost Argon2id profiles apply to session and envelope key hardening only, and should not be interpreted as a replacement for the hybrid exchange.
+Paracci uses a hybrid X25519 + ML-KEM-768 key exchange. Both classical and post-quantum secrets must be compromised to break the session key, and active sessions bind the derived keys to both parties' Ed25519 identities through a SHA3-256 handshake transcript. Argon2id protects low-entropy device passphrases; it is not applied to current high-entropy session or message keys.
 
 ### Platform-Native Shields
 

@@ -743,8 +743,7 @@ textarea {
   background: var(--interactive-hover);
 }
 
-.global-drop-overlay,
-.argon-overlay {
+.global-drop-overlay {
   position: fixed;
   inset: calc(var(--titlebar-height) + 12px) 12px 12px;
   z-index: 10006;
@@ -772,8 +771,7 @@ textarea {
   transition: opacity var(--duration-sm) var(--ease), transform var(--duration-sm) var(--ease);
 }
 
-.global-drop-overlay.active,
-.argon-overlay.active {
+.global-drop-overlay.active {
   opacity: 1;
   pointer-events: auto;
 }
@@ -783,8 +781,7 @@ textarea {
   transform: translateY(0);
 }
 
-.drop-content,
-.argon-panel {
+.drop-content {
   width: min(420px, calc(100vw - 64px));
   padding: var(--space-8);
   border: 1px solid var(--border-default);
@@ -851,63 +848,6 @@ textarea {
   color: var(--text-tertiary);
   font-size: var(--text-caption);
   line-height: 1.25;
-}
-
-.argon-overlay {
-  background: rgba(0, 0, 0, 0.72);
-}
-
-.argon-text {
-  margin: 0;
-  color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: var(--text-body-sm);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.progress-bar-container {
-  width: 100%;
-  height: 8px;
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: var(--radius-full, 9999px);
-  overflow: hidden;
-  margin: var(--space-5) 0 var(--space-3);
-  position: relative;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.progress-bar-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #30d158, #0a84ff, #5e5ce6);
-  background-size: 200% auto;
-  border-radius: var(--radius-full, 9999px);
-  width: 0%;
-  transition: width 0.2s cubic-bezier(0.1, 0.8, 0.3, 1);
-  animation: gradientShift 3s linear infinite;
-  box-shadow: 0 0 12px rgba(10, 132, 255, 0.5);
-}
-
-@keyframes gradientShift {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
-}
-
-.progress-percent {
-  font-family: var(--font-mono);
-  font-size: var(--text-body-lg, 1.1rem);
-  font-weight: 700;
-  color: var(--text-primary);
-  margin-bottom: var(--space-2);
-}
-
-.argon-subtext {
-  font-size: 11px;
-  color: var(--text-secondary);
-  line-height: 1.4;
-  margin: 0;
-  min-height: 32px;
 }
 
 .mono,

@@ -74,7 +74,7 @@
   </div>
 </div>
 
-<form id="setupForm" method="POST" action="{{ url_for('main.session_new') }}" data-armor-text="{{ _('base.argon_work_active') }}">
+<form id="setupForm" method="POST" action="{{ url_for('main.session_new') }}">
   <div class="card">
     <div class="card-body">
       <div class="form-group">
@@ -127,114 +127,6 @@
         <small class="form-hint">{{ _('setup.color_hint', default='Select a color for this session or enter a custom hex code.') }}</small>
       </div>
 
-      <div class="section-sep my-6"></div>
-
-      <div class="settings-section mt-8">
-        <h2 class="settings-header">{{ _('setup.security_title') }}</h2>
-        <div class="settings-group security-profiles-group">
-          
-          <label class="settings-item profile-label cursor-pointer" for="prof-standard">
-            <input type="radio" name="security_profile" id="prof-standard" value="standard" checked
-                   data-security-t="1" data-security-m="64" data-security-p="1" class="profile-radio-input hidden-input">
-            <div class="settings-info">
-              <span class="settings-title">{{ _('setup.standard') }}</span>
-              <span class="settings-desc">{{ _('setup.standard_desc') }}</span>
-            </div>
-            <div class="profile-checkmark text-primary opacity-0 transition-opacity">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
-                <path fill-rule="evenodd" d="M19.916 4.626a.75.75 0 01.208 1.04l-9 13.5a.75.75 0 01-1.154.114l-6-6a.75.75 0 011.06-1.06l5.353 5.353 8.493-12.739a.75.75 0 011.04-.208z" clip-rule="evenodd" />
-              </svg>
-            </div>
-          </label>
-
-          <label class="settings-item profile-label cursor-pointer" for="prof-paranoid">
-            <input type="radio" name="security_profile" id="prof-paranoid" value="paranoid"
-                   data-security-t="2" data-security-m="256" data-security-p="4" class="profile-radio-input hidden-input">
-            <div class="settings-info">
-              <span class="settings-title">{{ _('setup.paranoid') }}</span>
-              <span class="settings-desc">{{ _('setup.paranoid_desc') }}</span>
-            </div>
-            <div class="profile-checkmark text-primary opacity-0 transition-opacity">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
-                <path fill-rule="evenodd" d="M19.916 4.626a.75.75 0 01.208 1.04l-9 13.5a.75.75 0 01-1.154.114l-6-6a.75.75 0 011.06-1.06l5.353 5.353 8.493-12.739a.75.75 0 011.04-.208z" clip-rule="evenodd" />
-              </svg>
-            </div>
-          </label>
-
-          <label class="settings-item profile-label cursor-pointer" for="prof-maximum">
-            <input type="radio" name="security_profile" id="prof-maximum" value="quantum"
-                   data-security-t="4" data-security-m="1024" data-security-p="8" class="profile-radio-input hidden-input">
-            <div class="settings-info">
-              <span class="settings-title">{{ _('setup.maximum') }}</span>
-              <span class="settings-desc">{{ _('setup.maximum_desc') }}</span>
-            </div>
-            <div class="profile-checkmark text-primary opacity-0 transition-opacity">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
-                <path fill-rule="evenodd" d="M19.916 4.626a.75.75 0 01.208 1.04l-9 13.5a.75.75 0 01-1.154.114l-6-6a.75.75 0 011.06-1.06l5.353 5.353 8.493-12.739a.75.75 0 011.04-.208z" clip-rule="evenodd" />
-              </svg>
-            </div>
-          </label>
-
-          <label class="settings-item profile-label cursor-pointer" for="prof-custom">
-            <input type="radio" name="security_profile" id="prof-custom" value="custom"
-                   data-custom-security="true" class="profile-radio-input hidden-input">
-            <div class="settings-info">
-              <span class="settings-title">{{ _('setup.custom') }}</span>
-              <span class="settings-desc">{{ _('setup.custom_desc') }}</span>
-            </div>
-            <div class="profile-checkmark text-primary opacity-0 transition-opacity">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
-                <path fill-rule="evenodd" d="M19.916 4.626a.75.75 0 01.208 1.04l-9 13.5a.75.75 0 01-1.154.114l-6-6a.75.75 0 011.06-1.06l5.353 5.353 8.493-12.739a.75.75 0 011.04-.208z" clip-rule="evenodd" />
-              </svg>
-            </div>
-          </label>
-        </div>
-      </div>
-
-      <!-- Custom Security Section -->
-      <div id="custom-security-section" class="settings-section mt-8 d-none">
-        <div class="flex-between align-end mb-2">
-          <h2 class="settings-header mb-0">{{ _('setup.custom_title') }}</h2>
-          <div id="time-estimation-badge" class="text-secondary font-sm">
-            {{ _('setup.est_time_p1') }} <span id="estimated-seconds" class="text-primary font-medium">200</span> {{ _('setup.est_time_p2') }}
-          </div>
-        </div>
-
-        <div class="settings-group mb-2">
-          <label class="settings-item flex-between cursor-pointer" for="argon_t">
-            <span class="settings-title">{{ _('setup.argon_t') }}</span>
-            <input type="number" id="argon_t" name="custom_t" value="1" min="1" max="16"
-                   class="apple-input-number text-right bg-transparent border-none text-primary font-medium font-mono outline-none">
-          </label>
-          <label class="settings-item flex-between cursor-pointer" for="argon_m">
-            <span class="settings-title">{{ _('setup.argon_m') }}</span>
-            <input type="number" id="argon_m" name="custom_m" value="64" min="16" max="4096" step="16"
-                   class="apple-input-number text-right bg-transparent border-none text-primary font-medium font-mono outline-none">
-          </label>
-          <label class="settings-item flex-between cursor-pointer" for="argon_p">
-            <span class="settings-title">{{ _('setup.argon_p') }}</span>
-            <input type="number" id="argon_p" name="custom_p" value="1" min="1" max="32"
-                   class="apple-input-number text-right bg-transparent border-none text-primary font-medium font-mono outline-none">
-          </label>
-        </div>
-
-        <p class="settings-group-footer text-warning mt-2 mb-4">
-          <strong>{{ _('setup.seal_info_title') }}</strong>: {{ _('setup.seal_info_desc_p1') }} <strong>{{ _('setup.seal_info_desc_bold') }}</strong>.
-        </p>
-
-        <p class="settings-group-footer mt-2 mb-0" id="benchmark-text">
-          <strong class="text-accent">{{ _('setup.hw_advice') }}</strong>
-          {{ _('setup.hw_advice_desc_p1') }}<strong class="text-primary">{{ _('setup.hw_advice_example') }}</strong>{{ _('setup.hw_advice_desc_p2') }}
-        </p>
-      </div>
-
-      <div class="mt-6">
-        <small class="form-hint text-dim">
-          {{ _('setup.security_hint') }}
-          <a href="{{ url_for('main.armor_report') }}" class="text-accent ml-2">{{ _('setup.view_benchmark') }}</a>
-        </small>
-      </div>
-
     </div>
     <div class="card-footer bg-overlay py-6">
       <div class="form-actions-row">
@@ -269,7 +161,7 @@
 </div>
 
 <div class="card">
-  <form method="POST" enctype="multipart/form-data" action="{{ url_for('main.session_import') }}" id="importForm" data-armor-text="{{ _('base.argon_work_active') }}">
+  <form method="POST" enctype="multipart/form-data" action="{{ url_for('main.session_import') }}" id="importForm">
     <input type="hidden" name="native_file_id" id="import-native-file-id" value="{{ init_native_file_id|default('', true) }}" data-filename="{{ init_path|default('', true) }}">
     <div class="card-body">
       
@@ -337,33 +229,6 @@
   </form>
 </div>
 {% endif %}
-
-<!-- Phase 2: Native <dialog> for hardware calibration report modal.
-     Replaces the old JS-generated div overlay. Native dialog provides:
-     - Free focus trapping (browser-managed)
-     - aria-modal semantics via showModal()
-     - Keyboard Escape dismissal
-     - ::backdrop pseudo-element for backdrop styling -->
-<dialog id="hw-report-dialog" class="hw-report-dialog" aria-labelledby="hw-dialog-title">
-  <div class="hw-dialog-inner">
-    <div class="hw-dialog-header">
-      <h2 id="hw-dialog-title" class="text-accent mb-0">
-        <span id="hw-dialog-title-text"></span>
-      </h2>
-      <button type="button" class="hw-dialog-close" id="hw-dialog-close-btn" aria-label="Close">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="18" height="18" aria-hidden="true">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-        </svg>
-      </button>
-    </div>
-    <pre id="hw-dialog-body" class="preview-text mono font-xs p-3"></pre>
-    <div class="hw-dialog-footer">
-      <button type="button" class="btn btn-secondary" id="hw-dialog-footer-close">
-        <span id="hw-dialog-close-label"></span>
-      </button>
-    </div>
-  </div>
-</dialog>
 
 <script src="{{ url_for('static', filename='js/setup.js', v=range(1, 99999) | random) }}"></script>
 {% endblock %}

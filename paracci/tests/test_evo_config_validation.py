@@ -24,9 +24,9 @@ from core.crypto import (
 )
 from core.evolution import (
     EvoConfig,
-    MAX_ARGON2_MEM_KB,
-    MAX_ARGON2_PAR,
-    MAX_ARGON2_TIME,
+    MAX_LEGACY_ARGON2_MEM_KB,
+    MAX_LEGACY_ARGON2_PAR,
+    MAX_LEGACY_ARGON2_TIME,
     MAX_EVO_STEP,
     MAX_SESSION_TTL_SEC,
     compute_keys_at_step,
@@ -55,7 +55,7 @@ def _packed_evo_config(
 
 
 def _malicious_evo_config_hex() -> str:
-    return _packed_evo_config(time_cost=MAX_ARGON2_TIME + 1).hex()
+    return _packed_evo_config(time_cost=MAX_LEGACY_ARGON2_TIME + 1).hex()
 
 
 def _identity():
@@ -72,7 +72,6 @@ def _signed_initiator_file(evo_config_hex: str) -> bytes:
         "session_id": session_id.hex(),
         "x_pub": x_pub.hex(),
         "x_identity_pub": identity_pub.hex(),
-        "x_qseed": random_bytes(128).hex(),
         "ml_kem_algorithm": session_module.KEM_ALGORITHM,
         "ml_kem_public_key": base64.b64encode(random_bytes(1184)).decode("ascii"),
         "evo_config": evo_config_hex,
@@ -127,12 +126,12 @@ def _valid_active_meta_with_config(evo_config: EvoConfig) -> session_module.Sess
 
 
 def test_deserialize_evo_config_accepts_supported_ceiling():
-    cfg = make_evo_config(
+    cfg = EvoConfig(
         session_ttl_sec=MAX_SESSION_TTL_SEC,
         created_at=1,
-        argon2_time=MAX_ARGON2_TIME,
-        argon2_mem=MAX_ARGON2_MEM_KB,
-        argon2_par=MAX_ARGON2_PAR,
+        legacy_argon2_time=MAX_LEGACY_ARGON2_TIME,
+        legacy_argon2_mem=MAX_LEGACY_ARGON2_MEM_KB,
+        legacy_argon2_par=MAX_LEGACY_ARGON2_PAR,
     )
 
     assert deserialize_evo_config(serialize_evo_config(cfg)) == cfg
@@ -141,9 +140,9 @@ def test_deserialize_evo_config_accepts_supported_ceiling():
 @pytest.mark.parametrize(
     "packed",
     [
-        _packed_evo_config(time_cost=MAX_ARGON2_TIME + 1),
-        _packed_evo_config(memory_cost=MAX_ARGON2_MEM_KB + 1),
-        _packed_evo_config(parallelism=MAX_ARGON2_PAR + 1),
+        _packed_evo_config(time_cost=MAX_LEGACY_ARGON2_TIME + 1),
+        _packed_evo_config(memory_cost=MAX_LEGACY_ARGON2_MEM_KB + 1),
+        _packed_evo_config(parallelism=MAX_LEGACY_ARGON2_PAR + 1),
         _packed_evo_config(ttl=MAX_SESSION_TTL_SEC + 1),
     ],
 )
@@ -160,7 +159,7 @@ def test_evolution_steps_are_bounded():
 
 
 @oqs_required
-def test_signed_malicious_initiator_rejects_evo_config_before_argon2(monkeypatch):
+def test_signed_malicious_initiator_rejects_legacy_compatibility_metadata_before_key_derivation(monkeypatch):
     malicious_file = _signed_initiator_file(_malicious_evo_config_hex())
     y_identity_priv, y_identity_pub = _identity()
 
@@ -183,7 +182,6 @@ def test_persisted_session_metadata_rejects_malicious_evo_config():
     identity_priv, identity_pub = _identity()
     meta, _init_file = create_initiator_session(
         "X",
-        profile="standard",
         identity_pub=identity_pub,
         identity_priv=identity_priv,
     )
@@ -202,20 +200,20 @@ def test_persisted_session_metadata_rejects_malicious_evo_config():
         deserialize_session_meta(tampered.nonce + tampered.ciphertext, device_key)
 
 
-def test_envelope_rejects_invalid_evo_config_before_work_key_argon2(monkeypatch):
+def test_envelope_rejects_invalid_legacy_compatibility_metadata_for_current_seal(monkeypatch):
     invalid_config = EvoConfig(
         session_ttl_sec=0,
         created_at=1,
-        argon2_time=MAX_ARGON2_TIME + 1,
-        argon2_mem=65536,
-        argon2_par=2,
+        legacy_argon2_time=MAX_LEGACY_ARGON2_TIME + 1,
+        legacy_argon2_mem=65536,
+        legacy_argon2_par=2,
     )
     meta = _valid_active_meta_with_config(invalid_config)
 
     def fail_if_called(*_args, **_kwargs):
-        raise AssertionError("hash_secret_raw should not be called")
+        raise AssertionError("legacy Argon2 payload derivation should not be called")
 
-    monkeypatch.setattr(envelope_module, "hash_secret_raw", fail_if_called)
+    monkeypatch.setattr(envelope_module, "_derive_legacy_payload_key_v1_v2", fail_if_called)
 
     with pytest.raises(envelope_module.EnvelopeError, match="Invalid evolution configuration"):
         envelope_module.seal_envelope(b"blocked", meta)

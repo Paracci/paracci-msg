@@ -3,15 +3,14 @@ Paracci — tests/integration_e2e.py
 Full End-to-End Handshake and Messaging Flow Validation.
 
 This script simulates User X and User Y interacting to ensure:
-1. Handshake consistency (Argon2id work seeds exchange)
+1. Handshake consistency through transcript-bound hybrid key exchange
 2. Correct key derivation on both sides
 3. Successful message sealing and opening
-4. Argon2id maximum-profile integrity
+4. Current message-envelope encryption and opening
 """
 
 import sys
 import os
-import time
 import traceback
 
 # Add project root to path
@@ -28,8 +27,8 @@ from core.envelope import seal_envelope, open_envelope
 from core.package import create_package, extract_package
 from core.crypto import generate_identity_keypair
 
-def run_e2e_test(profile="quantum"):
-    print(f"\n[>] Starting E2E Integration Test (Profile: {profile})")
+def run_e2e_test():
+    print("\n[>] Starting E2E Integration Test")
     print("-" * 50)
     
     try:
@@ -40,7 +39,6 @@ def run_e2e_test(profile="quantum"):
         print(f"[X] Step 1: User X creating session...")
         meta_x_init, init_file = create_initiator_session(
             label="Test Session",
-            profile=profile,
             identity_pub=x_identity_pub,
             identity_priv=x_identity_priv,
         )
@@ -121,23 +119,15 @@ def run_e2e_test(profile="quantum"):
         return False
 
 if __name__ == "__main__":
-    # Test multiple profiles
-    results = []
-    for p in ["standard", "paranoid", "quantum"]:
-        start = time.time()
-        success = run_e2e_test(p)
-        elapsed = time.time() - start
-        results.append((p, success, elapsed))
-        
+    success = run_e2e_test()
+
     print("\n" + "="*50)
     print("FINAL TEST SUMMARY")
     print("="*50)
-    for p, s, t in results:
-        status = "PASSED" if s else "FAILED"
-        print(f"Profile: {p:<10} | Status: {status:<8} | Time: {t:.2f}s")
+    print(f"Status: {'PASSED' if success else 'FAILED'}")
     print("="*50)
-    
-    if all(r[1] for r in results):
+
+    if success:
         sys.exit(0)
     else:
         sys.exit(1)

@@ -42,7 +42,6 @@ def _handshake():
     meta_x, init_file = create_initiator_session(
         "X",
         session_ttl_sec=EVO_UNLIMITED,
-        profile="standard",
         identity_pub=x_identity_pub,
         identity_priv=x_identity_priv,
     )
@@ -149,7 +148,6 @@ def test_legacy_v3_wrapped_handshake_files_are_rejected():
     meta_x, init_file = create_initiator_session(
         "X",
         session_ttl_sec=EVO_UNLIMITED,
-        profile="standard",
         identity_pub=x_identity_pub,
         identity_priv=x_identity_priv,
     )
@@ -254,8 +252,8 @@ def test_legacy_session_metadata_deserializes_as_unverified():
         "bond_nonce": meta_x.bond_nonce.hex(),
         "tx_count": meta_x.tx_count,
         "rx_count": meta_x.rx_count,
-        "my_qseed": meta_x.my_qseed.hex(),
-        "peer_qseed": meta_x.peer_qseed.hex(),
+        "my_qseed": meta_x.my_qseed.hex() if meta_x.my_qseed else None,
+        "peer_qseed": meta_x.peer_qseed.hex() if meta_x.peer_qseed else None,
         "peer_username": meta_x.peer_username,
         "color": meta_x.color,
         "evo_config": serialize_evo_config(meta_x.evo_config).hex(),
@@ -300,8 +298,8 @@ def test_established_pre_v5_session_metadata_requires_new_session():
         "bond_nonce": meta_x.bond_nonce.hex(),
         "tx_count": meta_x.tx_count,
         "rx_count": meta_x.rx_count,
-        "my_qseed": meta_x.my_qseed.hex(),
-        "peer_qseed": meta_x.peer_qseed.hex(),
+        "my_qseed": meta_x.my_qseed.hex() if meta_x.my_qseed else None,
+        "peer_qseed": meta_x.peer_qseed.hex() if meta_x.peer_qseed else None,
         "peer_username": meta_x.peer_username,
         "color": meta_x.color,
         "evo_config": serialize_evo_config(meta_x.evo_config).hex(),
@@ -324,9 +322,30 @@ def test_established_pre_v5_session_metadata_requires_new_session():
 
     assert restored.handshake_file_version == session_module.HANDSHAKE_FILE_VERSION_V4
     assert restored.transcript_version is None
-    assert restored.state == SESSION_STATE_ACTIVE
-    assert restored.safety_confirmed
+    assert restored.state == SESSION_STATE_UNVERIFIED
+    assert not restored.safety_confirmed
     assert not restored.can_send
     with pytest.raises(session_module.HybridKEMError) as exc_info:
         require_transcript_bound_session(restored)
     assert exc_info.value.i18n_key == "session.legacy_session_requires_new"
+
+
+@oqs_required
+def test_completed_v5_transcript_bound_session_metadata_remains_usable():
+    meta_x, _meta_y, _init_file, _resp_file = _confirmed_handshake()
+    device_key = random_bytes(32)
+    v5_meta = meta_x._replace(
+        handshake_version=3,
+        handshake_file_version=session_module.HANDSHAKE_FILE_VERSION_V5,
+        transcript_version=1,
+    )
+
+    restored = deserialize_session_meta(
+        session_module.serialize_session_meta(v5_meta, device_key),
+        device_key,
+    )
+
+    assert restored.is_transcript_bound
+    assert restored.state == SESSION_STATE_ACTIVE
+    assert restored.safety_confirmed
+    assert restored.can_send

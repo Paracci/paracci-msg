@@ -1,6 +1,6 @@
 """
 Unit tests for Paracci message envelopes.
-Tests cover envelope v1/v2 compatibility, AAD binding, truncation, and key validation.
+Tests cover legacy v1/v2 reads, current v3 encryption, ordered opening, and AAD binding.
 """
 
 import os
@@ -75,38 +75,41 @@ def _establish_bonded_pair():
     )
     return meta_x, meta_y
 
-@oqs_required
-def test_v1_legacy_envelope_opens_correctly():
-    """Test that a legacy v1 envelope with an appended 16-byte HMAC trailer opens correctly."""
-    meta_x, meta_y = _establish_bonded_pair()
-    payload_bytes = b"Legacy v1 payload data"
-    
+
+def _enable_legacy_read_compatibility(meta_x, meta_y):
+    config = meta_x.evo_config._replace(
+        legacy_argon2_time=1,
+        legacy_argon2_mem=16384,
+        legacy_argon2_par=1,
+    )
+    qseed = b"Q" * 128
+    return (
+        meta_x._replace(evo_config=config, my_qseed=qseed),
+        meta_y._replace(evo_config=config, peer_qseed=qseed),
+    )
+
+
+def _legacy_envelope(payload_bytes, meta_x, version, *, with_outer_seal=False):
     direction, msg_key, _next_seed, step = envelope_module._prepare_seal_keys(meta_x)
     msg_id = envelope_module.new_message_id()
     header = (
         envelope_module.MAGIC_BYTES
-        + bytes([envelope_module.LEGACY_FILE_VERSION, envelope_module.TYPE_MESSAGE])
+        + bytes([version, envelope_module.TYPE_MESSAGE])
         + meta_x.session_id
         + msg_id
         + bytes([direction, 0])
         + pack_uint32(step)
         + pack_uint64(0)
     )
-    work_key = envelope_module._compute_work_key(
+    payload_key = envelope_module._derive_legacy_payload_key_v1_v2(
         msg_key,
         header,
         meta_x.my_qseed,
         meta_x.evo_config,
     )
-    payload_blob = encrypt(work_key, payload_bytes, aad=header)
-    sync_raw = envelope_module._build_sync_payload(
-        meta_x.role,
-        step,
-        msg_id,
-        None,
-    )
+    payload_blob = encrypt(payload_key, payload_bytes, aad=header)
+    sync_raw = envelope_module._build_sync_payload(meta_x.role, step, msg_id, None)
     sync_blob = encrypt(meta_x.keys.sync_key, sync_raw, aad=header + b"sync")
-    
     content = (
         header
         + pack_uint32(len(payload_blob.ciphertext))
@@ -115,8 +118,23 @@ def test_v1_legacy_envelope_opens_correctly():
         + sync_blob.nonce
         + sync_blob.ciphertext
     )
-    v1_file_bytes = content + (b"\xff" * envelope_module.LEGACY_SEAL_SIZE)
-    
+    if with_outer_seal:
+        content += b"\xff" * envelope_module.LEGACY_SEAL_SIZE
+    return content, msg_id, step
+
+
+@oqs_required
+def test_v1_legacy_envelope_opens_correctly():
+    """Test that a legacy v1 envelope with an appended 16-byte HMAC trailer opens correctly."""
+    meta_x, meta_y = _enable_legacy_read_compatibility(*_establish_bonded_pair())
+    payload_bytes = b"Legacy v1 payload data"
+    v1_file_bytes, msg_id, step = _legacy_envelope(
+        payload_bytes,
+        meta_x,
+        envelope_module.LEGACY_FILE_VERSION,
+        with_outer_seal=True,
+    )
+
     opened = open_envelope(v1_file_bytes, meta_y)
     assert opened.payload == payload_bytes
     assert opened.msg_id == msg_id
@@ -124,18 +142,59 @@ def test_v1_legacy_envelope_opens_correctly():
     assert opened.has_download_policy is False
 
 @oqs_required
-def test_v2_envelope_opens_correctly():
-    """Test that a standard v2 envelope without an HMAC trailer opens correctly."""
+def test_v2_legacy_argon_envelope_opens_correctly():
+    meta_x, meta_y = _enable_legacy_read_compatibility(*_establish_bonded_pair())
+    file_bytes, _msg_id, _step = _legacy_envelope(
+        b"Legacy v2 envelope payload",
+        meta_x,
+        envelope_module.ARGON2_FILE_VERSION,
+    )
+
+    opened = open_envelope(file_bytes, meta_y)
+    assert opened.payload == b"Legacy v2 envelope payload"
+
+
+@oqs_required
+def test_v2_legacy_envelope_without_compatibility_metadata_is_clear_error():
+    sender, receiver = _establish_bonded_pair()
+    legacy_sender, _legacy_receiver = _enable_legacy_read_compatibility(sender, receiver)
+    file_bytes, _msg_id, _step = _legacy_envelope(
+        b"Legacy v2 envelope payload",
+        legacy_sender,
+        envelope_module.ARGON2_FILE_VERSION,
+    )
+
+    with pytest.raises(EnvelopeError, match="compatibility key parameters"):
+        open_envelope(file_bytes, receiver)
+
+
+@oqs_required
+def test_v3_envelope_opens_correctly():
+    """Test that a current v3 envelope opens directly with the ratchet-derived key."""
     meta_x, meta_y = _establish_bonded_pair()
-    text = "Standard v2 envelope payload"
+    text = "Current v3 envelope payload"
     sealed = seal_envelope(text, meta_x, single_use=False)
-    
+
+    assert sealed.file_bytes[4] == envelope_module.FILE_VERSION
     opened = open_envelope(sealed.file_bytes, meta_y)
     assert opened.text == text
 
+
+@oqs_required
+def test_v3_seal_and_open_never_call_legacy_payload_kdf(monkeypatch):
+    meta_x, meta_y = _establish_bonded_pair()
+
+    def reject_legacy_kdf(*_args, **_kwargs):
+        pytest.fail("current envelopes must not invoke legacy Argon2 payload derivation")
+
+    monkeypatch.setattr(envelope_module, "_derive_legacy_payload_key_v1_v2", reject_legacy_kdf)
+    sealed = seal_envelope("Direct message key", meta_x)
+    assert open_envelope(sealed.file_bytes, meta_y).text == "Direct message key"
+
+
 @pytest.mark.parametrize("allow_download", [False, True])
 @oqs_required
-def test_v2_download_policy_flag_round_trips(allow_download):
+def test_v3_download_policy_flag_round_trips(allow_download):
     meta_x, meta_y = _establish_bonded_pair()
     sealed = seal_envelope("Policy-bound message", meta_x, allow_download=allow_download)
 
@@ -146,6 +205,26 @@ def test_v2_download_policy_flag_round_trips(allow_download):
     opened = open_envelope(sealed.file_bytes, meta_y)
     assert opened.has_download_policy is True
     assert opened.allow_download is allow_download
+
+
+@oqs_required
+def test_opening_later_step_permanently_rejects_earlier_pending_message():
+    meta_x, meta_y = _establish_bonded_pair()
+    earlier = seal_envelope("step one", meta_x)
+    sender_after_earlier = meta_x._replace(
+        tx_count=earlier.next_step,
+        send_seed=earlier.next_seed,
+    )
+    later = seal_envelope("step two", sender_after_earlier)
+
+    opened_later = open_envelope(later.file_bytes, meta_y)
+    receiver_after_later = meta_y._replace(
+        rx_count=opened_later.next_step,
+        recv_seed=opened_later.next_seed,
+    )
+
+    with pytest.raises(EnvelopeError, match="Old message rejected"):
+        open_envelope(earlier.file_bytes, receiver_after_later)
 
 @pytest.mark.parametrize("flag", [FLAG_ALLOW_DOWNLOAD, FLAG_HAS_DOWNLOAD_POLICY])
 @oqs_required

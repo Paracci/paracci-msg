@@ -9,6 +9,7 @@ from conftest import oqs_required
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from core import crypto as crypto_module
 from core import session as session_module
 from core.burn import BurnDB, init_device
 from core.crypto import EncryptedBlob, NONCE_LEN, decrypt, generate_identity_keypair, random_bytes
@@ -43,7 +44,6 @@ def _handshake():
     meta_x, init_file = create_initiator_session(
         "Alice",
         session_ttl_sec=EVO_UNLIMITED,
-        profile="standard",
         identity_pub=x_identity_pub,
         identity_priv=x_identity_priv,
     )
@@ -73,7 +73,6 @@ def _legacy_initiator_file(handshake_version: int) -> bytes:
         "handshake_version": handshake_version,
         "session_id": session_id.hex(),
         "x_pub": random_bytes(32).hex(),
-        "x_qseed": random_bytes(128).hex(),
         "evo_config": serialize_evo_config(
             session_module.make_evo_config(session_ttl_sec=EVO_UNLIMITED)
         ).hex(),
@@ -106,7 +105,7 @@ def _decrypt_session_row(db: BurnDB, device_key: bytes, session_id: bytes) -> di
 
 
 @oqs_required
-def test_full_v5_hybrid_handshake_roundtrip(monkeypatch):
+def test_full_v6_hybrid_handshake_roundtrip(monkeypatch):
     transcript_calls = []
     real_compute_transcript = session_module.compute_handshake_transcript
 
@@ -121,10 +120,12 @@ def test_full_v5_hybrid_handshake_roundtrip(monkeypatch):
     assert resp_file[4] == HANDSHAKE_FILE_VERSION
     assert _load_setup_payload(init_file)["session_id"] == meta_x.session_id.hex()
     assert _load_setup_payload(resp_file)["session_id"] == meta_x.session_id.hex()
-    assert meta_x.handshake_version == 3
-    assert meta_y.handshake_version == 3
-    assert meta_x.handshake_file_version == 5
-    assert meta_y.handshake_file_version == 5
+    assert meta_x.handshake_version == session_module.HANDSHAKE_VERSION
+    assert meta_y.handshake_version == session_module.HANDSHAKE_VERSION
+    assert meta_x.handshake_file_version == HANDSHAKE_FILE_VERSION
+    assert meta_y.handshake_file_version == HANDSHAKE_FILE_VERSION
+    assert "x_qseed" not in _load_setup_payload(init_file)
+    assert "y_qseed" not in _load_setup_payload(resp_file)
     assert meta_x.transcript_version == 1
     assert meta_y.transcript_version == 1
     assert meta_x.is_transcript_bound
@@ -147,9 +148,9 @@ def test_full_v5_hybrid_handshake_roundtrip(monkeypatch):
     assert active_y.can_open
 
 
-def test_pre_v5_initiator_files_are_rejected_with_identity_binding_i18n_key():
+def test_pre_v6_initiator_files_are_rejected_with_migration_i18n_key():
     y_identity_priv, y_identity_pub = _identity()
-    for handshake_version in (1, 2, 4):
+    for handshake_version in (1, 2, 4, 5):
         with pytest.raises(HybridKEMError) as exc_info:
             accept_initiator_and_create_responder(
                 _legacy_initiator_file(handshake_version),
@@ -161,10 +162,10 @@ def test_pre_v5_initiator_files_are_rejected_with_identity_binding_i18n_key():
 
 
 @oqs_required
-def test_v4_responder_file_is_rejected_with_identity_binding_i18n_key():
+def test_v5_responder_file_is_rejected_with_migration_i18n_key():
     pending_x, _meta_x, _meta_y, _init_file, resp_file = _handshake()
     legacy_resp = bytearray(resp_file)
-    legacy_resp[4] = session_module.HANDSHAKE_FILE_VERSION_V4
+    legacy_resp[4] = session_module.HANDSHAKE_FILE_VERSION_V5
 
     with pytest.raises(HybridKEMError) as exc_info:
         finalize_initiator_session(pending_x, bytes(legacy_resp))
@@ -173,12 +174,11 @@ def test_v4_responder_file_is_rejected_with_identity_binding_i18n_key():
 
 
 @oqs_required
-def test_v3_initiator_missing_ml_kem_public_key_raises_hybrid_error():
+def test_v6_initiator_missing_ml_kem_public_key_raises_hybrid_error():
     x_identity_priv, x_identity_pub = _identity()
     y_identity_priv, y_identity_pub = _identity()
     _meta_x, init_file = create_initiator_session(
         "Alice",
-        profile="standard",
         identity_pub=x_identity_pub,
         identity_priv=x_identity_priv,
     )
@@ -195,6 +195,16 @@ def test_v3_initiator_missing_ml_kem_public_key_raises_hybrid_error():
             identity_priv=y_identity_priv,
         )
     assert exc_info.value.i18n_key == "hybrid_kem_respond_failed"
+
+
+@oqs_required
+def test_v6_handshake_session_derivation_does_not_call_argon2(monkeypatch):
+    def fail_protocol_argon(*_args, **_kwargs):
+        pytest.fail("new handshake session derivation must not invoke Argon2id")
+
+    monkeypatch.setattr(crypto_module, "hash_secret_raw", fail_protocol_argon)
+    _pending_x, meta_x, meta_y, _init_file, _resp_file = _handshake()
+    assert meta_x.keys == meta_y.keys
 
 
 @oqs_required
@@ -250,7 +260,7 @@ def test_hybrid_kem_error_in_initiator_setup_uses_safe_route_message(tmp_path, m
     response = client.post(
         "/session/new",
         base_url=ORIGIN,
-        data={"label": "Alice", "session_ttl": "0", "security_profile": "standard"},
+        data={"label": "Alice", "session_ttl": "0"},
         headers={
             "Host": HOST,
             "X-Paracci-Token": TOKEN,

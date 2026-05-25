@@ -73,45 +73,15 @@ def main():
     print("[+] User X and Y data directories prepared.")
     print(f"[+] Default PIN: {DEFAULT_PIN}")
 
-    # 2. Profile Selection
-    print("\n[?] Select Security Profile:")
-    print("  1) Standard (Fast)")
-    print("  2) Paranoid (Balanced)")
-    print("  3) Maximum Argon2id (high-cost offline brute-force resistance)")
-    print("  4) Custom (Custom Settings)")
-    
-    if sys.stdin.isatty():
-        choice = input("\nSelection (1-4) [Default: 2]: ").strip()
-    else:
-        choice = "2"
-        print("\n[*] Non-interactive mode detected, using default: 2 (Paranoid)")
-    profile_map = {"1": "standard", "2": "paranoid", "3": "quantum", "4": "custom"}
-    TEST_PROFILE = profile_map.get(choice, "paranoid")
-    
-    CUSTOM_PARAMS = None
-    if TEST_PROFILE == "custom":
-        print("\n--- Custom Security Parameters ---")
-        try:
-            t = int(input("  Time Cost (t) [Default: 32]: ") or "32")
-            m = int(input("  Memory Cost (m - KB) [Default: 1048576 (1GB)]: ") or "1048576")
-            p = int(input("  Parallelism (p) [Default: 2]: ") or "2")
-            CUSTOM_PARAMS = {"t": t, "m": m, "p": p}
-        except ValueError:
-            print("[!] Invalid input, reverting to Paranoid settings.")
-            TEST_PROFILE = "paranoid"
-
-    print(f"\n[*] Setup Starting: {TEST_PROFILE.upper()} profile active.")
-    
-    # 3. Handshake Simulation
+    # 2. Handshake Simulation
+    print("\n[*] Setup starting.")
     # Load device identities
     identity_x = get_or_create_device_identity(db_x, key_x)
     identity_y = get_or_create_device_identity(db_y, key_y)
 
     # X: Create session
     meta_x_init, init_file = create_initiator_session(
-        "Automated Test Channel", 
-        profile=TEST_PROFILE,
-        custom_params=CUSTOM_PARAMS,
+        "Automated Test Channel",
         my_username="User X",
         identity_pub=identity_x.public_key,
         identity_priv=identity_x.private_key
@@ -144,7 +114,7 @@ def main():
     meta_y_final = confirm_safety_code(meta_y_final, code_y)
     print("  [+] X & Y: Safety codes matched and sessions activated.")
 
-    # 4. Save to Database
+    # 3. Save to Database
     enc_x = serialize_session_meta(meta_x_final, key_x)
     db_x.save_session(
         meta_x_final.session_id, meta_x_final.label, meta_x_final.state, 

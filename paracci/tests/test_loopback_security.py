@@ -195,29 +195,23 @@ def test_frontend_no_longer_posts_attachment_paths():
     assert "JSON.stringify({ path" not in app_js
 
 
-def test_session_new_rejects_over_limit_custom_kdf_params(tmp_path, monkeypatch):
+def test_session_new_no_longer_exposes_custom_message_kdf_inputs(tmp_path, monkeypatch):
     ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
     client = flask_app.test_client()
     bootstrap(client)
     _unlock_test_client(ag_app, client)
 
-    response = client.post(
+    response = client.get(
         "/session/new",
         base_url=ORIGIN,
-        data={
-            "label": "bad-kdf",
-            "session_ttl": "86400",
-            "security_profile": "custom",
-            "custom_t": "257",
-            "custom_m": "64",
-            "custom_p": "1",
-            "color": "#0a84ff",
-        },
         headers=auth_headers(client),
     )
 
     assert response.status_code == 200
-    assert ag_app.db.list_sessions() == []
+    assert b"security_profile" not in response.data
+    assert b"custom_t" not in response.data
+    assert b"custom_m" not in response.data
+    assert b"custom_p" not in response.data
 
 
 def test_settings_rejects_over_limit_default_ttl(tmp_path, monkeypatch):
@@ -396,7 +390,6 @@ def _make_unverified_handshake():
     y_identity_priv, y_identity_pub = generate_identity_keypair()
     meta_x, init_file = create_initiator_session(
         "X",
-        profile="standard",
         identity_pub=x_identity_pub,
         identity_priv=x_identity_priv,
     )

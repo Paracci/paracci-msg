@@ -324,6 +324,19 @@ def _make_sessions():
     return confirm_pair(meta_x2, meta_y)
 
 
+def _with_legacy_envelope_metadata(meta_x, meta_y):
+    config = meta_x.evo_config._replace(
+        legacy_argon2_time=1,
+        legacy_argon2_mem=16384,
+        legacy_argon2_par=1,
+    )
+    qseed = b"Q" * 128
+    return (
+        meta_x._replace(evo_config=config, my_qseed=qseed),
+        meta_y._replace(evo_config=config, peer_qseed=qseed),
+    )
+
+
 def _legacy_v1_envelope(payload_bytes, session):
     if isinstance(payload_bytes, str):
         payload_bytes = payload_bytes.encode("utf-8")
@@ -340,7 +353,7 @@ def _legacy_v1_envelope(payload_bytes, session):
         + pack_uint32(step)
         + pack_uint64(expire_at)
     )
-    work_key = envelope_module._compute_work_key(
+    work_key = envelope_module._derive_legacy_payload_key_v1_v2(
         msg_key,
         header,
         session.my_qseed,
@@ -476,7 +489,7 @@ run_test("Tampered file must be rejected", test_tampered_file_rejected)
 
 @oqs_required
 def test_legacy_v1_outer_seal_is_ignored_for_compatibility():
-    meta_x, meta_y = _make_sessions()
+    meta_x, meta_y = _with_legacy_envelope_metadata(*_make_sessions())
     legacy_file = _legacy_v1_envelope("legacy message", meta_x)
     opened = open_envelope(legacy_file, meta_y)
     assert opened.text == "legacy message"
