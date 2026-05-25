@@ -64,6 +64,70 @@ def test_root_requires_bootstrap(tmp_path, monkeypatch):
     assert response.status_code == 403
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/",
+        "/session/new",
+        "/session/import",
+        "/session/00112233445566778899aabbccddeeff",
+        "/session/00112233445566778899aabbccddeeff/settings",
+        "/session/00112233445566778899aabbccddeeff/export",
+        "/updates",
+        "/settings",
+        "/settings/2fa",
+        "/profile",
+        "/unlock/2fa/setup",
+        "/unlock/2fa/verify",
+    ],
+)
+def test_sensitive_get_rejects_bootstrapped_cookie_without_bearer(tmp_path, monkeypatch, path):
+    _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    client = flask_app.test_client()
+    bootstrap(client)
+
+    response = client.get(path, base_url=ORIGIN, headers={"Host": HOST})
+
+    assert response.status_code == 403
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/",
+        "/session/new",
+        "/session/import",
+        "/session/00112233445566778899aabbccddeeff",
+        "/session/00112233445566778899aabbccddeeff/settings",
+        "/session/00112233445566778899aabbccddeeff/export",
+        "/updates",
+        "/settings",
+        "/settings/2fa",
+        "/profile",
+        "/unlock/2fa/setup",
+        "/unlock/2fa/verify",
+    ],
+)
+def test_sensitive_get_with_session_and_bearer_passes_security_gate(tmp_path, monkeypatch, path):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    client = flask_app.test_client()
+    bootstrap(client)
+    _unlock_test_client(ag_app, client)
+
+    response = client.get(path, base_url=ORIGIN, headers=auth_headers(client))
+
+    assert response.status_code != 403
+
+
+@pytest.mark.parametrize("path", ["/unlock", "/static/js/app.js", "/favicon.ico", "/api/capabilities"])
+def test_public_routes_remain_accessible_without_bearer(tmp_path, monkeypatch, path):
+    _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+
+    response = flask_app.test_client().get(path, base_url=ORIGIN, headers={"Host": HOST})
+
+    assert response.status_code == 200
+
+
 def test_bootstrap_rejects_bad_token(tmp_path, monkeypatch):
     _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
 
@@ -82,8 +146,10 @@ def test_bootstrap_sets_authorized_client_session(tmp_path, monkeypatch):
 
     response = bootstrap(client)
 
-    assert response.status_code == 302
-    assert response.headers["Location"] == "/"
+    assert response.status_code == 200
+    assert b"/static/js/bootstrap.js" in response.data
+    assert f'data-token="{TOKEN}"'.encode("utf-8") in response.data
+    assert b'data-target="/"' in response.data
     with client.session_transaction(base_url=ORIGIN) as sess:
         assert sess["paracci_client_ok"] is True
         assert sess["paracci_client_id"]
@@ -103,7 +169,7 @@ def test_legacy_environment_token_is_purged_and_not_authorized(tmp_path, monkeyp
 
     assert "PARACCI_LOOPBACK_TOKEN" not in os.environ
     assert response.status_code == 403
-    assert bootstrap(client).status_code == 302
+    assert bootstrap(client).status_code == 200
 
 
 @pytest.mark.parametrize("bad_token", ["", None, b"not-a-string"])
@@ -138,7 +204,7 @@ def test_planted_loopback_token_file_is_ignored(tmp_path, monkeypatch):
 
     assert token_path.read_text(encoding="utf-8") == "planted-token"
     assert response.status_code == 403
-    assert bootstrap(client).status_code == 302
+    assert bootstrap(client).status_code == 200
 
 
 def test_app_initialization_does_not_create_loopback_token_file(tmp_path, monkeypatch):
@@ -156,6 +222,34 @@ def test_api_rejects_missing_bearer_after_bootstrap(tmp_path, monkeypatch):
         "/api/stage-attachment",
         base_url=ORIGIN,
         json={"path": str(tmp_path / "missing.txt")},
+        headers={"Host": HOST},
+    )
+
+    assert response.status_code == 403
+
+
+def test_public_unlock_does_not_expose_auth_shell_state_for_cookie_only_request(tmp_path, monkeypatch):
+    _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    client = flask_app.test_client()
+    bootstrap(client)
+    csrf_token = csrf_from(client)
+
+    response = client.get("/unlock", base_url=ORIGIN, headers={"Host": HOST})
+
+    assert response.status_code == 200
+    assert TOKEN.encode("utf-8") not in response.data
+    assert csrf_token.encode("utf-8") not in response.data
+
+
+def test_unlock_post_rejects_bootstrapped_cookie_without_bearer(tmp_path, monkeypatch):
+    _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    client = flask_app.test_client()
+    bootstrap(client)
+
+    response = client.post(
+        "/unlock",
+        base_url=ORIGIN,
+        data={"pin": "Correct-Horse-95175328"},
         headers={"Host": HOST},
     )
 
@@ -336,7 +430,11 @@ def test_second_bootstrapped_client_cannot_reuse_unlocked_device_key(tmp_path, m
 
     _unlock_test_client(ag_app, client_one)
 
-    response = client_two.get("/", base_url=ORIGIN, headers={"Host": HOST})
+    response = client_two.get(
+        "/",
+        base_url=ORIGIN,
+        headers={"Host": HOST, "X-Paracci-Token": TOKEN},
+    )
 
     assert response.status_code == 403
 
@@ -512,7 +610,11 @@ def test_file_activation_queues_native_message_after_unlock(tmp_path, monkeypatc
     ag_app.device_key = None
     ag_app.active_client_id = None
 
-    locked = client.get(target, base_url=ORIGIN, headers={"Host": HOST})
+    locked = client.get(
+        target,
+        base_url=ORIGIN,
+        headers={"Host": HOST, "X-Paracci-Token": TOKEN},
+    )
     assert locked.status_code == 302
     assert locked.headers["Location"].endswith("/unlock")
 
@@ -526,7 +628,11 @@ def test_file_activation_queues_native_message_after_unlock(tmp_path, monkeypatc
     assert unlocked.status_code == 302
     assert unlocked.headers["Location"] == target
 
-    page = client.get(target, base_url=ORIGIN, headers={"Host": HOST})
+    page = client.get(
+        target,
+        base_url=ORIGIN,
+        headers={"Host": HOST, "X-Paracci-Token": TOKEN},
+    )
     assert page.status_code == 200
     assert f'value="{native_ref["id"]}"'.encode("utf-8") in page.data
     assert b"incoming.paracci" in page.data
@@ -553,7 +659,11 @@ def test_file_activation_queues_native_message_after_2fa_unlock(tmp_path, monkey
     ag_app.device_key = None
     ag_app.active_client_id = None
 
-    assert client.get(target, base_url=ORIGIN, headers={"Host": HOST}).status_code == 302
+    assert client.get(
+        target,
+        base_url=ORIGIN,
+        headers={"Host": HOST, "X-Paracci-Token": TOKEN},
+    ).status_code == 302
     monkeypatch.setattr(routes_module, "unlock_device_with_binding", lambda _db, _pin: unlocked_key)
     first_step = client.post(
         "/unlock",
@@ -585,7 +695,11 @@ def test_file_activation_unknown_session_notice_survives_unlock_without_identifi
     with client.session_transaction(base_url=ORIGIN) as sess:
         sess["locale"] = "en"
 
-    locked = client.get("/?file_activation_error=1", base_url=ORIGIN, headers={"Host": HOST})
+    locked = client.get(
+        "/?file_activation_error=1",
+        base_url=ORIGIN,
+        headers={"Host": HOST, "X-Paracci-Token": TOKEN},
+    )
     assert locked.status_code == 302
     assert locked.headers["Location"].endswith("/unlock")
 
@@ -713,12 +827,12 @@ def test_flask_open_uses_bound_header_policy_over_package_metadata(tmp_path, mon
     inline_response = client.get(
         f"/preview/{preview_token}/content",
         base_url=ORIGIN,
-        headers={"Host": HOST},
+        headers={"Host": HOST, "X-Paracci-Token": TOKEN},
     )
     forged_download_response = client.get(
         f"/preview/{preview_token}/content?download=1",
         base_url=ORIGIN,
-        headers={"Host": HOST},
+        headers={"Host": HOST, "X-Paracci-Token": TOKEN},
     )
 
     assert inline_response.status_code == 415

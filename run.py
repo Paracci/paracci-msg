@@ -182,7 +182,14 @@ def _foreground_main_window(window) -> None:
             logger.exception("Unexpected main-window foreground error (%s): %s", operation, exc)
 
 
-def _activate_main_window(window, raw_path: str | None, db, loopback_host: str, port: int) -> str | None:
+def _activate_main_window(
+    window,
+    raw_path: str | None,
+    db,
+    loopback_host: str,
+    port: int,
+    loopback_token: str,
+) -> str | None:
     """Handle one authenticated activation request in the primary process."""
     _foreground_main_window(window)
     if raw_path is None:
@@ -193,7 +200,7 @@ def _activate_main_window(window, raw_path: str | None, db, loopback_host: str, 
         return None
 
     target = _file_activation_target(candidate, db)
-    window.load_url(f"http://{loopback_host}:{port}{target}")
+    window.load_url(_bootstrap_url(loopback_host, port, loopback_token, target))
     return target
 
 
@@ -731,7 +738,7 @@ if __name__ == "__main__":
                 activation_state["pending"].append(raw_path)
                 return
             main_window = activation_state["window"]
-        _activate_main_window(main_window, raw_path, ag_app.db, loopback_host, port)
+        _activate_main_window(main_window, raw_path, ag_app.db, loopback_host, port, loopback_token)
 
     activation_broker = None
     if not args.no_gui:
@@ -811,7 +818,7 @@ if __name__ == "__main__":
                 pending = activation_state["pending"]
                 activation_state["pending"] = []
             for pending_path in pending:
-                _activate_main_window(window, pending_path, ag_app.db, loopback_host, port)
+                _activate_main_window(window, pending_path, ag_app.db, loopback_host, port, loopback_token)
 
         try:
             if hasattr(window.events, 'loaded'):
@@ -906,7 +913,10 @@ if __name__ == "__main__":
                             updateNativeUI(nativeRef);
                         }}
                     }} else {{
-                        window.location.href = '/session/import?native_file_id=' + encodeURIComponent(nativeRef.id);
+                        const target = '/session/import?native_file_id=' + encodeURIComponent(nativeRef.id);
+                        if (window.ParacciSecurity && typeof window.ParacciSecurity.navigateAuthorized === 'function') {{
+                            window.ParacciSecurity.navigateAuthorized(target);
+                        }}
                     }}
                     """
                     try:

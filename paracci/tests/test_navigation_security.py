@@ -94,6 +94,41 @@ def test_main_navigation_guard_script_contains_loopback_policy(needle):
     assert needle in script
 
 
+def test_browser_bootstrap_seeds_memory_only_service_worker_before_navigation():
+    bootstrap_js = (PACKAGE_ROOT / "app" / "static" / "js" / "bootstrap.js").read_text(encoding="utf-8")
+    worker_js = (PACKAGE_ROOT / "app" / "static" / "js" / "loopback-auth-sw.js").read_text(encoding="utf-8")
+
+    assert "navigator.serviceWorker.register(workerUrl, { scope: '/' })" in bootstrap_js
+    assert "paracci:set-loopback-token" in bootstrap_js
+    assert "window.location.replace(target)" in bootstrap_js
+    assert "start().catch(failClosed)" in bootstrap_js
+    assert "let loopbackToken = '';" in worker_js
+    assert "X-Paracci-Token" in worker_js
+    assert "localStorage" not in worker_js
+    assert "indexedDB" not in worker_js
+
+
+def test_app_navigation_reseeds_worker_for_protected_documents():
+    app_js = (PACKAGE_ROOT / "app" / "static" / "js" / "app.js").read_text(encoding="utf-8")
+    session_js = (PACKAGE_ROOT / "app" / "static" / "js" / "session.js").read_text(encoding="utf-8")
+
+    assert "async function seedLoopbackWorker()" in app_js
+    assert "async function navigateAuthorized(url" in app_js
+    assert "void navigateAuthorized(link.href);" in app_js
+    assert "form.requestSubmit(submitter || undefined);" in app_js
+    assert "window.location.href = response.url;" not in session_js
+    assert "await window.ParacciSecurity.navigateAuthorized(response.url);" in session_js
+    assert "await window.ParacciSecurity.seedLoopbackWorker()" in session_js
+    assert "navigateAuthorized(tokenPreviewUrl(token)" in session_js
+
+
+def test_native_drop_navigation_uses_authenticated_browser_helper():
+    source = (REPO_ROOT / "run.py").read_text(encoding="utf-8")
+
+    assert "window.ParacciSecurity.navigateAuthorized(target);" in source
+    assert "window.location.href = '/session/import?native_file_id='" not in source
+
+
 def test_main_pro_api_exposes_expected_methods():
     api = run.ProApi()
 

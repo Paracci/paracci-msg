@@ -98,7 +98,11 @@ def seed_token_preview(pid, content, mime, allow_download, access_token="preview
 
 
 def get(client, path):
-    return client.get(path, base_url=ORIGIN, headers={"Host": HOST})
+    return client.get(
+        path,
+        base_url=ORIGIN,
+        headers={"Host": HOST, "X-Paracci-Token": TOKEN},
+    )
 
 
 def test_no_download_token_image_content_is_degraded_preview_only(tmp_path, monkeypatch):
@@ -264,7 +268,7 @@ def test_allow_download_token_content_and_download_return_original_bytes(tmp_pat
     assert "attachment" in download_response.headers["Content-Disposition"]
 
 
-def test_preview_token_allows_child_window_without_bootstrap_session(tmp_path, monkeypatch):
+def test_preview_token_and_main_bearer_allow_child_window_without_bootstrap_session(tmp_path, monkeypatch):
     ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
     from core.burn import init_device
 
@@ -278,7 +282,7 @@ def test_preview_token_allows_child_window_without_bootstrap_session(tmp_path, m
     response = child_client.get(
         f"/preview/child-window-image?preview_token={token}",
         base_url=ORIGIN,
-        headers={"Host": HOST},
+        headers={"Host": HOST, "X-Paracci-Token": TOKEN},
     )
 
     assert response.status_code == 200
@@ -301,7 +305,7 @@ def test_preview_token_download_respects_allow_download_boundary(tmp_path, monke
     download_response = child_client.get(
         f"/preview/child-window-image/download?preview_token={token}",
         base_url=ORIGIN,
-        headers={"Host": HOST},
+        headers={"Host": HOST, "X-Paracci-Token": TOKEN},
     )
 
     assert download_response.status_code == 200
@@ -311,7 +315,7 @@ def test_preview_token_download_respects_allow_download_boundary(tmp_path, monke
     rejected_response = child_client.get(
         f"/preview/no-download-image/download?preview_token={no_download_token}",
         base_url=ORIGIN,
-        headers={"Host": HOST},
+        headers={"Host": HOST, "X-Paracci-Token": TOKEN},
     )
 
     assert rejected_response.status_code == 403

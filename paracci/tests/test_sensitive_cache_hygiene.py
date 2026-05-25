@@ -162,7 +162,7 @@ def test_no_download_preview_variant_does_not_cache_preview_bytes(tmp_path, monk
     response = client.get(
         "/preview/no-download-image?variant=preview",
         base_url=ORIGIN,
-        headers={"Host": HOST},
+        headers={"Host": HOST, "X-Paracci-Token": TOKEN},
     )
 
     assert response.status_code == 200
@@ -182,7 +182,11 @@ def test_locked_device_redirect_clears_sensitive_caches(tmp_path, monkeypatch):
     seed_staged("staged")
     ag_app.device_key = None
 
-    response = client.get("/settings", base_url=ORIGIN, headers={"Host": HOST})
+    response = client.get(
+        "/settings",
+        base_url=ORIGIN,
+        headers={"Host": HOST, "X-Paracci-Token": TOKEN},
+    )
 
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/unlock")

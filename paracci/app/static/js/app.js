@@ -37,6 +37,8 @@
         return readMeta('paracci-csrf-token');
     }
 
+    const authorizationWorkerUrl = '/static/js/loopback-auth-sw.js';
+
     function isSameOriginRequest(input) {
         try {
             const rawUrl = input instanceof Request ? input.url : input;
@@ -55,6 +57,66 @@
             form.appendChild(input);
         }
         input.value = value;
+    }
+
+    function sendTokenToWorker(worker, token) {
+        return new Promise((resolve, reject) => {
+            const timeout = window.setTimeout(
+                () => reject(new Error('Authorization worker did not respond.')),
+                3000
+            );
+            const channel = new MessageChannel();
+            channel.port1.onmessage = event => {
+                window.clearTimeout(timeout);
+                if (event.data?.ok === true) {
+                    resolve(true);
+                } else {
+                    reject(new Error('Authorization worker rejected token.'));
+                }
+            };
+            worker.postMessage(
+                { type: 'paracci:set-loopback-token', token },
+                [channel.port2]
+            );
+        });
+    }
+
+    async function seedLoopbackWorker() {
+        const token = getLoopbackToken();
+        if (!token || !('serviceWorker' in navigator)) return false;
+
+        const registration = await navigator.serviceWorker.register(
+            authorizationWorkerUrl,
+            { scope: '/' }
+        );
+        const activeRegistration = await navigator.serviceWorker.ready;
+        const worker = activeRegistration.active || registration.active;
+        if (!worker) return false;
+
+        await sendTokenToWorker(worker, token);
+        return true;
+    }
+
+    async function navigateAuthorized(url, options = {}) {
+        if (!isSameOriginRequest(url)) return false;
+        try {
+            if (!(await seedLoopbackWorker())) {
+                throw new Error('Authorization worker is unavailable.');
+            }
+            const targetUrl = new URL(url, window.location.href).href;
+            if (options.newWindow) {
+                return window.open(
+                    targetUrl,
+                    options.target || '_blank',
+                    options.features || ''
+                );
+            }
+            window.location.assign(targetUrl);
+            return true;
+        } catch (err) {
+            showNotification(window.PARACCI_I18N?.server_error || 'Security token is not available.', 'error');
+            return false;
+        }
     }
 
     const nativeFetch = window.fetch.bind(window);
@@ -84,22 +146,76 @@
         if (!(form instanceof HTMLFormElement) || !isSameOriginRequest(form.action)) return;
 
         const token = getLoopbackToken();
-        const csrf = getCsrfToken();
-        if (!token || !csrf) {
+        const method = String(form.method || 'get').toLowerCase();
+        const unsafeMethod = !['get', 'head'].includes(method);
+        const csrf = unsafeMethod ? getCsrfToken() : '';
+        if (!token || (unsafeMethod && !csrf)) {
             e.preventDefault();
             showNotification(window.PARACCI_I18N?.server_error || 'Security token is not available.', 'error');
             return;
         }
 
-        upsertHidden(form, '_paracci_token', token);
-        upsertHidden(form, '_csrf_token', csrf);
+        if (unsafeMethod) {
+            upsertHidden(form, '_paracci_token', token);
+            upsertHidden(form, '_csrf_token', csrf);
+        }
+        if (form.dataset.paracciAuthorizationWorkerReady === 'true') {
+            delete form.dataset.paracciAuthorizationWorkerReady;
+            return;
+        }
+
+        e.preventDefault();
+        const submitter = e.submitter;
+        seedLoopbackWorker().then(ready => {
+            if (!ready) {
+                throw new Error('Authorization worker is unavailable.');
+            }
+            form.dataset.paracciAuthorizationWorkerReady = 'true';
+            if (typeof form.requestSubmit === 'function') {
+                form.requestSubmit(submitter || undefined);
+            } else {
+                HTMLFormElement.prototype.submit.call(form);
+            }
+        }).catch(() => {
+            showNotification(window.PARACCI_I18N?.server_error || 'Security token is not available.', 'error');
+        });
+    }, true);
+
+    document.addEventListener('click', e => {
+        if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
+            return;
+        }
+        const link = e.target instanceof Element ? e.target.closest('a[href]') : null;
+        if (
+            !link
+            || link.download
+            || link.target
+            || (link.hash && link.pathname === window.location.pathname && link.search === window.location.search)
+            || !isSameOriginRequest(link.href)
+        ) {
+            return;
+        }
+        e.preventDefault();
+        void navigateAuthorized(link.href);
     }, true);
 
     window.ParacciSecurity = {
         getLoopbackToken,
         getCsrfToken,
-        isSameOriginRequest
+        isSameOriginRequest,
+        seedLoopbackWorker,
+        navigateAuthorized
     };
+
+    function seedAvailableToken() {
+        if (getLoopbackToken()) {
+            seedLoopbackWorker().catch(() => {});
+        }
+    }
+
+    window.addEventListener('pywebviewready', seedAvailableToken);
+    window.addEventListener('paracci:loopback-token-ready', seedAvailableToken);
+    seedAvailableToken();
 })();
 
 document.addEventListener('DOMContentLoaded', () => {
