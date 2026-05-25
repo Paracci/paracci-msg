@@ -34,11 +34,11 @@ class SecretServiceError(Exception):
         super().__init__(message)
 
 
-def wrap_with_secret_service(profile_id: str, data: bytes) -> None:
-    """Store bytes in the default Secret Service collection."""
+def wrap_with_secret_service(profile_id: str, data: bytes | bytearray) -> None:
+    """Store bytes-like data in the default Secret Service collection."""
     _validate_profile_id(profile_id)
-    if not isinstance(data, bytes):
-        raise TypeError("data must be bytes")
+    if not isinstance(data, (bytes, bytearray)):
+        raise TypeError("data must be bytes or bytearray")
     try:
         _get_backend().store(profile_id, data)
     except SecretServiceError:
@@ -47,11 +47,11 @@ def wrap_with_secret_service(profile_id: str, data: bytes) -> None:
         raise SecretServiceError("wrap", "Linux Secret Service storage failed.") from exc
 
 
-def unwrap_with_secret_service(profile_id: str) -> bytes:
-    """Retrieve bytes from the default Secret Service collection."""
+def unwrap_with_secret_service(profile_id: str) -> bytearray:
+    """Retrieve secret-service data into a mutable caller-owned buffer."""
     _validate_profile_id(profile_id)
     try:
-        return _get_backend().load(profile_id)
+        return _as_mutable_secret(_get_backend().load(profile_id))
     except SecretServiceError:
         raise
     except Exception as exc:
@@ -114,7 +114,7 @@ class _DBusSecretServiceBackend:
                 code="unavailable",
             ) from exc
 
-    def store(self, profile_id: str, data: bytes) -> None:
+    def store(self, profile_id: str, data: bytes | bytearray) -> None:
         attributes = self._attributes(profile_id)
         collection_path = self._default_collection_path()
         collection = self._interface(collection_path, COLLECTION_IFACE)
@@ -145,7 +145,7 @@ class _DBusSecretServiceBackend:
         except Exception as exc:
             raise SecretServiceError("wrap", "Linux Secret Service storage failed.") from exc
 
-    def load(self, profile_id: str) -> bytes:
+    def load(self, profile_id: str) -> bytearray:
         items = self._search_unlocked(profile_id, "unwrap")
         if not items:
             raise SecretServiceError(
@@ -156,7 +156,7 @@ class _DBusSecretServiceBackend:
         item = self._interface(items[0], ITEM_IFACE)
         try:
             secret = item.GetSecret(self.dbus.ObjectPath(self.session))
-            return bytes(bytearray(secret[2]))
+            return bytearray(secret[2])
         except Exception as exc:
             raise SecretServiceError("unwrap", "Linux Secret Service lookup failed.") from exc
 
@@ -232,3 +232,9 @@ class _DBusSecretServiceBackend:
 
     def _attributes(self, profile_id: str) -> dict[str, str]:
         return {**ATTRIBUTES, "profile_id": profile_id}
+
+
+def _as_mutable_secret(data: bytes | bytearray) -> bytearray:
+    if isinstance(data, bytearray):
+        return data
+    return bytearray(data)

@@ -38,11 +38,11 @@ class DATA_BLOB(ctypes.Structure):
     ]
 
 
-def wrap_with_dpapi(data: bytes) -> bytes:
-    """Protect bytes with Windows DPAPI using CURRENT_USER scope."""
+def wrap_with_dpapi(data: bytes | bytearray) -> bytes:
+    """Protect bytes-like data with Windows DPAPI using CURRENT_USER scope."""
     _ensure_windows("wrap")
-    if not isinstance(data, bytes):
-        raise TypeError("data must be bytes")
+    if not isinstance(data, (bytes, bytearray)):
+        raise TypeError("data must be bytes or bytearray")
     try:
         return _call_crypt_protect(data)
     except DPAPIError:
@@ -51,13 +51,13 @@ def wrap_with_dpapi(data: bytes) -> bytes:
         raise DPAPIError("wrap", "Windows DPAPI protection failed.") from exc
 
 
-def unwrap_with_dpapi(blob: bytes) -> bytes:
-    """Unprotect bytes with Windows DPAPI using CURRENT_USER scope."""
+def unwrap_with_dpapi(blob: bytes) -> bytearray:
+    """Unprotect a DPAPI blob into a mutable buffer owned by the caller."""
     _ensure_windows("unwrap")
     if not isinstance(blob, bytes):
         raise TypeError("blob must be bytes")
     try:
-        return _call_crypt_unprotect(blob)
+        return _as_mutable_secret(_call_crypt_unprotect(blob))
     except DPAPIError:
         raise
     except Exception as exc:
@@ -108,9 +108,12 @@ def _load_apis():
     return _crypt32, _kernel32
 
 
-def _bytes_to_blob(data: bytes) -> tuple[DATA_BLOB, object | None]:
+def _bytes_to_blob(data: bytes | bytearray) -> tuple[DATA_BLOB, object | None]:
     if data:
-        buffer = ctypes.create_string_buffer(data, len(data))
+        if isinstance(data, bytearray):
+            buffer = (ctypes.c_byte * len(data)).from_buffer(data)
+        else:
+            buffer = ctypes.create_string_buffer(data, len(data))
         pointer = ctypes.cast(buffer, ctypes.POINTER(ctypes.c_byte))
     else:
         buffer = None
@@ -122,6 +125,21 @@ def _blob_to_bytes(blob: DATA_BLOB) -> bytes:
     if not blob.pbData or blob.cbData == 0:
         return b""
     return ctypes.string_at(blob.pbData, blob.cbData)
+
+
+def _blob_to_bytearray(blob: DATA_BLOB) -> bytearray:
+    if not blob.pbData or blob.cbData == 0:
+        return bytearray()
+    result = bytearray(blob.cbData)
+    buffer = (ctypes.c_byte * len(result)).from_buffer(result)
+    ctypes.memmove(buffer, blob.pbData, blob.cbData)
+    return result
+
+
+def _as_mutable_secret(data: bytes | bytearray) -> bytearray:
+    if isinstance(data, bytearray):
+        return data
+    return bytearray(data)
 
 
 def _free_blob(blob: DATA_BLOB) -> None:
@@ -139,7 +157,7 @@ def _format_last_error() -> tuple[int, str]:
     return winerror, detail
 
 
-def _call_crypt_protect(data: bytes) -> bytes:
+def _call_crypt_protect(data: bytes | bytearray) -> bytes:
     crypt32, _kernel = _load_apis()
     data_blob, data_buffer = _bytes_to_blob(data)
     entropy_blob, entropy_buffer = _bytes_to_blob(DPAPI_DEVICE_KEY_ENTROPY_V1)
@@ -166,7 +184,7 @@ def _call_crypt_protect(data: bytes) -> bytes:
         _free_blob(out_blob)
 
 
-def _call_crypt_unprotect(blob: bytes) -> bytes:
+def _call_crypt_unprotect(blob: bytes) -> bytearray:
     crypt32, _kernel = _load_apis()
     data_blob, data_buffer = _bytes_to_blob(blob)
     entropy_blob, entropy_buffer = _bytes_to_blob(DPAPI_DEVICE_KEY_ENTROPY_V1)
@@ -187,6 +205,8 @@ def _call_crypt_unprotect(blob: bytes) -> bytes:
         raise DPAPIError("unwrap", f"Windows DPAPI unprotection failed: {detail}", winerror)
 
     try:
-        return _blob_to_bytes(out_blob)
+        return _blob_to_bytearray(out_blob)
     finally:
+        if out_blob.pbData and out_blob.cbData:
+            ctypes.memset(out_blob.pbData, 0, out_blob.cbData)
         _free_blob(out_blob)

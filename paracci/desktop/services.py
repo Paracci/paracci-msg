@@ -335,7 +335,7 @@ class DeviceService:
     def __init__(self, data_dir: Path):
         self.data_dir = data_dir
         self.db = BurnDB(data_dir / "sessions.db")
-        self.device_key: bytes | None = None
+        self.device_key: bytearray | None = None
         self.device_binding_warning: DeviceBindingWarning | None = None
 
     @property
@@ -345,13 +345,13 @@ class DeviceService:
     def is_initialized(self) -> bool:
         return is_device_initialized(self.db)
 
-    def initialize(self, pin: str) -> bytes:
+    def initialize(self, pin: str) -> bytearray:
         self.device_binding_warning = None
         self.device_key = initialize_device_with_binding(self.db, pin)
         self.device_binding_warning = consume_device_binding_warning()
         return self.device_key
 
-    def unlock(self, pin: str) -> bytes:
+    def unlock(self, pin: str) -> bytearray:
         self.device_binding_warning = None
         self.device_key = unlock_device_with_binding(self.db, pin)
         self.device_binding_warning = consume_device_binding_warning()
@@ -364,7 +364,7 @@ class DeviceService:
         self.device_key = None
         self.device_binding_warning = None
 
-    def ensure_unlocked(self) -> bytes:
+    def ensure_unlocked(self) -> bytearray:
         if self.device_key is None:
             raise DeviceError("Device is locked.")
         return self.device_key

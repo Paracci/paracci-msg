@@ -598,7 +598,7 @@ class BurnDB:
             raise DeviceError("Invalid 2FA secret metadata.")
         return EncryptedBlob(nonce=nonce, ciphertext=ciphertext)
 
-    def get_2fa_secret(self, device_key: bytes) -> str | None:
+    def get_2fa_secret(self, device_key: bytes | bytearray) -> str | None:
         """Returns the decrypted 2FA secret key, migrating legacy plaintext storage."""
         val = self.get_device_meta(TWO_FA_SECRET_KEY)
         if val is None:
@@ -617,7 +617,7 @@ class BurnDB:
         except Exception as exc:
             raise DeviceError("Invalid 2FA secret metadata.") from exc
 
-    def set_2fa_secret(self, secret: str, device_key: bytes) -> None:
+    def set_2fa_secret(self, secret: str, device_key: bytes | bytearray) -> None:
         """Encrypts and saves the 2FA secret key."""
         normalized = (secret or "").strip()
         blob = encrypt(device_key, normalized.encode("utf-8"), aad=TWO_FA_SECRET_AAD)
@@ -816,7 +816,7 @@ def validate_pin_strength(pin: str):
         )
 
 
-def init_device(db: BurnDB, pin: str) -> bytes:
+def init_device(db: BurnDB, pin: str) -> bytearray:
     """
     Sets up the device for the first time:
     1. Produces a new pin_salt.
@@ -833,7 +833,7 @@ def init_device(db: BurnDB, pin: str) -> bytes:
     master_key = derive_master_key(pin, pin_salt)
     
     try:
-        device_key = random_bytes(32)
+        device_key = bytearray(random_bytes(32))
         
         # Encrypt device_key with master_key.
         # OS keychain/TPM wrapping remains a separate device_key_protection_v1
@@ -851,7 +851,7 @@ def init_device(db: BurnDB, pin: str) -> bytes:
             wipe(master_key)
 
 
-def unlock_device(db: BurnDB, pin: str) -> bytes:
+def unlock_device(db: BurnDB, pin: str) -> bytearray:
     """
     Unlocks the device key with the passphrase.
     """
@@ -870,7 +870,7 @@ def unlock_device(db: BurnDB, pin: str) -> bytes:
         ciphertext = enc_data[12:]
         blob = EncryptedBlob(nonce=nonce, ciphertext=ciphertext)
         
-        device_key = decrypt(master_key, blob, aad=b"paracci.device_key.v1")
+        device_key = bytearray(decrypt(master_key, blob, aad=b"paracci.device_key.v1"))
     except Exception:
         state = db.record_unlock_failure()
         if state["retry_after_seconds"] > 0 and state["failed_attempts"] >= UNLOCK_MAX_FAILED_ATTEMPTS:

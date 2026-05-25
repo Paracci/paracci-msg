@@ -174,20 +174,22 @@ def verify_identity_signature(
         return False
 
 
-def wipe(data: bytes | bytearray | list):
-    """Best-effort process hygiene for mutable sensitive containers.
+def wipe(data: bytes | bytearray | list) -> None:
+    """Best-effort zeroing for mutable sensitive containers owned by Paracci.
 
-    Python cannot guarantee zeroization of immutable bytes/str objects or copies
-    already held by Flask responses, DOM strings, base64 values, or libraries.
+    Python and native libraries may retain copies outside this buffer. Immutable
+    inputs are rejected so a caller cannot mistake a no-op for cleanup.
     """
+    if isinstance(data, bytes):
+        raise TypeError("wipe() cannot zero immutable bytes; use bytearray for sensitive data.")
     if isinstance(data, bytearray):
         for i in range(len(data)):
             data[i] = 0
     elif isinstance(data, list):
         for i in range(len(data)):
             data[i] = None
-    # bytes are immutable; only this local reference can be dropped.
-    del data
+    else:
+        raise TypeError("wipe() requires a bytearray or list.")
     gc.collect()
 
 
@@ -210,12 +212,12 @@ def ecdh(private_key_bytes: bytes, peer_public_key_bytes: bytes) -> bytes:
 # Passphrase Based Key Derivation (KDF)
 # ---------------------------------------------------------------------------
 
-def derive_master_key(passphrase: str, salt: bytes) -> bytes:
+def derive_master_key(passphrase: str, salt: bytes) -> bytearray:
     """
     Derives the device master key from the user passphrase.
     Slows down brute-force attacks using Argon2id (Time-Lock / Quantum Protection).
     """
-    master_key = hash_secret_raw(
+    return bytearray(hash_secret_raw(
         secret=passphrase.encode("utf-8"),
         salt=salt,
         time_cost=ARGON2_TIME,
@@ -223,8 +225,7 @@ def derive_master_key(passphrase: str, salt: bytes) -> bytes:
         parallelism=ARGON2_PAR,
         hash_len=32,
         type=LowLevelArgon2Type.ID
-    )
-    return master_key
+    ))
 
 
 def get_fingerprint(public_key1: bytes, public_key2: bytes) -> str:
@@ -430,7 +431,7 @@ def derive_session_keys(
 # ChaCha20-Poly1305 Encryption / Decryption
 # ---------------------------------------------------------------------------
 
-def encrypt(key: bytes, plaintext: bytes, aad: bytes = b"") -> EncryptedBlob:
+def encrypt(key: bytes | bytearray, plaintext: bytes, aad: bytes = b"") -> EncryptedBlob:
     """
     Authenticated encryption with ChaCha20-Poly1305.
 
@@ -449,7 +450,7 @@ def encrypt(key: bytes, plaintext: bytes, aad: bytes = b"") -> EncryptedBlob:
 
 
 def decrypt(
-    key: bytes,
+    key: bytes | bytearray,
     blob: EncryptedBlob,
     aad: bytes = b"",
 ) -> bytes:

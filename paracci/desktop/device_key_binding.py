@@ -120,7 +120,7 @@ def consume_device_binding_warning() -> DeviceBindingWarning | None:
     return warning
 
 
-def initialize_device_with_binding(db: BurnDB, pin: str) -> bytes:
+def initialize_device_with_binding(db: BurnDB, pin: str) -> bytearray:
     """Initialize the profile, adding platform binding when available."""
     _clear_device_binding_warning()
     if sys.platform == "win32":
@@ -138,7 +138,7 @@ def initialize_device_with_binding(db: BurnDB, pin: str) -> bytes:
     return legacy_init_device(db, pin)
 
 
-def unlock_device_with_binding(db: BurnDB, pin: str) -> bytes:
+def unlock_device_with_binding(db: BurnDB, pin: str) -> bytearray:
     """Unlock the profile, requiring platform binding when available."""
     _clear_device_binding_warning()
     if sys.platform == "win32":
@@ -177,7 +177,7 @@ def delete_device_binding_for_profile(db: BurnDB) -> None:
     db.delete_device_meta(PLATFORM_BINDING_KIND_META_KEY)
 
 
-def _initialize_windows_device_with_binding(db: BurnDB, pin: str) -> bytes:
+def _initialize_windows_device_with_binding(db: BurnDB, pin: str) -> bytearray:
     validate_pin_strength(pin)
     if is_device_initialized(db):
         raise DeviceError("Device already set up.")
@@ -188,10 +188,10 @@ def _initialize_windows_device_with_binding(db: BurnDB, pin: str) -> bytes:
     storage_key = None
 
     try:
-        dpapi_factor = random_bytes(KEY_LEN)
+        dpapi_factor = bytearray(random_bytes(KEY_LEN))
         stored_dpapi_blob = _protect_dpapi_factor(dpapi_factor)
         storage_key = _derive_bound_storage_key(master_key, dpapi_factor)
-        device_key = random_bytes(KEY_LEN)
+        device_key = bytearray(random_bytes(KEY_LEN))
         encrypted = encrypt(storage_key, device_key, aad=BOUND_DEVICE_KEY_AAD)
         _set_device_meta_batch(
             db,
@@ -210,7 +210,7 @@ def _initialize_windows_device_with_binding(db: BurnDB, pin: str) -> bytes:
             wipe(storage_key)
 
 
-def _unlock_bound_device(db: BurnDB, pin: str, stored_dpapi_blob: bytes) -> bytes:
+def _unlock_bound_device(db: BurnDB, pin: str, stored_dpapi_blob: bytes) -> bytearray:
     pin_salt = db.get_device_meta("pin_salt")
     encrypted_device_key = db.get_device_meta("encrypted_device_key")
     if not pin_salt or not encrypted_device_key:
@@ -224,7 +224,7 @@ def _unlock_bound_device(db: BurnDB, pin: str, stored_dpapi_blob: bytes) -> byte
     try:
         raw_dpapi_blob = _decode_dpapi_blob(stored_dpapi_blob)
         try:
-            dpapi_factor = unwrap_with_dpapi(raw_dpapi_blob)
+            dpapi_factor = _as_mutable_secret(unwrap_with_dpapi(raw_dpapi_blob))
         except DPAPIError as exc:
             raise _different_account_error() from exc
 
@@ -262,7 +262,7 @@ def _unlock_bound_device(db: BurnDB, pin: str, stored_dpapi_blob: bytes) -> byte
             wipe(storage_key)
 
 
-def _unlock_legacy_and_bind(db: BurnDB, pin: str) -> bytes:
+def _unlock_legacy_and_bind(db: BurnDB, pin: str) -> bytearray:
     device_key = legacy_unlock_device(db, pin)
     pin_salt = db.get_device_meta("pin_salt")
     if not pin_salt:
@@ -272,7 +272,7 @@ def _unlock_legacy_and_bind(db: BurnDB, pin: str) -> bytes:
     dpapi_factor = None
     storage_key = None
     try:
-        dpapi_factor = random_bytes(KEY_LEN)
+        dpapi_factor = bytearray(random_bytes(KEY_LEN))
         storage_key = _derive_bound_storage_key(master_key, dpapi_factor)
         encrypted = encrypt(storage_key, device_key, aad=BOUND_DEVICE_KEY_AAD)
         _set_device_meta_batch(
@@ -291,7 +291,7 @@ def _unlock_legacy_and_bind(db: BurnDB, pin: str) -> bytes:
     return device_key
 
 
-def _initialize_linux_bound_or_fallback(db: BurnDB, pin: str) -> bytes:
+def _initialize_linux_bound_or_fallback(db: BurnDB, pin: str) -> bytearray:
     try:
         return _initialize_platform_bound_device(
             db,
@@ -308,7 +308,7 @@ def _initialize_linux_bound_or_fallback(db: BurnDB, pin: str) -> bytes:
         return legacy_init_device(db, pin)
 
 
-def _unlock_macos_bound_device(db: BurnDB, pin: str) -> bytes:
+def _unlock_macos_bound_device(db: BurnDB, pin: str) -> bytearray:
     profile_id = _read_profile_id(db)
     kind = _read_binding_kind(db)
     if not profile_id and not kind:
@@ -332,7 +332,7 @@ def _unlock_macos_bound_device(db: BurnDB, pin: str) -> bytes:
     )
 
 
-def _unlock_linux_bound_or_fallback(db: BurnDB, pin: str) -> bytes:
+def _unlock_linux_bound_or_fallback(db: BurnDB, pin: str) -> bytearray:
     profile_id = _read_profile_id(db)
     kind = _read_binding_kind(db)
     if not profile_id and not kind:
@@ -369,7 +369,7 @@ def _initialize_platform_bound_device(
     kind: bytes,
     store_factor,
     damaged_error_factory,
-) -> bytes:
+) -> bytearray:
     validate_pin_strength(pin)
     if is_device_initialized(db):
         raise DeviceError("Device already set up.")
@@ -382,11 +382,11 @@ def _initialize_platform_bound_device(
     stored = False
 
     try:
-        binding_factor = random_bytes(KEY_LEN)
+        binding_factor = bytearray(random_bytes(KEY_LEN))
         store_factor(profile_id, binding_factor)
         stored = True
         storage_key = _derive_bound_storage_key(master_key, binding_factor)
-        device_key = random_bytes(KEY_LEN)
+        device_key = bytearray(random_bytes(KEY_LEN))
         encrypted = encrypt(storage_key, device_key, aad=PLATFORM_BOUND_DEVICE_KEY_AAD)
         try:
             _set_device_meta_batch(
@@ -421,7 +421,7 @@ def _unlock_platform_bound_device(
     kind: bytes,
     load_factor,
     damaged_error_factory,
-) -> bytes:
+) -> bytearray:
     pin_salt = db.get_device_meta("pin_salt")
     encrypted_device_key = db.get_device_meta("encrypted_device_key")
     profile_id = _read_profile_id(db)
@@ -437,7 +437,7 @@ def _unlock_platform_bound_device(
     storage_key = None
 
     try:
-        binding_factor = load_factor(profile_id)
+        binding_factor = _as_mutable_secret(load_factor(profile_id))
         if len(binding_factor) != KEY_LEN:
             raise damaged_error_factory()
 
@@ -473,11 +473,11 @@ def _unlock_platform_bound_device(
 def _bind_legacy_device_with_platform_factor(
     db: BurnDB,
     pin: str,
-    device_key: bytes,
+    device_key: bytes | bytearray,
     kind: bytes,
     store_factor,
     damaged_error_factory,
-) -> bytes:
+) -> bytes | bytearray:
     pin_salt = db.get_device_meta("pin_salt")
     if not pin_salt:
         raise DeviceError("Device not set up yet.")
@@ -488,7 +488,7 @@ def _bind_legacy_device_with_platform_factor(
     profile_id = _new_profile_id()
     stored = False
     try:
-        binding_factor = random_bytes(KEY_LEN)
+        binding_factor = bytearray(random_bytes(KEY_LEN))
         store_factor(profile_id, binding_factor)
         stored = True
         storage_key = _derive_bound_storage_key(master_key, binding_factor)
@@ -519,30 +519,30 @@ def _bind_legacy_device_with_platform_factor(
             wipe(storage_key)
 
 
-def _protect_dpapi_factor(dpapi_factor: bytes) -> bytes:
+def _protect_dpapi_factor(dpapi_factor: bytes | bytearray) -> bytes:
     try:
         return _encode_dpapi_blob(wrap_with_dpapi(dpapi_factor))
     except DPAPIError as exc:
         raise _keyfile_damaged_error() from exc
 
 
-def _store_keychain_factor(profile_id: str, binding_factor: bytes) -> None:
+def _store_keychain_factor(profile_id: str, binding_factor: bytes | bytearray) -> None:
     try:
         wrap_with_keychain(profile_id, binding_factor)
     except KeychainError as exc:
         raise _keychain_failed_error() from exc
 
 
-def _load_keychain_factor(profile_id: str) -> bytes:
+def _load_keychain_factor(profile_id: str) -> bytearray:
     try:
-        return unwrap_with_keychain(profile_id)
+        return _as_mutable_secret(unwrap_with_keychain(profile_id))
     except KeychainError as exc:
         if exc.code == "missing":
             raise _keychain_missing_error() from exc
         raise _keychain_failed_error() from exc
 
 
-def _store_secret_service_factor(profile_id: str, binding_factor: bytes) -> None:
+def _store_secret_service_factor(profile_id: str, binding_factor: bytes | bytearray) -> None:
     try:
         wrap_with_secret_service(profile_id, binding_factor)
     except SecretServiceError as exc:
@@ -551,9 +551,9 @@ def _store_secret_service_factor(profile_id: str, binding_factor: bytes) -> None
         raise _secret_service_failed_error() from exc
 
 
-def _load_secret_service_factor(profile_id: str) -> bytes:
+def _load_secret_service_factor(profile_id: str) -> bytearray:
     try:
-        return unwrap_with_secret_service(profile_id)
+        return _as_mutable_secret(unwrap_with_secret_service(profile_id))
     except SecretServiceError as exc:
         if exc.code == "missing":
             raise _secret_service_missing_error() from exc
@@ -571,11 +571,11 @@ def _best_effort_delete_platform_factor(kind: bytes, profile_id: str) -> None:
 
 
 def _decrypt_stored_device_key(
-    storage_key: bytes,
+    storage_key: bytes | bytearray,
     encrypted_device_key: bytes,
     aad: bytes,
     damaged_error_factory=None,
-) -> bytes:
+) -> bytearray:
     if damaged_error_factory is None:
         damaged_error_factory = _keyfile_damaged_error
     if len(encrypted_device_key) <= DEVICE_KEY_NONCE_LEN:
@@ -584,15 +584,24 @@ def _decrypt_stored_device_key(
         nonce=encrypted_device_key[:DEVICE_KEY_NONCE_LEN],
         ciphertext=encrypted_device_key[DEVICE_KEY_NONCE_LEN:],
     )
-    return decrypt(storage_key, blob, aad=aad)
+    return bytearray(decrypt(storage_key, blob, aad=aad))
 
 
-def _derive_bound_storage_key(master_key: bytes, binding_factor: bytes) -> bytes:
-    return hmac.new(
-        master_key,
-        BOUND_STORAGE_KEY_LABEL + binding_factor,
-        hashlib.sha256,
-    ).digest()
+def _derive_bound_storage_key(
+    master_key: bytes | bytearray,
+    binding_factor: bytes | bytearray,
+) -> bytearray:
+    digest = hmac.new(master_key, digestmod=hashlib.sha256)
+    digest.update(BOUND_STORAGE_KEY_LABEL)
+    digest.update(binding_factor)
+    return bytearray(digest.digest())
+
+
+def _as_mutable_secret(value: bytes | bytearray) -> bytearray:
+    """Keep owned secret buffers mutable so their final wipe is effective."""
+    if isinstance(value, bytearray):
+        return value
+    return bytearray(value)
 
 
 def _raise_incorrect_passphrase(db: BurnDB) -> None:

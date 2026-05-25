@@ -38,11 +38,11 @@ class KeychainError(Exception):
         super().__init__(message)
 
 
-def wrap_with_keychain(profile_id: str, data: bytes) -> None:
-    """Store bytes as a non-syncing generic password item in macOS Keychain."""
+def wrap_with_keychain(profile_id: str, data: bytes | bytearray) -> None:
+    """Store bytes-like data as a non-syncing generic password item."""
     _validate_profile_id(profile_id)
-    if not isinstance(data, bytes):
-        raise TypeError("data must be bytes")
+    if not isinstance(data, (bytes, bytearray)):
+        raise TypeError("data must be bytes or bytearray")
     try:
         _get_adapter().store(profile_id, data)
     except KeychainError:
@@ -51,11 +51,11 @@ def wrap_with_keychain(profile_id: str, data: bytes) -> None:
         raise KeychainError("wrap", "macOS Keychain storage failed.") from exc
 
 
-def unwrap_with_keychain(profile_id: str) -> bytes:
-    """Retrieve bytes from a macOS Keychain generic password item."""
+def unwrap_with_keychain(profile_id: str) -> bytearray:
+    """Retrieve keychain data into a mutable caller-owned buffer."""
     _validate_profile_id(profile_id)
     try:
-        return _get_adapter().load(profile_id)
+        return _as_mutable_secret(_get_adapter().load(profile_id))
     except KeychainError:
         raise
     except Exception as exc:
@@ -158,7 +158,7 @@ class _SecurityKeychainAdapter:
     def __init__(self):
         self.security, self.cf = _load_frameworks()
 
-    def store(self, profile_id: str, data: bytes) -> None:
+    def store(self, profile_id: str, data: bytes | bytearray) -> None:
         query, refs = self._item_query(profile_id, data=data)
         try:
             status = self.security.SecItemAdd(query, None)
@@ -173,7 +173,7 @@ class _SecurityKeychainAdapter:
         finally:
             self._release_refs(refs + [query])
 
-    def load(self, profile_id: str) -> bytes:
+    def load(self, profile_id: str) -> bytearray:
         query, refs = self._item_query(profile_id, return_data=True)
         result = ctypes.c_void_p()
         try:
@@ -182,7 +182,7 @@ class _SecurityKeychainAdapter:
                 raise self._error("unwrap", status)
             if not result.value:
                 raise KeychainError("unwrap", "macOS Keychain returned no data.")
-            return self._cfdata_to_bytes(result.value)
+            return self._cfdata_to_bytearray(result.value)
         finally:
             if result.value:
                 self.cf.CFRelease(result)
@@ -201,7 +201,7 @@ class _SecurityKeychainAdapter:
     def _item_query(
         self,
         profile_id: str,
-        data: bytes | None = None,
+        data: bytes | bytearray | None = None,
         return_data: bool = False,
     ) -> tuple[int, list[int]]:
         keys: list[int] = [
@@ -245,7 +245,7 @@ class _SecurityKeychainAdapter:
 
         return self._cfdict(keys, values), refs
 
-    def _value_attrs(self, data: bytes) -> tuple[int, list[int]]:
+    def _value_attrs(self, data: bytes | bytearray) -> tuple[int, list[int]]:
         data_ref = self._cfdata(data)
         return self._cfdict([self._sec_const("kSecValueData")], [data_ref]), [data_ref]
 
@@ -268,8 +268,11 @@ class _SecurityKeychainAdapter:
             raise KeychainError("wrap", "Failed to create Keychain string.")
         return result
 
-    def _cfdata(self, data: bytes) -> int:
-        buffer = ctypes.create_string_buffer(data, len(data))
+    def _cfdata(self, data: bytes | bytearray) -> int:
+        if isinstance(data, bytearray):
+            buffer = (ctypes.c_byte * len(data)).from_buffer(data)
+        else:
+            buffer = ctypes.create_string_buffer(data, len(data))
         result = self.cf.CFDataCreate(None, ctypes.cast(buffer, ctypes.c_void_p), len(data))
         if not result:
             raise KeychainError("wrap", "Failed to create Keychain data.")
@@ -290,14 +293,17 @@ class _SecurityKeychainAdapter:
             raise KeychainError("wrap", "Failed to create Keychain query.")
         return result
 
-    def _cfdata_to_bytes(self, data_ref: int) -> bytes:
+    def _cfdata_to_bytearray(self, data_ref: int) -> bytearray:
         length = self.cf.CFDataGetLength(data_ref)
         if length <= 0:
-            return b""
+            return bytearray()
         pointer = self.cf.CFDataGetBytePtr(data_ref)
         if not pointer:
             raise KeychainError("unwrap", "macOS Keychain returned invalid data.")
-        return ctypes.string_at(pointer, length)
+        result = bytearray(length)
+        buffer = (ctypes.c_byte * len(result)).from_buffer(result)
+        ctypes.memmove(buffer, pointer, length)
+        return result
 
     def _release_refs(self, refs: list[int]) -> None:
         for ref in refs:
@@ -317,3 +323,9 @@ class _SecurityKeychainAdapter:
             f"macOS Keychain {operation} failed with OSStatus {status}.",
             status=status,
         )
+
+
+def _as_mutable_secret(data: bytes | bytearray) -> bytearray:
+    if isinstance(data, bytearray):
+        return data
+    return bytearray(data)

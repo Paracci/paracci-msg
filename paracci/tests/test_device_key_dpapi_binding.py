@@ -128,3 +128,23 @@ def test_unsupported_platform_path_stays_passphrase_only(tmp_path, monkeypatch):
 
     assert db.get_device_meta(DPAPI_BLOB_META_KEY) is None
     assert unlock_device_with_binding(db, PASSPHRASE) == device_key
+
+
+def test_windows_binding_wipes_mutable_intermediate_keys(tmp_path, monkeypatch):
+    enable_fake_windows_dpapi(monkeypatch)
+    db = BurnDB(tmp_path / "sessions.db")
+    wiped = []
+    real_wipe = binding.wipe
+
+    def track_wipe(value):
+        assert isinstance(value, bytearray)
+        real_wipe(value)
+        wiped.append(value)
+
+    monkeypatch.setattr(binding, "wipe", track_wipe)
+
+    initialize_device_with_binding(db, PASSPHRASE)
+    unlock_device_with_binding(db, PASSPHRASE)
+
+    assert len(wiped) == 6
+    assert all(value == bytearray(len(value)) for value in wiped)
