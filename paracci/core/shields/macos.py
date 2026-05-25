@@ -7,6 +7,11 @@ from pathlib import Path
 import ctypes.util
 from .base import BaseShield
 
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - imported eagerly on Windows.
+    fcntl = None
+
 class MacOSShield(BaseShield):
     def get_os_name(self) -> str:
         """Returns the human-readable OS name."""
@@ -73,15 +78,41 @@ class MacOSShield(BaseShield):
         base = Path('~/Library/Application Support').expanduser()
         return str(base / app_name)
 
-    def secure_delete(self, file_path: str) -> bool:
-        """Best-effort overwrite/delete; SSDs, snapshots, journals, and sync may retain data."""
+    def _flush_overwrite(self, fd: int) -> None:
+        """Attempt macOS full persistence, falling back to an ordinary flush."""
+        if fcntl is not None and hasattr(fcntl, "F_FULLFSYNC"):
+            try:
+                fcntl.fcntl(fd, fcntl.F_FULLFSYNC)
+                return
+            except Exception as e:
+                logging.debug(
+                    "[MacOSShield] F_FULLFSYNC failed; falling back to fsync: %s", e
+                )
+        else:
+            logging.debug("[MacOSShield] F_FULLFSYNC unavailable; falling back to fsync.")
         try:
-            p = Path(file_path)
-            size = p.stat().st_size
-            with open(file_path, "wb") as f: f.write(os.urandom(size))
+            os.fsync(fd)
+        except Exception as e:
+            logging.debug("[MacOSShield] fsync fallback failed: %s", e)
+
+    def secure_delete(self, file_path: str) -> bool:
+        """
+        Best-effort hygiene: overwrite in place, request F_FULLFSYNC with an
+        fsync fallback, and unlink the file. SSD wear leveling, journaling/COW
+        filesystems, snapshots, backups, and sync layers mean physical erasure
+        cannot be guaranteed from userspace. For encrypted .paracci content,
+        encryption key protection or destruction is the stronger security boundary.
+        """
+        try:
+            with open(file_path, "r+b") as f:
+                size = os.fstat(f.fileno()).st_size
+                f.write(os.urandom(size))
+                f.flush()
+                self._flush_overwrite(f.fileno())
             os.remove(file_path)
             return True
-        except: return False
+        except Exception:
+            return False
 
     def clear_recent_documents(self) -> bool:
         """Clears macOS recent items."""

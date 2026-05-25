@@ -7,9 +7,36 @@ import time
 from pathlib import Path
 from .base import BaseShield
 
+try:
+    import msvcrt
+except ImportError:  # pragma: no cover - imported eagerly on non-Windows platforms.
+    msvcrt = None
+
 CF_UNICODETEXT = 13
 GHND = 0x0042  # GMEM_MOVEABLE | GMEM_ZEROINIT
 CLIPBOARD_HISTORY_EXCLUSION_FORMAT = "ExcludeClipboardContentFromMonitorProcessing"
+FSCTL_FILE_LEVEL_TRIM = 0x00098208
+
+
+class FILE_LEVEL_TRIM_RANGE(ctypes.Structure):
+    _fields_ = [
+        ("Offset", ctypes.c_ulonglong),
+        ("Length", ctypes.c_ulonglong),
+    ]
+
+
+class FILE_LEVEL_TRIM(ctypes.Structure):
+    _fields_ = [
+        ("Key", ctypes.wintypes.DWORD),
+        ("NumRanges", ctypes.wintypes.DWORD),
+        ("Ranges", FILE_LEVEL_TRIM_RANGE * 1),
+    ]
+
+
+class FILE_LEVEL_TRIM_OUTPUT(ctypes.Structure):
+    _fields_ = [
+        ("NumRangesProcessed", ctypes.wintypes.DWORD),
+    ]
 
 
 class WindowsShield(BaseShield):
@@ -73,6 +100,19 @@ class WindowsShield(BaseShield):
             # HGLOBAL GlobalFree(HGLOBAL hMem)
             self._kernel32.GlobalFree.argtypes = [ctypes.wintypes.HGLOBAL]
             self._kernel32.GlobalFree.restype = ctypes.wintypes.HGLOBAL
+
+            # BOOL DeviceIoControl(HANDLE, DWORD, LPVOID, DWORD, LPVOID, DWORD, LPDWORD, LPOVERLAPPED)
+            self._kernel32.DeviceIoControl.argtypes = [
+                ctypes.wintypes.HANDLE,
+                ctypes.wintypes.DWORD,
+                ctypes.c_void_p,
+                ctypes.wintypes.DWORD,
+                ctypes.c_void_p,
+                ctypes.wintypes.DWORD,
+                ctypes.POINTER(ctypes.wintypes.DWORD),
+                ctypes.c_void_p,
+            ]
+            self._kernel32.DeviceIoControl.restype = ctypes.wintypes.BOOL
 
             # --- Shell32 Signatures ---
             # void SHAddToRecentDocs(UINT uFlags, LPCVOID pv)
@@ -183,16 +223,57 @@ class WindowsShield(BaseShield):
             return str(Path(base) / app_name)
         return str(Path.home() / "AppData" / "Local" / app_name)
 
+    def _try_file_level_trim(self, fd: int, size: int) -> None:
+        """Submit a best-effort file-range TRIM hint without changing deletion outcome."""
+        if size <= 0:
+            return
+        try:
+            if msvcrt is None:
+                raise OSError("msvcrt is unavailable on this platform")
+            trim = FILE_LEVEL_TRIM(
+                Key=0,
+                NumRanges=1,
+                Ranges=(FILE_LEVEL_TRIM_RANGE * 1)(FILE_LEVEL_TRIM_RANGE(0, size)),
+            )
+            output = FILE_LEVEL_TRIM_OUTPUT()
+            bytes_returned = ctypes.wintypes.DWORD()
+            handle = ctypes.wintypes.HANDLE(msvcrt.get_osfhandle(fd))
+            ok = self._kernel32.DeviceIoControl(
+                handle,
+                FSCTL_FILE_LEVEL_TRIM,
+                ctypes.byref(trim),
+                ctypes.sizeof(trim),
+                ctypes.byref(output),
+                ctypes.sizeof(output),
+                ctypes.byref(bytes_returned),
+                None,
+            )
+            if not ok:
+                logging.debug(
+                    "[WindowsArmor] FSCTL_FILE_LEVEL_TRIM hint was rejected (Win32 error %s).",
+                    ctypes.get_last_error(),
+                )
+        except Exception as e:
+            logging.debug("[WindowsArmor] FSCTL_FILE_LEVEL_TRIM hint unavailable: %s", e)
+
     def secure_delete(self, file_path: str) -> bool:
-        """Best-effort overwrite/delete; SSDs, journals, snapshots, and sync may retain data."""
+        """
+        Best-effort hygiene: overwrite in place, fsync, issue an
+        FSCTL_FILE_LEVEL_TRIM hint, and unlink the file. SSD wear leveling,
+        journaling/COW filesystems, snapshots, backups, and sync layers mean
+        physical erasure cannot be guaranteed from userspace. For encrypted
+        .paracci content, encryption key protection or destruction is the
+        stronger security boundary.
+        """
         try:
             p = Path(file_path)
             if not p.exists(): return True
-            size = p.stat().st_size
-            with open(file_path, "wb") as f:
+            with open(file_path, "r+b") as f:
+                size = os.fstat(f.fileno()).st_size
                 f.write(os.urandom(size))
                 f.flush()
                 os.fsync(f.fileno())
+                self._try_file_level_trim(f.fileno(), size)
             os.remove(file_path)
             return True
         except Exception as e:
