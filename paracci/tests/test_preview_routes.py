@@ -49,6 +49,12 @@ def auth_headers(client, **extra):
     return headers
 
 
+def preview_headers(**extra):
+    headers = {"Host": HOST, "X-Paracci-Token": TOKEN}
+    headers.update(extra)
+    return headers
+
+
 def unlock_test_client(ag_app, client):
     from core.burn import init_device
 
@@ -75,13 +81,27 @@ def test_preview_token_page_returns_html(tmp_path, monkeypatch):
     response = flask_app.test_client().get(
         f"/preview/{token}",
         base_url=ORIGIN,
-        headers={"Host": HOST},
+        headers=preview_headers(),
     )
 
     assert response.status_code == 200
     assert response.mimetype == "text/html"
     assert b"note.txt" in response.data
     assert b"secret-content" not in response.data
+
+
+def test_preview_token_without_main_bearer_returns_403(tmp_path, monkeypatch):
+    _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    _routes, store = fresh_preview_store(monkeypatch)
+    token = store.generate_token(b"secret-content", "note.txt", "text/plain")
+
+    response = flask_app.test_client().get(
+        f"/preview/{token}",
+        base_url=ORIGIN,
+        headers={"Host": HOST},
+    )
+
+    assert response.status_code == 403
 
 
 def test_preview_token_page_returns_404_for_invalid_token(tmp_path, monkeypatch):
@@ -91,7 +111,7 @@ def test_preview_token_page_returns_404_for_invalid_token(tmp_path, monkeypatch)
     response = flask_app.test_client().get(
         f"/preview/{'a' * 64}",
         base_url=ORIGIN,
-        headers={"Host": HOST},
+        headers=preview_headers(),
     )
 
     assert response.status_code == 404
@@ -111,7 +131,7 @@ def test_preview_token_page_returns_404_for_expired_token(tmp_path, monkeypatch)
     response = flask_app.test_client().get(
         f"/preview/{token}",
         base_url=ORIGIN,
-        headers={"Host": HOST},
+        headers=preview_headers(),
     )
 
     assert response.status_code == 404
@@ -126,7 +146,7 @@ def test_preview_content_returns_bytes_and_content_type(tmp_path, monkeypatch):
     response = flask_app.test_client().get(
         f"/preview/{token}/content",
         base_url=ORIGIN,
-        headers={"Host": HOST},
+        headers=preview_headers(),
     )
 
     assert response.status_code == 200
@@ -142,7 +162,7 @@ def test_preview_content_download_sets_attachment_disposition(tmp_path, monkeypa
     response = flask_app.test_client().get(
         f"/preview/{token}/content?download=1",
         base_url=ORIGIN,
-        headers={"Host": HOST},
+        headers=preview_headers(),
     )
 
     assert response.status_code == 200
@@ -163,12 +183,12 @@ def test_preview_content_rejects_non_downloadable_non_image_token_bytes(tmp_path
     inline_response = flask_app.test_client().get(
         f"/preview/{token}/content",
         base_url=ORIGIN,
-        headers={"Host": HOST},
+        headers=preview_headers(),
     )
     download_response = flask_app.test_client().get(
         f"/preview/{token}/content?download=1",
         base_url=ORIGIN,
-        headers={"Host": HOST},
+        headers=preview_headers(),
     )
 
     assert inline_response.status_code == 415
@@ -184,7 +204,7 @@ def test_preview_token_routes_still_validate_host_header(tmp_path, monkeypatch):
     response = flask_app.test_client().get(
         f"/preview/{token}",
         base_url=ORIGIN,
-        headers={"Host": "attacker.test:18080"},
+        headers=preview_headers(Host="attacker.test:18080"),
     )
 
     assert response.status_code == 403

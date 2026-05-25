@@ -201,6 +201,9 @@ def _apply_security_headers(response):
         response.headers["Content-Security-Policy"] = _content_security_policy()
     if request.endpoint == "main.loopback_bootstrap":
         response.headers["Cache-Control"] = "no-store"
+    if request.path == "/static/js/loopback-auth-sw.js":
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Service-Worker-Allowed"] = "/"
     if is_preview_route:
         response.headers.pop("Set-Cookie", None)
     return response
@@ -470,6 +473,16 @@ def _is_static_request() -> bool:
     )
 
 
+def _is_public_request() -> bool:
+    """Return whether a route is usable before possession of the loopback bearer."""
+    if _is_static_request():
+        return True
+    return request.method in {"GET", "HEAD"} and request.endpoint in {
+        "main.unlock",
+        "main.api_capabilities",
+    }
+
+
 def _same_origin_url(value: str | None) -> bool:
     """Validate that an absolute or relative URL resolves to the expected origin."""
     if not value:
@@ -549,6 +562,7 @@ def _reject_security(reason: str):
             "client not bootstrapped",
             "missing api bearer token",
             "missing unsafe-method bearer token",
+            "missing protected bearer token",
         }:
             return jsonify({"success": False, "error": "Unauthorized."}), 401
         return jsonify({"success": False, "error": "Forbidden."}), 403
@@ -659,6 +673,7 @@ def loopback_bootstrap():
     if not _token_matches(request.args.get("token", ""), ag_app.loopback_token):
         return _reject_security("invalid bootstrap token")
 
+    g.loopback_token_verified = True
     # Idempotency guard: if the session is already established for the
     # currently active client, reuse it rather than creating a new one.
     # This prevents spurious re-navigation to the bootstrap URL — caused by
@@ -680,15 +695,19 @@ def loopback_bootstrap():
         if not session.get("csrf_token"):
             session["csrf_token"] = secrets.token_urlsafe(32)
     target = _safe_local_next(request.args.get("next")) or url_for("main.index")
-    return redirect(target)
+    response = make_response(
+        render_template(
+            "bootstrap.html",
+            bootstrap_token=ag_app.loopback_token,
+            bootstrap_target=target,
+        )
+    )
+    return _mark_sensitive_no_store(response)
 
 
 @bp.before_app_request
 def enforce_loopback_security():
     """Require bootstrap, same-origin source headers, bearer token, and CSRF."""
-    if _is_static_request():
-        return
-
     if request.endpoint == "main.loopback_bootstrap":
         return _validate_request_source()
 
@@ -696,8 +715,15 @@ def enforce_loopback_security():
     if source_error:
         return source_error
 
-    if request.endpoint == "main.api_capabilities":
+    token_verified = _token_matches(_extract_loopback_token(), ag_app.loopback_token)
+    if _is_public_request():
+        if token_verified:
+            g.loopback_token_verified = True
         return
+
+    if not token_verified:
+        return _reject_security("missing protected bearer token")
+    g.loopback_token_verified = True
 
     if _preview_store_request_token():
         g.preview_access_ok = True
@@ -710,12 +736,7 @@ def enforce_loopback_security():
     if session.get("paracci_client_ok") is not True and not preview_access_ok:
         return _reject_security("client not bootstrapped")
 
-    if request.path.startswith("/api/") and not _token_matches(_extract_loopback_token(), ag_app.loopback_token):
-        return _reject_security("missing api bearer token")
-
     if request.method in UNSAFE_METHODS:
-        if not _token_matches(_extract_loopback_token(), ag_app.loopback_token):
-            return _reject_security("missing unsafe-method bearer token")
         if not _token_matches(_extract_csrf_token(), session.get("csrf_token")):
             return _reject_security("missing csrf token")
 
@@ -771,6 +792,20 @@ def check_lock():
 @bp.app_context_processor
 def inject_user():
     """Injects the user profile and shell session shortcuts into all templates."""
+    unverified_unlock_page = (
+        request.endpoint == "main.unlock"
+        and request.method in {"GET", "HEAD"}
+        and not getattr(g, "loopback_token_verified", False)
+    )
+    if unverified_unlock_page:
+        return dict(
+            user_profile={"username": "", "avatar_color": ""},
+            sidebar_sessions=[],
+            SESSION_COLORS=SESSION_COLORS,
+            csrf_token="",
+            paracci_browser_token="",
+        )
+
     cfg = ParacciConfig()
     sidebar_sessions = []
     preview_only = request.endpoint in {"main.preview", "main.preview_content"}
@@ -799,7 +834,12 @@ def inject_user():
         sidebar_sessions = []
 
     browser_token = ""
-    if not preview_only and ag_app.no_gui_mode and session.get("paracci_client_ok") is True:
+    if (
+        not preview_only
+        and getattr(g, "loopback_token_verified", False)
+        and ag_app.no_gui_mode
+        and session.get("paracci_client_ok") is True
+    ):
         browser_token = ag_app.loopback_token or ""
 
     return dict(

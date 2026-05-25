@@ -45,7 +45,7 @@ def test_session_cookie_samesite_is_lax(tmp_path, monkeypatch):
         headers={"Host": HOST},
     )
 
-    assert response.status_code == 302
+    assert response.status_code == 200
     
     cookies = response.headers.getlist("Set-Cookie")
     assert len(cookies) > 0
@@ -82,7 +82,7 @@ def test_preview_routes_do_not_save_session(tmp_path, monkeypatch):
     response = client.get(
         f"/preview/{dummy_token}",
         base_url=ORIGIN,
-        headers={"Host": HOST},
+        headers={"Host": HOST, "X-Paracci-Token": TOKEN},
     )
 
     # Verify that Set-Cookie is not present in the response headers for the preview route

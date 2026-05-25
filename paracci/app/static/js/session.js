@@ -415,7 +415,10 @@ function setupForms() {
         try {
             const response = await fetch(this.action, { method: 'POST', body: new FormData(this) });
             if (response.redirected) {
-                window.location.href = response.url;
+                if (!window.ParacciSecurity?.navigateAuthorized) {
+                    throw new Error(window.PARACCI_I18N?.server_error || 'Secure navigation is unavailable.');
+                }
+                await window.ParacciSecurity.navigateAuthorized(response.url);
                 return;
             }
             if (!response.ok) throw new Error(window.PARACCI_I18N?.server_error || 'Server error');
@@ -1034,6 +1037,12 @@ async function getPreviewWindowApi() {
 
 async function openPreparedPreview(data) {
     const token = data.preview_token;
+    if (
+        !window.ParacciSecurity?.seedLoopbackWorker
+        || !(await window.ParacciSecurity.seedLoopbackWorker())
+    ) {
+        throw new Error('Unauthorized.');
+    }
     const api = await getPreviewWindowApi();
     if (api) {
         try {
@@ -1049,7 +1058,11 @@ async function openPreparedPreview(data) {
         }
     }
 
-    window.open(tokenPreviewUrl(token), '_blank', 'width=1000,height=800');
+    await window.ParacciSecurity.navigateAuthorized(tokenPreviewUrl(token), {
+        newWindow: true,
+        target: '_blank',
+        features: 'width=1000,height=800'
+    });
 }
 
 

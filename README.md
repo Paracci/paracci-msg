@@ -72,7 +72,7 @@ These controls are best-effort and platform-dependent. See [SECURITY_SHIELDS.md]
 
 ### Local Architecture
 
-Paracci uses a Flask + pywebview architecture. The Flask server binds strictly to `127.0.0.1` on a randomly assigned loopback port and is protected by a per-launch bearer token, Origin/Host validation, CSRF protection, and strict session cookie flags. All privileged routes require the token. The pywebview window blocks all navigation to external URLs.
+Paracci uses a Flask + pywebview architecture. The Flask server binds strictly to `127.0.0.1` on a randomly assigned loopback port and is protected by a per-launch bearer token, Origin/Host validation, CSRF protection, and strict session cookie flags. Protected routes require the token; the token-free allowlist is static assets, `/favicon.ico`, `GET /unlock`, and `GET /api/capabilities`. After verified bootstrap, a memory-only service worker supplies the bearer for protected local navigations and fails closed if it cannot initialize. Preview capability tokens narrow attachment access in addition to the main bearer. The pywebview window blocks all navigation to external URLs.
 
 This is a loopback web backend, not a native IPC channel. The threat model and its limitations are documented in [SECURITY_SHIELDS.md](paracci/docs/SECURITY_SHIELDS.md).
 

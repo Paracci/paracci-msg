@@ -10,6 +10,10 @@ HOST = "127.0.0.1:18080"
 ORIGIN = f"http://{HOST}"
 
 
+def preview_headers():
+    return {"Host": HOST, "X-Paracci-Token": TOKEN}
+
+
 def make_flask_app(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("PARACCI_LOOPBACK_HOST", "127.0.0.1")
@@ -41,7 +45,7 @@ def test_preview_template_is_standalone_and_receives_metadata(tmp_path, monkeypa
     response = flask_app.test_client().get(
         f"/preview/{token}",
         base_url=ORIGIN,
-        headers={"Host": HOST},
+        headers=preview_headers(),
     )
 
     html = response.data.decode("utf-8")
@@ -80,7 +84,7 @@ def test_preview_template_csp_allows_standalone_preview_runtime(tmp_path, monkey
     response = flask_app.test_client().get(
         f"/preview/{token}",
         base_url=ORIGIN,
-        headers={"Host": HOST},
+        headers=preview_headers(),
     )
 
     csp = response.headers["Content-Security-Policy"]
@@ -102,7 +106,7 @@ def test_preview_token_page_does_not_overwrite_main_session_cookie(tmp_path, mon
     response = flask_app.test_client().get(
         f"/preview/{token}",
         base_url=ORIGIN,
-        headers={"Host": HOST},
+        headers=preview_headers(),
     )
 
     assert response.status_code == 200
@@ -122,7 +126,7 @@ def test_preview_template_hides_download_for_non_downloadable_token(tmp_path, mo
     response = flask_app.test_client().get(
         f"/preview/{token}",
         base_url=ORIGIN,
-        headers={"Host": HOST},
+        headers=preview_headers(),
     )
 
     html = response.data.decode("utf-8")
@@ -148,7 +152,7 @@ def test_preview_template_advertises_degraded_content_for_non_downloadable_image
     response = flask_app.test_client().get(
         f"/preview/{token}",
         base_url=ORIGIN,
-        headers={"Host": HOST},
+        headers=preview_headers(),
     )
 
     html = response.data.decode("utf-8")
@@ -187,7 +191,7 @@ def test_preview_template_returns_404_for_expired_token(tmp_path, monkeypatch):
     response = flask_app.test_client().get(
         f"/preview/{token}",
         base_url=ORIGIN,
-        headers={"Host": HOST},
+        headers=preview_headers(),
     )
 
     assert response.status_code == 404

@@ -16,7 +16,8 @@ The user interface is designed using modern CSS layouts and custom components:
 A local web server handles application routing and API endpoints:
 - Exposes REST endpoints to the Web UI for loading data, sealing envelopes, verifying passphrases/2FA, and importing files.
 - Binds strictly to `127.0.0.1` (localhost) on a randomly assigned port.
-- Requires a per-launch bearer token and bootstrap session before protected routes are usable.
+- Requires a per-launch bearer token and bootstrap session before protected routes are usable. Only static assets, `/favicon.ico`, `GET /unlock`, and `GET /api/capabilities` are public after source-header validation.
+- Delivers the bearer for protected browser document requests through a static service worker whose token exists only in memory; if that worker cannot initialize, the UI does not navigate into protected content.
 - Validates Host, Origin, Referer, and Fetch Metadata headers for privileged requests.
 - Enforces CSRF tokens on unsafe methods and uses trusted-host configuration plus strict SameSite/HttpOnly session flags.
 
@@ -66,7 +67,7 @@ Paracci recognizes these handshake file versions:
 Message attachment previewing is isolated from main application privileges:
 - **PreviewStore** ([preview_store.py](paracci/core/preview_store.py)): A RAM-only, thread-safe manager that constructs brief, unique tokens for decrypted attachments.
 - **Routes**: Exposes Flask routes `/preview/<token>` to load the preview document layout and `/preview/<token>/content` to stream the underlying bytes securely.
-- **Window Isolation**: Opened preview frames run inside a restricted webview containing a restricted `PreviewWindowApi` instead of the main window's privileged `ProApi`. Actions are scoped to the matching token, preventing attachment environments from executing high-privilege operations.
+- **Window Isolation**: Opened preview frames run inside a restricted webview containing a restricted `PreviewWindowApi` instead of the main window's privileged `ProApi`. Preview capability tokens scope attachment access, and preview routes additionally require the main per-launch loopback bearer.
 - **Download Enforcement**: Server-side routes enforce `allow_download` restrictions. If disabled, non-image requests abort with HTTP 403, and image formats are degraded and watermarked.
 
 ---
@@ -75,6 +76,7 @@ Message attachment previewing is isolated from main application privileges:
 
 Main UI and preview browser controls mitigate external link execution:
 - **JS Navigation Guard**: A window-load script injected at the pywebview frame initialization that intercepts and cancels clicks on external `href`s, form submissions, and `window.open` requests directing traffic outside local loopback boundaries.
+- **Authenticated Local Navigation**: After a verified bootstrap exchange, a same-origin service worker holds the bearer only in RAM and adds it to protected document and preview requests. Normal navigations reseed it before proceeding and fail closed if reseeding fails.
 - **Link Neutralization**: Markdown contents are sanitized with DOMPurify, enforcing the `MARKDOWN_FRAGMENT_HREF_RE` pattern on all anchor tags to strip external URIs before DOM insertion.
 
 ---
@@ -85,7 +87,7 @@ Main UI and preview browser controls mitigate external link execution:
 2. Clears system-level recent-items queues and sweeps expired temporary directories.
 3. Launches a background thread to run the Flask web daemon.
 4. Generates a secure random bootstrap token, passes it directly into the Flask application factory, exports only non-secret loopback configuration (`PARACCI_LOOPBACK_HOST` and `PARACCI_LOOPBACK_PORT`), then constructs a loopback launch URL.
-5. Launches `pywebview` pointing to the loopback URL.
+5. Launches `pywebview` pointing to the verified bootstrap URL, which seeds the memory-only authorization service worker before navigating to protected UI content.
 6. The `pywebview` engine starts a native browser frame (Chromium/WebView2 on Windows, WebKit on macOS/Linux), disabling external page navigation and exposing developer tools only in debug mode.
 
 ---

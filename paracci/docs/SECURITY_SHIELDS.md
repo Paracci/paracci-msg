@@ -57,7 +57,8 @@ not high-volume or out-of-order messaging.
 
 Paracci runs a local Flask server wrapped by a `pywebview` shell. This loopback architecture is not a native IPC channel, and its security relies on several strict boundaries:
 - **Port Isolation**: Flask binds strictly to `127.0.0.1` on a randomly assigned port.
-- **Access Authentication**: All privileged backend routes require a unique, cryptographically random bearer token generated at launch.
+- **Access Authentication**: All protected backend routes require a unique, cryptographically random bearer token generated at launch. The token-free allowlist is limited to static assets, `/favicon.ico`, `GET /unlock`, and `GET /api/capabilities`, after source-header validation.
+- **Browser Bearer Transport**: A verified bootstrap response initializes a static same-origin service worker that retains the bearer in memory and attaches it to protected document and preview requests. Unsupported or failed worker initialization fails closed rather than accepting the session cookie alone.
 - **Header & CSRF Validation**: The server validates Host, Origin, Referer, and Fetch Metadata headers to block cross-origin requests. CSRF tokens are enforced on all unsafe methods.
 - **Sandboxed WebView**: The `pywebview` window blocks all navigation to external domains and disables developer inspector tools (unless debug mode is enabled).
 
@@ -67,7 +68,7 @@ External navigation is blocked via a JavaScript guard injected on window load. A
 
 ### Preview System Security
 
-- **Token Isolation**: Preview windows are isolated from main app privileges by exposing a limited, token-scoped `PreviewWindowApi` instead of the privileged `ProApi`. Preview URLs require cryptographically secure random tokens.
+- **Token Isolation**: Preview windows are isolated from main app privileges by exposing a limited, token-scoped `PreviewWindowApi` instead of the privileged `ProApi`. Preview capability tokens restrict individual attachment access in addition to the required main loopback bearer.
 - **Server-Side Download Enforcement**: The server routes check the `allow_download` property of the preview entry. If downloads are prohibited, attempts to download or fetch the original attachment binary return HTTP 403, and image previews are dynamically degraded and watermarked.
 
 ---

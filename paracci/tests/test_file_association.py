@@ -259,19 +259,29 @@ def test_window_activation_foregrounds_and_navigates_only_for_valid_files(tmp_pa
     db = seed_locked_session_db(tmp_path / "sessions.db")
     window = FakeWindow()
 
-    target = run._activate_main_window(window, str(message_path), db, "127.0.0.1", 18080)
+    target = run._activate_main_window(
+        window,
+        str(message_path),
+        db,
+        "127.0.0.1",
+        18080,
+        "loopback-token",
+    )
     invalid_target = run._activate_main_window(
         window,
         str(tmp_path / "missing.paracci"),
         db,
         "127.0.0.1",
         18080,
+        "loopback-token",
     )
 
     assert target.startswith(f"/session/{SESSION_ID.hex()}?native_file_id=")
     assert invalid_target is None
     assert window.calls == ["restore", "show", "restore", "show"]
     assert len(window.urls) == 1
+    assert "/__paracci_bootstrap?token=loopback-token&next=" in window.urls[0]
+    assert "/session/" in window.urls[0]
     assert str(message_path) not in window.urls[0]
 
 

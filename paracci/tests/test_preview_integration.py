@@ -51,6 +51,10 @@ def auth_headers(client, **extra):
     return headers
 
 
+def preview_headers():
+    return {"Host": HOST, "X-Paracci-Token": TOKEN}
+
+
 def unlock_test_client(ag_app, client):
     from core.burn import init_device
 
@@ -98,7 +102,7 @@ def test_prepare_preview_then_token_page_returns_html(tmp_path, monkeypatch):
     preview_response = flask_app.test_client().get(
         f"/preview/{preview_token}",
         base_url=ORIGIN,
-        headers={"Host": HOST},
+        headers=preview_headers(),
     )
 
     assert preview_response.status_code == 200
@@ -122,7 +126,7 @@ def test_preview_request_and_close_do_not_affect_main_session_state(tmp_path, mo
     preview_response = client.get(
         f"/preview/{token}",
         base_url=ORIGIN,
-        headers={"Host": HOST},
+        headers=preview_headers(),
     )
     routes.preview_store.revoke(token)
     clear_response = client.post(
@@ -134,7 +138,7 @@ def test_preview_request_and_close_do_not_affect_main_session_state(tmp_path, mo
     settings_response = client.get(
         "/settings",
         base_url=ORIGIN,
-        headers={"Host": HOST},
+        headers=auth_headers(client),
     )
 
     with client.session_transaction(base_url=ORIGIN) as sess:
@@ -197,3 +201,5 @@ def test_session_js_uses_prepare_preview_and_native_window_api():
     assert "/api/prepare-preview" in js
     assert "open_preview_window" in js
     assert "api.open_preview(" not in js
+    assert "seedLoopbackWorker" in js
+    assert "navigateAuthorized(tokenPreviewUrl(token)" in js

@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Starting Paracci</title>
+  <script src="{{ url_for('static', filename='js/bootstrap.js') }}" defer></script>
+</head>
+<body>
+  <main>
+    <p id="bootstrapStatus">Preparing secure local connection...</p>
+  </main>
+  <div id="paracciBootstrapConfig"
+       hidden
+       data-token="{{ bootstrap_token }}"
+       data-target="{{ bootstrap_target }}"></div>
+</body>
+</html>
