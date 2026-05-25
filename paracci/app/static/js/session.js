@@ -4,9 +4,18 @@ let currentMsgRawText = "";
 let isMessageOpen = false;
 let quietMode = localStorage.getItem('paracci_quiet_mode') === 'true';
 let copyTimer = null;
+let copiedClipboardTextPendingClear = false;
+let clipboardClearInFlight = null;
+let clipboardRetryPending = false;
+let clipboardRetryTimeout = null;
+let clipboardRetryShowSuccess = false;
 let currentPreviewIds = new Set();
 const MIN_SAFE_DOMPURIFY_VERSION = "3.1.3";
 const MARKDOWN_FRAGMENT_HREF_RE = /^#[^\s"'<>]*$/;
+const CLIPBOARD_CLEAR_DELAY_SECONDS = 30;
+const CLIPBOARD_CLEAR_RETRY_WINDOW_MS = 30000;
+const CLIPBOARD_NATIVE_API_WAIT_ATTEMPTS = 10;
+const CLIPBOARD_NATIVE_API_WAIT_MS = 100;
 let runtimeCapabilities = { has_native_window: false };
 let capabilitiesPromise = null;
 
@@ -570,6 +579,9 @@ function clearOpenMessageState({ clearServer = true, keepalive = false } = {}) {
         clearInterval(copyTimer);
         copyTimer = null;
     }
+    if (copiedClipboardTextPendingClear) {
+        void requestClipboardClear({ showSuccess: false });
+    }
 
     clearElement(document.getElementById('rendered-message'));
     clearElement(document.getElementById('msg-security-report'));
@@ -705,20 +717,148 @@ function renderDecryptedMessage(data) {
     container.style.display = 'block';
 }
 
+function cancelClipboardClearRetry() {
+    if (clipboardRetryTimeout) {
+        clearTimeout(clipboardRetryTimeout);
+        clipboardRetryTimeout = null;
+    }
+    window.removeEventListener('focus', retryPendingClipboardClear);
+    document.removeEventListener('visibilitychange', retryPendingClipboardClear);
+    clipboardRetryPending = false;
+    clipboardRetryShowSuccess = false;
+}
+
+function clipboardPageCanWrite() {
+    return document.visibilityState === 'visible'
+        && (typeof document.hasFocus !== 'function' || document.hasFocus());
+}
+
+async function getNativeClipboardApiForSecureOperation() {
+    let api = window.pywebview?.api;
+    if (typeof api?.copy_and_clear === 'function') return api;
+
+    const capabilities = await loadRuntimeCapabilities();
+    if (!capabilities?.has_native_window) return null;
+
+    for (let attempt = 0; attempt < CLIPBOARD_NATIVE_API_WAIT_ATTEMPTS; attempt += 1) {
+        await new Promise(resolve => setTimeout(resolve, CLIPBOARD_NATIVE_API_WAIT_MS));
+        api = window.pywebview?.api;
+        if (typeof api?.copy_and_clear === 'function') return api;
+    }
+    throw new Error('Native clipboard API is unavailable.');
+}
+
+function reportClipboardClearFailure() {
+    cancelClipboardClearRetry();
+    showNotification(
+        window.PARACCI_I18N?.clipboard_clear_failed
+            || 'Clipboard could not be cleared. Replace or clear it manually now.',
+        'error'
+    );
+}
+
+function scheduleClipboardClearRetry({ showSuccess }) {
+    cancelClipboardClearRetry();
+    clipboardRetryPending = true;
+    clipboardRetryShowSuccess = showSuccess;
+    window.addEventListener('focus', retryPendingClipboardClear);
+    document.addEventListener('visibilitychange', retryPendingClipboardClear);
+    clipboardRetryTimeout = setTimeout(() => {
+        if (!clipboardRetryPending) return;
+        reportClipboardClearFailure();
+    }, CLIPBOARD_CLEAR_RETRY_WINDOW_MS);
+}
+
+async function retryPendingClipboardClear() {
+    if (!clipboardRetryPending || !clipboardPageCanWrite()) return;
+    const showSuccess = clipboardRetryShowSuccess;
+    cancelClipboardClearRetry();
+    await requestClipboardClear({ allowBrowserRetry: false, showSuccess });
+}
+
+async function performClipboardClear({ allowBrowserRetry = true, showSuccess = false } = {}) {
+    let usedBrowserClipboard = false;
+    try {
+        const nativeApi = await getNativeClipboardApiForSecureOperation();
+        if (nativeApi) {
+            const success = await nativeApi.copy_and_clear('', 0);
+            if (!success) throw new Error('Native clipboard clear failed.');
+        } else {
+            if (typeof navigator.clipboard?.writeText !== 'function') {
+                throw new Error('Browser clipboard API is unavailable.');
+            }
+            usedBrowserClipboard = true;
+            await navigator.clipboard.writeText('');
+        }
+        cancelClipboardClearRetry();
+        copiedClipboardTextPendingClear = false;
+        if (showSuccess) {
+            showNotification(window.PARACCI_I18N?.clipboard_cleared || 'Clipboard cleared.');
+        }
+        return true;
+    } catch (err) {
+        console.warn('[Paracci] Clipboard clear failed:', err);
+        if (usedBrowserClipboard && allowBrowserRetry) {
+            scheduleClipboardClearRetry({ showSuccess });
+        } else {
+            reportClipboardClearFailure();
+        }
+        return false;
+    }
+}
+
+function requestClipboardClear(options = {}) {
+    if (clipboardClearInFlight) return clipboardClearInFlight;
+    clipboardClearInFlight = performClipboardClear(options)
+        .finally(() => {
+            clipboardClearInFlight = null;
+        });
+    return clipboardClearInFlight;
+}
+
+function startClipboardClearCountdown(btn) {
+    let timeLeft = CLIPBOARD_CLEAR_DELAY_SECONDS;
+    if (btn) btn.disabled = true;
+    if (copyTimer) clearInterval(copyTimer);
+    copyTimer = setInterval(() => {
+        timeLeft--;
+        if (btn) {
+            const pattern = window.PARACCI_I18N?.clearing_clipboard || 'Clearing clipboard ({s}s)';
+            btn.textContent = pattern.replace('{s}', timeLeft);
+        }
+        if (timeLeft <= 0) {
+            clearInterval(copyTimer);
+            copyTimer = null;
+            if (btn) {
+                btn.textContent = window.PARACCI_I18N?.copy_protection_btn || 'Copy (30s auto-clear)';
+                btn.disabled = false;
+            }
+            void requestClipboardClear({ showSuccess: true });
+        }
+    }, 1000);
+}
+
 async function handleSecureCopy() {
     if (!currentMsgRawText || !window._currentMsgCanCopy) return;
-    
+
+    cancelClipboardClearRetry();
     let success = false;
-    if (window.pywebview?.api?.copy_and_clear) {
-        success = await window.pywebview.api.copy_and_clear(currentMsgRawText, 30);
-    } else {
-        try {
+    let usedBrowserClipboard = false;
+    try {
+        const nativeApi = await getNativeClipboardApiForSecureOperation();
+        if (nativeApi) {
+            success = await nativeApi.copy_and_clear(currentMsgRawText, CLIPBOARD_CLEAR_DELAY_SECONDS);
+        } else {
+            if (typeof navigator.clipboard?.writeText !== 'function') {
+                throw new Error('Browser clipboard API is unavailable.');
+            }
             await navigator.clipboard.writeText(currentMsgRawText);
             success = true;
-        } catch (err) {
-            console.error('[Paracci] Clipboard write error:', err);
-            success = false;
+            usedBrowserClipboard = true;
         }
+    } catch (err) {
+        console.error('[Paracci] Clipboard write error:', err);
+        success = false;
     }
 
     if (!success) {
@@ -726,21 +866,17 @@ async function handleSecureCopy() {
         return;
     }
 
+    copiedClipboardTextPendingClear = true;
     const btn = document.getElementById('btn-copy-msg');
-    if (!btn) return;
-    let timeLeft = 30; btn.disabled = true;
-    if (copyTimer) clearInterval(copyTimer);
-    copyTimer = setInterval(() => {
-        timeLeft--; 
-        const pattern = window.PARACCI_I18N?.clearing_clipboard || "Clearing clipboard ({s}s)";
-        btn.textContent = pattern.replace("{s}", timeLeft);
-        if (timeLeft <= 0) {
-            clearInterval(copyTimer);
-            btn.textContent = window.PARACCI_I18N?.copy_protection_btn || "Copy (30s auto-clear)"; btn.disabled = false;
-            showNotification(window.PARACCI_I18N?.clipboard_cleared || "Clipboard cleared.");
-        }
-    }, 1000);
-    showNotification(window.PARACCI_I18N?.text_copied_notify || "Text copied. Clipboard will clear in 30 seconds.");
+    startClipboardClearCountdown(btn);
+    showNotification(window.PARACCI_I18N?.text_copied_notify || 'Text copied. Clipboard will clear in 30 seconds.');
+    if (usedBrowserClipboard) {
+        showNotification(
+            window.PARACCI_I18N?.clipboard_browser_history_warning
+                || 'Browser mode cannot prevent clipboard history storage. Clear operating-system clipboard history manually.',
+            'warning'
+        );
+    }
 }
 
 async function handleManualDownload(url, filename) {
@@ -983,8 +1119,7 @@ window.handleAttachmentPreview = async (target, button) => {
 
 function closeMessage() {
     clearOpenMessageState();
-    if (window.pywebview?.api?.copy_and_clear) window.pywebview.api.copy_and_clear("", 0);
-    else if (navigator.clipboard?.writeText) navigator.clipboard.writeText('').catch(() => {});
+    void requestClipboardClear({ showSuccess: false });
 }
 
 window.addEventListener('pagehide', () => {

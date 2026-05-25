@@ -61,6 +61,9 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
 
+      - name: Run clipboard JavaScript tests
+        run: node --test paracci/tests/test_session_clipboard.mjs
+
       - name: Run Guardian audit
         run: python paracci/audits/guardian.py
 

@@ -360,6 +360,8 @@
     "clearing_clipboard": "Clearing clipboard ({s}s)",
     "clipboard_cleared": "Clipboard cleared.",
     "copy_protection_btn": "Copiar (borrado automático 30s)",
+    "clipboard_clear_failed": "No se pudo borrar el portapapeles. Sustitúyalo o bórrelo manualmente ahora.",
+    "clipboard_browser_history_warning": "El modo navegador no puede impedir el historial del portapapeles. Borre el historial manualmente.",
     "text_copied_notify": "Texto copiado. Las apps locales pueden leer el portapapeles hasta que se borre en 30 segundos.",
     "clipboard_failed": "Clipboard access failed.",
     "download_failed": "Download failed",

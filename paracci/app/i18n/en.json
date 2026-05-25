@@ -301,6 +301,8 @@
     "copy_protection_btn": "Copy (30s Auto-clear)",
     "clearing_clipboard": "Clearing clipboard ({s}s)",
     "clipboard_cleared": "Clipboard cleared.",
+    "clipboard_clear_failed": "Clipboard could not be cleared. Replace or clear it manually now.",
+    "clipboard_browser_history_warning": "Browser mode cannot prevent clipboard history storage. Clear operating-system clipboard history manually.",
     "text_copied_notify": "Text copied. Local apps may read the clipboard until it clears in 30 seconds.",
     "processing": "Processing...",
     "server_error": "Server error",

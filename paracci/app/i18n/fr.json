@@ -360,6 +360,8 @@
     "clearing_clipboard": "Clearing clipboard ({s}s)",
     "clipboard_cleared": "Clipboard cleared.",
     "copy_protection_btn": "Copier (effacement auto 30s)",
+    "clipboard_clear_failed": "Le presse-papiers n'a pas pu être effacé. Remplacez-le ou effacez-le manuellement maintenant.",
+    "clipboard_browser_history_warning": "Le mode navigateur ne peut pas empêcher l'historique du presse-papiers. Effacez l'historique manuellement.",
     "text_copied_notify": "Texte copié. Les apps locales peuvent lire le presse-papiers jusqu'à son effacement dans 30 secondes.",
     "clipboard_failed": "Clipboard access failed.",
     "download_failed": "Download failed",

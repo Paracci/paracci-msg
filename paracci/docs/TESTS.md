@@ -8,6 +8,7 @@ Run all unit and integration tests from the repository root:
 
 ```powershell
 python -m pytest paracci/tests -q
+node --test paracci/tests/test_session_clipboard.mjs
 ```
 
 Run the security and dependency audit suite:
