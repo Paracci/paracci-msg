@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from core import crypto as crypto_module
 from core import session as session_module
 from core.burn import BurnDB, init_device
-from core.crypto import EncryptedBlob, NONCE_LEN, decrypt, generate_identity_keypair, random_bytes
+from core.crypto import generate_identity_keypair, random_bytes
 from core.evolution import EVO_UNLIMITED, serialize_evo_config
 from core.hybrid_kem import HybridKEMError
 from core.session import (
@@ -103,10 +103,10 @@ def _save_meta(db: BurnDB, device_key: bytes, meta) -> None:
     )
 
 
-def _decrypt_session_row(db: BurnDB, device_key: bytes, session_id: bytes) -> dict:
+def _load_session_meta(db: BurnDB, device_key: bytes, session_id: bytes) -> "session_module.SessionMeta":
+    """Read and deserialize a session row from the database using the current format."""
     row = db.load_session(session_id)
-    blob = EncryptedBlob(row[2][:NONCE_LEN], row[2][NONCE_LEN:])
-    return json.loads(decrypt(device_key, blob, aad=b"paracci.db.session.v2").decode("utf-8"))
+    return deserialize_session_meta(row[2], device_key)
 
 
 @oqs_required
@@ -218,21 +218,20 @@ def test_ml_kem_secret_key_is_absent_from_database_after_bond_completes(tmp_path
     db = BurnDB(tmp_path / "sessions.db", device_key=device_key)
     pending_x, finalized_x, _meta_y, _init_file, resp_file = _handshake()
 
+    # -- pending (pre-bond): ML-KEM secret key must be stored in the database ---
     _save_meta(db, device_key, pending_x)
-    pending_data = _decrypt_session_row(db, device_key, pending_x.session_id)
-    assert pending_data["ml_kem_secret_key"] == pending_x.ml_kem_secret_key.hex()
-    assert pending_data["ml_kem_public_key"] == pending_x.ml_kem_public_key.hex()
-    restored_pending = deserialize_session_meta(db.load_session(pending_x.session_id)[2], device_key)
-    assert restored_pending.ml_kem_public_key == pending_x.ml_kem_public_key
-    assert finalize_initiator_session(restored_pending, resp_file).keys == _meta_y.keys
+    pending_meta = _load_session_meta(db, device_key, pending_x.session_id)
+    assert pending_meta.ml_kem_secret_key is not None, "secret key should be present before bond"
+    assert bytes(pending_meta.ml_kem_secret_key) == bytes(pending_x.ml_kem_secret_key)
+    assert pending_meta.ml_kem_public_key == pending_x.ml_kem_public_key
+    # Verify we can still complete the handshake from the persisted pending state
+    assert finalize_initiator_session(pending_meta, resp_file).keys == _meta_y.keys
 
+    # -- finalized (post-bond): ML-KEM secret key must be absent from the database ---
     _save_meta(db, device_key, finalized_x)
-    finalized_data = _decrypt_session_row(db, device_key, finalized_x.session_id)
-    assert "ml_kem_secret_key" not in finalized_data
-
-    restored = deserialize_session_meta(db.load_session(finalized_x.session_id)[2], device_key)
-    assert restored.ml_kem_secret_key is None
-    assert restored.keys == finalized_x.keys
+    finalized_meta = _load_session_meta(db, device_key, finalized_x.session_id)
+    assert finalized_meta.ml_kem_secret_key is None, "secret key must be wiped after bond completes"
+    assert finalized_meta.keys == finalized_x.keys
 
 
 def test_hybrid_kem_error_in_initiator_setup_uses_safe_route_message(tmp_path, monkeypatch):

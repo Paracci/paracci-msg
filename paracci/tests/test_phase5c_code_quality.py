@@ -8,15 +8,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core import crypto
 from core.burn import BurnDB
-from core.crypto import EncryptedBlob, decrypt, encrypt, random_bytes
+from core.crypto import encrypt, random_bytes
 from core.evolution import EVO_UNLIMITED, make_evo_config
 from core.session import (
     LEGACY_HANDSHAKE_VERSION,
-    NONCE_LEN,
     SESSION_STATE_UNVERIFIED,
-    SessionMeta,
     deserialize_session_meta,
-    serialize_session_meta,
 )
 from desktop import device_key_binding as binding
 from desktop.device_key_binding import initialize_device_with_binding, unlock_device_with_binding
@@ -49,45 +46,57 @@ def test_verify_identity_signature_rejects_bad_input_but_propagates_unexpected(m
 
 
 def test_deserialize_session_meta_preserves_legacy_v1_aad_fallback():
+    """Verify backward-compat: v1 JSON-format records still decrypt correctly."""
+    import json as _json
     device_key = random_bytes(32)
-    meta = SessionMeta(
-        session_id=random_bytes(16),
-        role="X",
-        my_priv=random_bytes(32),
-        my_pub=random_bytes(32),
-        peer_pub=None,
-        keys=None,
-        bond_seed=None,
-        send_seed=None,
-        recv_seed=None,
-        bond_nonce=None,
-        tx_count=0,
-        rx_count=0,
-        my_qseed=None,
-        peer_qseed=None,
-        peer_username=None,
-        color="#0a84ff",
-        evo_config=make_evo_config(EVO_UNLIMITED),
-        state=SESSION_STATE_UNVERIFIED,
-        label="Legacy",
-        created_at=1,
-        my_identity_pub=None,
-        peer_identity_pub=None,
-        handshake_version=LEGACY_HANDSHAKE_VERSION,
-        safety_confirmed=False,
-        safety_confirmed_at=None,
-    )
-    encrypted_v2 = serialize_session_meta(meta, device_key)
-    blob_v2 = EncryptedBlob(
-        nonce=encrypted_v2[:NONCE_LEN],
-        ciphertext=encrypted_v2[NONCE_LEN:],
-    )
-    raw = decrypt(device_key, blob_v2, aad=b"paracci.db.session.v2")
-    encrypted_v1 = encrypt(device_key, raw, aad=b"paracci.db.session.v1")
+    session_id = random_bytes(16)
+    my_priv = random_bytes(32)
+    my_pub = random_bytes(32)
+    evo_cfg = make_evo_config(EVO_UNLIMITED)
 
+    # Build a legacy v1/v2 JSON plaintext that _deserialize_legacy_json can parse.
+    from core.evolution import serialize_evo_config
+    legacy_payload = {
+        "session_id": session_id.hex(),
+        "role": "X",
+        "my_priv": my_priv.hex(),
+        "my_pub": my_pub.hex(),
+        "peer_pub": None,
+        "keys": None,
+        "bond_seed": None,
+        "send_seed": None,
+        "recv_seed": None,
+        "bond_nonce": None,
+        "tx_count": 0,
+        "rx_count": 0,
+        "my_qseed": None,
+        "peer_qseed": None,
+        "peer_username": None,
+        "color": "#0a84ff",
+        "evo_config": serialize_evo_config(evo_cfg).hex(),
+        "state": SESSION_STATE_UNVERIFIED,
+        "label": "Legacy",
+        "created_at": 1,
+        "my_identity_pub": None,
+        "peer_identity_pub": None,
+        "handshake_version": LEGACY_HANDSHAKE_VERSION,
+        "handshake_file_version": 4,  # HANDSHAKE_FILE_VERSION_V4
+        "transcript_version": None,
+        "safety_confirmed": False,
+        "safety_confirmed_at": None,
+        "ml_kem_public_key": None,
+        "ml_kem_secret_key": None,
+        "ml_kem_ciphertext": None,
+    }
+    raw_v1 = _json.dumps(legacy_payload, separators=(",", ":")).encode("utf-8")
+
+    # Encrypt with the v1 AAD to simulate an old database record.
+    encrypted_v1 = encrypt(device_key, raw_v1, aad=b"paracci.db.session.v1")
+
+    # deserialize_session_meta must transparently fall through to the v1 path.
     restored = deserialize_session_meta(encrypted_v1.nonce + encrypted_v1.ciphertext, device_key)
 
-    assert restored.session_id == meta.session_id
+    assert restored.session_id == session_id
     assert restored.state == SESSION_STATE_UNVERIFIED
     assert restored.safety_confirmed is False
 
