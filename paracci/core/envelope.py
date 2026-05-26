@@ -41,6 +41,7 @@ from .crypto import (
 from .evolution import (
     EvoConfig,
     MAX_EVO_STEP,
+    MAX_EVO_JUMP,
     _advance_seed,
     _derive_msg_keys,
     check_session_ttl,
@@ -448,6 +449,11 @@ def _derive_receive_keys(
     if header_step < rx_count:
         raise EnvelopeError(
             f"Old message rejected (step {header_step} < current {rx_count})."
+        )
+
+    if header_step - start_step > MAX_EVO_JUMP:
+        raise EnvelopeError(
+            f"Evolution step jump too large (jump {header_step - start_step} > max {MAX_EVO_JUMP})."
         )
 
     for step in range(start_step, header_step):
