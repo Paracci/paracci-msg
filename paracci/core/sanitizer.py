@@ -113,5 +113,31 @@ def build_no_download_image_preview(image_bytes: bytes, mime_type: str) -> tuple
 
 
 def sanitize_text(text: str) -> str:
-    """Return text unchanged; text sanitization is handled at render boundaries."""
-    return text
+    """Escape HTML special characters in user-controlled text (defense-in-depth).
+
+    This is a *second* line of defence that works alongside Jinja2 auto-escaping
+    and frontend DOMPurify — it is not a replacement for either.  Applying
+    ``html.escape()`` before any render boundary ensures that even if a template
+    mistakenly uses ``|safe``, or a JS renderer passes raw text to the DOM, the
+    five HTML-sensitive characters are already neutralised:
+
+        < → &lt;     > → &gt;     & → &amp;
+        " → &quot;   ' → &#x27;
+
+    The ``quote=True`` argument (Python default since 3.2) ensures that both
+    double- and single-quote characters are escaped, which matters when the
+    value appears inside an HTML attribute.
+
+    Accepts ``None`` or non-string inputs and coerces them to ``str`` before
+    escaping, so callers do not need to guard against those edge cases.
+
+    This import is intentionally placed inside the function body: ``html`` is a
+    Python standard-library module with no external dependencies, making it
+    statically resolvable by Nuitka during compilation.
+    """
+    import html as _html  # stdlib only — statically resolvable for Nuitka
+    if text is None:
+        return ""
+    if not isinstance(text, str):
+        text = str(text)
+    return _html.escape(text, quote=True)

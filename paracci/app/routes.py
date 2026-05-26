@@ -48,6 +48,7 @@ from core.sanitizer import (
     SanitizationError,
     build_no_download_image_preview,
     sanitize_image,
+    sanitize_text,
 )
 from core.security_utils import scan_text_for_security
 from core.burn import (
@@ -1377,7 +1378,7 @@ def session_new():
     if request.method == "GET":
         return render_template("setup.html", mode="new", is_import=False)
 
-    label            = request.form.get("label", "").strip()
+    label            = sanitize_text(request.form.get("label", "").strip())  # user-controlled; sanitized as defence-in-depth before DB storage and template rendering
     session_ttl_str  = request.form.get("session_ttl", "0")
     color            = request.form.get("color")
     custom_color     = request.form.get("custom_color", "").strip()
@@ -1692,7 +1693,7 @@ def session_import():
             init_path=native_ref["filename"] if native_ref else "",
         )
 
-    local_label = request.form.get("label", "").strip()
+    local_label = sanitize_text(request.form.get("label", "").strip())  # user-controlled; sanitized as defence-in-depth before DB storage and template rendering
     native_file_id = request.form.get("native_file_id", "").strip()
     file_bytes  = None
     native_filename = ""

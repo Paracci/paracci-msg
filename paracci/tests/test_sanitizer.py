@@ -10,7 +10,60 @@ from werkzeug.datastructures import FileStorage
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core.sanitizer import SanitizationError, build_no_download_image_preview, sanitize_image
+from core.sanitizer import SanitizationError, build_no_download_image_preview, sanitize_image, sanitize_text
+
+
+# ---------------------------------------------------------------------------
+# sanitize_text() — defense-in-depth HTML escaping
+# ---------------------------------------------------------------------------
+
+def test_sanitize_text_escapes_html_special_characters():
+    """All five HTML-sensitive characters must be converted to named entities."""
+    result = sanitize_text('<script>alert("it\'s XSS")&danger</script>')
+    assert "&lt;" in result, "< must be escaped to &lt;"
+    assert "&gt;" in result, "> must be escaped to &gt;"
+    assert "&amp;" in result, "& must be escaped to &amp;"
+    assert "&quot;" in result, '\" must be escaped to &quot;'
+    assert "&#x27;" in result, "' must be escaped to &#x27;"
+    # Original dangerous characters must not appear verbatim
+    assert "<" not in result
+    assert ">" not in result
+
+
+def test_sanitize_text_handles_none_input():
+    """None must be coerced to an empty string without raising."""
+    result = sanitize_text(None)
+    assert result == "", f"Expected empty string for None, got {result!r}"
+
+
+def test_sanitize_text_handles_non_string_inputs():
+    """Non-string inputs must be coerced to str and then escaped."""
+    assert sanitize_text(42) == "42"
+    assert sanitize_text(3.14) == "3.14"
+    assert sanitize_text(True) == "True"
+    # A list whose repr contains angle brackets must not leak raw HTML
+    dangerous_obj = type("T", (), {"__str__": lambda self: "<evil>"})()
+    result = sanitize_text(dangerous_obj)
+    assert "<" not in result
+    assert "&lt;" in result
+
+
+def test_sanitize_text_neutralizes_xss_payload():
+    """A classic XSS payload must be fully neutralized so it cannot execute."""
+    payload = "<script>alert(document.cookie)</script>"
+    result = sanitize_text(payload)
+    # Must not contain any unescaped tags
+    assert "<script>" not in result
+    assert "</script>" not in result
+    # Must contain the escaped equivalents
+    assert "&lt;script&gt;" in result
+    assert "&lt;/script&gt;" in result
+    # The overall string must be safe to embed verbatim in an HTML attribute
+    # (no unescaped <, >, &, ", ' characters)
+    for ch in ("<", ">"):
+        assert ch not in result, f"Raw character {ch!r} found in sanitized output"
+
+
 
 
 TOKEN = "test-loopback-token"
