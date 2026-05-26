@@ -511,6 +511,16 @@ class ProApi:
                 path = path[0]
 
             try:
+                resolved_downloads = Path(cfg.full_downloads_path).resolve()
+                resolved_path = Path(path).resolve()
+                try:
+                    resolved_path.relative_to(resolved_downloads)
+                except ValueError:
+                    raise ValueError("Destination path must be inside the managed Downloads directory.")
+
+                if _is_link_or_junction(resolved_path) or _is_link_or_junction(resolved_path.parent):
+                    raise ValueError("Junctions or symbolic links are not permitted.")
+
                 with open(path, "wb") as f:
                     f.write(file_data)
                 print(f"  [+] Saved to: {path}")
