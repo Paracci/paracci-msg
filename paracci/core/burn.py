@@ -836,14 +836,53 @@ class BurnDB:
         finally:
             conn.close()
 
-    @staticmethod
-    def _encode_unlock_rate_limit(state: dict) -> bytes:
+    def _get_or_create_rate_limit_key(self) -> bytes:
+        """Retrieve or generate a persistent 32-byte key for rate-limit signatures."""
+        key_path = Path(self.db_path).parent / ".rate_limit.key"
+        if key_path.exists():
+            try:
+                key = key_path.read_bytes()
+                if len(key) == 32:
+                    return key
+            except Exception as exc:
+                logger.error("Failed to read rate limit signing key: %s", exc)
+
+        # Generate a new 32-byte key
+        from .crypto import random_bytes
+        new_key = random_bytes(32)
+        try:
+            # Create file with owner-only read/write permissions (0o600)
+            fd = os.open(str(key_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "wb") as f:
+                f.write(new_key)
+            return new_key
+        except Exception as exc:
+            logger.error("Failed to save rate limit signing key: %s", exc)
+            return new_key
+
+    def _encode_unlock_rate_limit(self, state: dict) -> bytes:
         stored = {
             "failed_attempts": state["failed_attempts"],
             "locked_until": state["locked_until"],
             "last_failed_at": state["last_failed_at"],
         }
-        return json.dumps(stored, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        raw_json = json.dumps(stored, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+        # Try to protect with Windows DPAPI if on Windows
+        import sys
+        if sys.platform == "win32":
+            try:
+                from desktop.dpapi_win import wrap_with_dpapi
+                return b"dpapi:" + wrap_with_dpapi(raw_json)
+            except Exception as exc:
+                logger.error("DPAPI rate-limit wrapping failed: %s", exc)
+
+        # Fallback to HMAC-SHA256 signature for Unix/other platforms
+        import hmac
+        import hashlib
+        key = self._get_or_create_rate_limit_key()
+        sig = hmac.new(key, raw_json, hashlib.sha256).digest()
+        return b"hmac:" + sig + raw_json
 
     def _write_unlock_rate_limit(self, conn: sqlite3.Connection, state: dict) -> None:
         conn.execute(
@@ -899,12 +938,37 @@ class BurnDB:
             }
         elif raw:
             try:
-                parsed = json.loads(raw.decode("utf-8"))
+                if raw.startswith(b"dpapi:"):
+                    from desktop.dpapi_win import unwrap_with_dpapi
+                    decrypted = unwrap_with_dpapi(raw[6:])
+                    parsed = json.loads(decrypted.decode("utf-8"))
+                elif raw.startswith(b"hmac:"):
+                    import hmac
+                    import hashlib
+                    if len(raw) < 5 + 32:
+                        raise ValueError("Rate limit record is truncated.")
+                    stored_sig = raw[5:5+32]
+                    payload = raw[5+32:]
+                    key = self._get_or_create_rate_limit_key()
+                    computed_sig = hmac.new(key, payload, hashlib.sha256).digest()
+                    if not hmac.compare_digest(stored_sig, computed_sig):
+                        raise ValueError("Tampering detected (HMAC mismatch).")
+                    parsed = json.loads(payload.decode("utf-8"))
+                else:
+                    # Legacy plaintext JSON migration path
+                    parsed = json.loads(raw.decode("utf-8"))
+
                 state["failed_attempts"] = max(0, int(parsed.get("failed_attempts", 0)))
                 state["locked_until"] = max(0, int(parsed.get("locked_until", 0)))
                 state["last_failed_at"] = max(0, int(parsed.get("last_failed_at", 0)))
-            except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
-                state = {"failed_attempts": 0, "locked_until": 0, "last_failed_at": 0}
+            except Exception as exc:
+                logger.error("Rate limit verification/decryption failed: %s", exc)
+                # Tamper protection fallback: force complete device lockout
+                state = {
+                    "failed_attempts": UNLOCK_MAX_FAILED_ATTEMPTS,
+                    "locked_until": now + UNLOCK_LOCKOUT_SECONDS,
+                    "last_failed_at": now,
+                }
         state["retry_after_seconds"] = max(0, state["locked_until"] - now)
         return state
 

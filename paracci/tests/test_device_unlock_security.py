@@ -30,7 +30,12 @@ STRONG_PASSPHRASE = "Correct-Horse-95175328"
 
 def _stored_unlock_state(db):
     raw = db.get_device_meta(UNLOCK_RATE_LIMIT_KEY)
-    return json.loads(raw.decode("utf-8")) if raw is not None else None
+    if raw is None:
+        return None
+    # Use database's secure decoder to decrypt/verify the rate limit state
+    decoded = db._decode_unlock_rate_limit(raw)
+    decoded.pop("retry_after_seconds", None)
+    return decoded
 
 
 @pytest.mark.parametrize(
@@ -309,3 +314,94 @@ def test_device_master_keys_are_mutable_and_zeroed_after_use(tmp_path, monkeypat
 
     assert len(wiped) == 2
     assert all(value == bytearray(len(value)) for value in wiped)
+
+
+def test_legacy_plaintext_rate_limit_migration(tmp_path):
+    db_path = tmp_path / "sessions.db"
+    db = BurnDB(db_path)
+    init_device(db, STRONG_PASSPHRASE)
+
+    # Manually write a legacy plaintext JSON record directly to the database
+    legacy_json = b'{"failed_attempts":2,"last_failed_at":100,"locked_until":200}'
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO device_meta (key, value) VALUES (?, ?)",
+            (UNLOCK_RATE_LIMIT_KEY, legacy_json),
+        )
+
+    # Reload the database and verify it parses the legacy plaintext JSON correctly
+    db_reload = BurnDB(db_path)
+    state = db_reload.get_unlock_rate_limit(now=250)
+    assert state["failed_attempts"] == 2
+    assert state["locked_until"] == 200
+
+    # Write a new state and verify it gets encrypted/signed securely
+    db_reload.record_unlock_failure(now=300)
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT value FROM device_meta WHERE key=?", (UNLOCK_RATE_LIMIT_KEY,)
+        ).fetchone()
+    raw_val = row[0]
+    assert raw_val.startswith(b"dpapi:") or raw_val.startswith(b"hmac:")
+
+
+def test_rate_limit_tamper_detection(tmp_path):
+    db_path = tmp_path / "sessions.db"
+    db = BurnDB(db_path)
+    init_device(db, STRONG_PASSPHRASE)
+
+    # Write a valid protected rate limit record
+    db.record_unlock_failure(now=1000)
+
+    # Read the valid raw value from the database
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT value FROM device_meta WHERE key=?", (UNLOCK_RATE_LIMIT_KEY,)
+        ).fetchone()
+    raw_val = row[0]
+
+    # Tamper by corrupting a byte in the middle of the payload/signature
+    tampered_val = bytearray(raw_val)
+    if len(tampered_val) > 50:
+        tampered_val[50] ^= 0xFF
+    else:
+        tampered_val = tampered_val[:-2]
+    tampered_val = bytes(tampered_val)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE device_meta SET value=? WHERE key=?",
+            (tampered_val, UNLOCK_RATE_LIMIT_KEY),
+        )
+
+    # Verify that loading the tampered state fails closed (triggers full lockout)
+    db_reload = BurnDB(db_path)
+    state = db_reload.get_unlock_rate_limit(now=1000)
+    assert state["failed_attempts"] == UNLOCK_MAX_FAILED_ATTEMPTS
+    assert state["retry_after_seconds"] == burn_module.UNLOCK_LOCKOUT_SECONDS
+
+
+def test_non_windows_hmac_rate_limit_protection(tmp_path, monkeypatch):
+    # Mock platform to darwin to force the HMAC-SHA256 path
+    monkeypatch.setattr(sys, "platform", "darwin")
+
+    db_path = tmp_path / "sessions.db"
+    db = BurnDB(db_path)
+    init_device(db, STRONG_PASSPHRASE)
+
+    # Record a failure
+    db.record_unlock_failure(now=1000)
+
+    # Check key file creation and file permissions (except on OSes like Windows that don't support full chmod)
+    key_path = tmp_path / ".rate_limit.key"
+    assert key_path.exists()
+    import os
+    if os.name != "nt":
+        assert (key_path.stat().st_mode & 0o777) == 0o600
+
+    # Verify that the value is stored with 'hmac:' prefix
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT value FROM device_meta WHERE key=?", (UNLOCK_RATE_LIMIT_KEY,)
+        ).fetchone()
+    assert row[0].startswith(b"hmac:")
