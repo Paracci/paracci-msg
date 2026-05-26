@@ -1,8 +1,7 @@
 import os
 import logging
-import threading
-import time
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 import ctypes.util
 from .base import BaseShield
@@ -12,7 +11,16 @@ try:
 except ImportError:  # pragma: no cover - imported eagerly on Windows.
     fcntl = None
 
+
+@dataclass(frozen=True)
+class _MacOSClipboardOwner:
+    payload: bytes
+
+
 class MacOSShield(BaseShield):
+    def __init__(self):
+        super().__init__()
+
     def get_os_name(self) -> str:
         """Returns the human-readable OS name."""
         return "macOS"
@@ -121,23 +129,53 @@ class MacOSShield(BaseShield):
             return True
         except: return False
 
-    def copy_to_clipboard(self, text: str, clear_delay: int = 30) -> bool:
-        """Copies to clipboard and auto-clears after delay; local processes can read it meanwhile."""
-        def _set_clipboard(content):
-            """Internal macOS clipboard setter."""
-            try:
-                process = subprocess.Popen(['pbcopy'], stdin=subprocess.PIPE)
-                process.communicate(input=content.encode('utf-8'))
-            except: pass
-
-        def _delayed_clear():
-            """Delayed task to clear the clipboard."""
-            time.sleep(clear_delay)
-            _set_clipboard("")
-
+    def _write_clipboard(self, payload: bytes) -> bool:
+        """Write bytes to the macOS clipboard and report failure."""
         try:
-            _set_clipboard(text)
-            if clear_delay > 0 and text:
-                threading.Thread(target=_delayed_clear, daemon=True).start()
+            subprocess.run(["pbcopy"], input=payload, check=True)
             return True
-        except: return False
+        except (OSError, subprocess.SubprocessError) as exc:
+            logging.warning("[MacOSShield] Clipboard write failed: %s", exc)
+            return False
+
+    def _read_clipboard(self) -> bytes | None:
+        """Read current macOS clipboard bytes for ownership verification."""
+        try:
+            result = subprocess.run(["pbpaste"], capture_output=True, check=True)
+            return result.stdout
+        except (OSError, subprocess.SubprocessError) as exc:
+            logging.warning("[MacOSShield] Clipboard read failed: %s", exc)
+            return None
+
+    def clear_owned_clipboard(self, owner=None) -> bool:
+        """Clear only text still matching the active Paracci clipboard write."""
+        with self._clipboard_lock:
+            active_owner = getattr(self, "_clipboard_owner", None)
+            if active_owner is None or (owner is not None and owner is not active_owner):
+                return True
+            current = self._read_clipboard()
+            if current is None:
+                return False
+            if current != active_owner.payload:
+                self._clipboard_owner = None
+                return True
+            if not self._write_clipboard(b""):
+                return False
+            self._clipboard_owner = None
+            logging.info("[MacOSShield] Owned clipboard content cleared.")
+            return True
+
+    def copy_to_clipboard(self, text: str, clear_delay: int = 30) -> bool:
+        """Copy text and clear it later only if it remains Paracci-owned."""
+        if not text:
+            return self.clear_owned_clipboard()
+
+        payload = str(text).encode("utf-8")
+        owner = _MacOSClipboardOwner(payload)
+        with self._clipboard_lock:
+            if not self._write_clipboard(payload):
+                return False
+            self._clipboard_owner = owner
+
+        self._schedule_owned_clipboard_clear(owner, clear_delay)
+        return True

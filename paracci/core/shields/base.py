@@ -1,5 +1,8 @@
 import os
 import platform
+import logging
+import threading
+import time
 from abc import ABC, abstractmethod
 
 class BaseShield(ABC):
@@ -9,6 +12,29 @@ class BaseShield(ABC):
     These helpers reduce exposure where the platform allows it; they are not
     guarantees against capture, forensic recovery, or local process access.
     """
+
+    _clipboard_lock = threading.Lock()
+
+    def __init__(self):
+        self._clipboard_owner = None
+
+    def _schedule_owned_clipboard_clear(self, owner, clear_delay: int) -> None:
+        """Schedule a best-effort clear for one immutable clipboard owner record."""
+        if clear_delay <= 0:
+            return
+
+        def _delayed_clear():
+            try:
+                time.sleep(clear_delay)
+                self.clear_owned_clipboard(owner)
+            except Exception as exc:
+                logging.error("[Shield] Delayed clipboard clear failed: %s", exc)
+
+        threading.Thread(target=_delayed_clear, daemon=True).start()
+
+    def clear_owned_clipboard(self, owner=None) -> bool:
+        """Clear an active Paracci-owned clipboard value when a platform can verify it."""
+        return True
     
     @abstractmethod
     def get_os_name(self) -> str:

@@ -35,15 +35,13 @@ class TestMacOSShieldStress(unittest.TestCase):
         mock_run.assert_called_once()
         self.assertIn("osascript", mock_run.call_args[0][0])
 
-    @patch("subprocess.Popen")
-    def test_clipboard_copy(self, mock_popen):
-        # Simulate pbcopy process
-        mock_process = MagicMock()
-        mock_popen.return_value = mock_process
-        
+    @patch("subprocess.run")
+    def test_clipboard_copy(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0)
+
         result = self.shield.copy_to_clipboard("SecretText", clear_delay=0)
         self.assertTrue(result)
-        mock_popen.assert_called_with(['pbcopy'], stdin=-1) # -1 is subprocess.PIPE
+        mock_run.assert_called_with(["pbcopy"], input=b"SecretText", check=True)
 
     def test_secure_delete_mock(self):
         # Create a temporary file and test secure deletion
