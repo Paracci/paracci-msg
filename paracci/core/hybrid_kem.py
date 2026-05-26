@@ -47,6 +47,10 @@ def initiator_kem_setup() -> dict:
 
     The secret key is returned to the caller for temporary in-memory use in
     Phase 4B. Phase 4C must persist it only in encrypted local session metadata.
+
+    MEMORY HYGIENE: secret_key is immutable bytes returned by liboqs. The caller
+    is responsible for wiping it (via wipe()) after use. initiator_kem_complete()
+    already performs this cleanup when decapsulating.
     """
     try:
         public_key, secret_key = kem_generate_keypair()
@@ -70,7 +74,12 @@ def responder_kem_respond(ml_kem_public_key: bytes) -> dict:
 
     The ciphertext is public handshake metadata. The shared secret feeds the
     hybrid X25519 + ML-KEM combiner.
+
+    MEMORY HYGIENE: shared_secret is immutable bytes returned by liboqs.
+    wipe() is called in the finally block to record the gap in the security
+    log; in-place zeroization is not possible for immutable bytes.
     """
+    shared_secret = None
     try:
         ciphertext, shared_secret = kem_encapsulate(ml_kem_public_key)
     except QuantumKEMError as exc:
@@ -81,6 +90,12 @@ def responder_kem_respond(ml_kem_public_key: bytes) -> dict:
         )
     except Exception as exc:
         _raise_hybrid_error("Hybrid KEM response failed.", exc, "hybrid_kem_respond_failed")
+    finally:
+        # LIMITATION: shared_secret is immutable bytes from liboqs; wipe() logs
+        # the gap but cannot zero it in place. The value is returned in the dict
+        # below so we cannot zero it here — the call is for audit-log purposes only.
+        if shared_secret is not None:
+            wipe(shared_secret)
     return {
         "ml_kem_ciphertext": ciphertext,
         "ml_kem_shared_secret": shared_secret,

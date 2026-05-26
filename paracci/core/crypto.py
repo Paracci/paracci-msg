@@ -3,11 +3,11 @@ Paracci — core/crypto.py
 Cryptographic base layer.
 
 Algorithms used:
-  - X25519         : ECDH key agreement
-  - HKDF-SHA512    : Key derivation
+  - X25519            : ECDH key agreement
+  - HKDF-SHA512       : Key derivation
   - ChaCha20-Poly1305 : Authenticated encryption (AEAD)
-  - CSPRNG         : Secure random generation (os.urandom)
-  - SHA3-256       : General hashing (MSG_ID registration, integrity)
+  - CSPRNG            : Secure random generation (os.urandom)
+  - SHA3-256          : General hashing (MSG_ID registration, integrity)
 """
 
 import os
@@ -16,6 +16,8 @@ import struct
 import time
 import gc
 from typing import Tuple, NamedTuple
+
+from .logger import get_logger
 from argon2 import PasswordHasher, Type as Argon2Type
 from argon2.low_level import hash_secret_raw, Type as LowLevelArgon2Type
 
@@ -77,6 +79,8 @@ LABEL_EVO_SEED = LABEL_EVO_SEED_V3
 LABEL_EVO_STEP = LABEL_EVO_STEP_V3
 LABEL_NEXT     = LABEL_NEXT_V3
 
+_log = get_logger("crypto")
+
 
 # ---------------------------------------------------------------------------
 # Type definitions
@@ -123,6 +127,11 @@ def generate_keypair() -> Tuple[bytes, bytes]:
     """
     Generates a new X25519 key pair.
     Returns: (private_key_bytes, public_key_bytes)
+
+    MEMORY HYGIENE LIMITATION: private_bytes is returned as immutable bytes
+    because callers persist it to encrypted storage. Conversion to bytearray
+    here would change the public API. The caller is responsible for wiping
+    their copy when the key is no longer needed.
     """
     private_key = X25519PrivateKey.generate()
     private_bytes = private_key.private_bytes(
@@ -131,7 +140,8 @@ def generate_keypair() -> Tuple[bytes, bytes]:
     public_bytes = private_key.public_key().public_bytes(
         Encoding.Raw, PublicFormat.Raw
     )
-    # Clear the private_key object (limited effect in Python but good practice)
+    # The cryptography library owns the private_key object internally;
+    # Python cannot zero the C-level key bytes from here.
     return private_bytes, public_bytes
 
 
@@ -139,6 +149,10 @@ def generate_identity_keypair() -> Tuple[bytes, bytes]:
     """
     Generates a long-term Ed25519 identity key pair.
     Returns: (private_key_bytes, public_key_bytes)
+
+    MEMORY HYGIENE LIMITATION: private_bytes is returned as immutable bytes
+    because callers persist it to encrypted storage. The caller is responsible
+    for wiping their copy when the key is no longer needed.
     """
     private_key = Ed25519PrivateKey.generate()
     private_bytes = private_key.private_bytes(
@@ -173,11 +187,25 @@ def verify_identity_signature(
 def wipe(data: bytes | bytearray | list) -> None:
     """Best-effort zeroing for mutable sensitive containers owned by Paracci.
 
-    Python and native libraries may retain copies outside this buffer. Immutable
-    inputs are rejected so a caller cannot mistake a no-op for cleanup.
+    Python and native libraries may retain copies outside this buffer.
+    This is a best-effort mitigation — Python's memory model does not guarantee
+    that wiping a bytearray zeroes every copy the interpreter may have made
+    internally.
+
+    Accepts bytes without raising so call sites that pass immutable bytes (e.g.
+    from third-party library return values) do not crash. A debug security event
+    is logged to record the gap, allowing the auditor to identify remaining
+    call sites that should be refactored to use bytearray.
     """
     if isinstance(data, bytes):
-        raise TypeError("wipe() cannot zero immutable bytes; use bytearray for sensitive data.")
+        # LIMITATION: bytes is immutable — in-place zeroization is not possible.
+        # Log the gap so auditors can identify call sites that need refactoring.
+        _log.security(
+            "wipe() called on immutable bytes — in-place zeroization is not "
+            "possible. Refactor the call site to use bytearray for short-lived "
+            "key material."
+        )
+        return
     if isinstance(data, bytearray):
         for i in range(len(data)):
             data[i] = 0
@@ -185,7 +213,7 @@ def wipe(data: bytes | bytearray | list) -> None:
         for i in range(len(data)):
             data[i] = None
     else:
-        raise TypeError("wipe() requires a bytearray or list.")
+        raise TypeError("wipe() requires a bytearray, bytes, or list.")
     gc.collect()
 
 
@@ -199,9 +227,17 @@ def ecdh(private_key_bytes: bytes, peer_public_key_bytes: bytes) -> bytes:
         shared_secret = private_key.exchange(peer_public)
         return shared_secret
     finally:
-        # Force delete local copies when function ends
-        if 'private_key' in locals(): del private_key
-        if 'shared_secret' in locals(): pass # Do not delete as it is the return value
+        # LIMITATION: X25519PrivateKey is an opaque C object owned by the
+        # cryptography library. Python cannot zero its internal key bytes;
+        # del only removes this reference, not the underlying memory.
+        if 'private_key' in locals():
+            del private_key
+        # LIMITATION: shared_secret is immutable bytes returned by exchange().
+        # wipe() logs the gap but cannot zero it in place. The return value
+        # is needed by the caller so we do not zero it here — we call wipe()
+        # only to record the gap in the security log.
+        if 'shared_secret' in locals():
+            wipe(shared_secret)
 
 
 # ---------------------------------------------------------------------------
@@ -360,12 +396,13 @@ def derive_hybrid_shared_secret(
             raise ValueError("Handshake transcript must be 32 bytes.")
 
     info = HYBRID_KEM_DOMAIN if transcript is None else HYBRID_KEM_DOMAIN + transcript
-    return hkdf_derive(
-        x25519_shared + ml_kem_shared,
-        length=64,
-        info=info,
-        salt=session_id,
-    )
+    # Use bytearray for the concatenated IKM so it can be explicitly zeroed
+    # before being dereferenced. hkdf_derive() accepts bytes-like objects.
+    ikm = bytearray(x25519_shared) + bytearray(ml_kem_shared)
+    try:
+        return hkdf_derive(bytes(ikm), length=64, info=info, salt=session_id)
+    finally:
+        wipe(ikm)
 
 
 def derive_session_keys(
@@ -376,6 +413,11 @@ def derive_session_keys(
 ) -> DerivedKeys:
     """
     Derives session keys from the high-entropy hybrid shared secret using HKDF.
+
+    MEMORY HYGIENE: The intermediate `master` key material is held in a
+    bytearray and zeroed in a finally block. The four returned sub-keys in
+    DerivedKeys remain as immutable bytes because changing their type would
+    break the public API and all callers.
     """
     # Deterministic salt: binds the identity of the parties
     salt = hashlib.sha3_256(x_public + y_public + extra_salt).digest()
@@ -383,25 +425,31 @@ def derive_session_keys(
     # Frozen compatibility length from the original v3 derivation.
     length = SESSION_MASTER_HKDF_LENGTH_V3
 
-    master = hkdf_derive(
+    # Hold master in a bytearray so it can be explicitly zeroed after use.
+    # hkdf_derive() returns bytes; wrap immediately to minimise the window
+    # in which the immutable bytes object coexists with the bytearray.
+    master = bytearray(hkdf_derive(
         shared_secret,
         length=length,
         info=DOMAIN_SESSION_MASTER_V3,
         salt=salt,
-    )
-    # Shrink the Master key back to original length
-    master = master[:KEY_LEN*4]
+    ))
+    # Shrink the master key back to original length (still a bytearray).
+    master = master[:KEY_LEN * 4]
 
     def _sub(label: bytes) -> bytes:
         """Derives a sub-key via HKDF for a specific label (purpose)."""
-        return hkdf_derive(master, KEY_LEN, info=label)
+        return hkdf_derive(bytes(master), KEY_LEN, info=label)
 
-    return DerivedKeys(
-        key_x_to_y=_sub(LABEL_MSG_XY),
-        key_y_to_x=_sub(LABEL_MSG_YX),
-        sync_key=_sub(LABEL_SYNC),
-        evo_seed=_sub(LABEL_EVO_SEED),
-    )
+    try:
+        return DerivedKeys(
+            key_x_to_y=_sub(LABEL_MSG_XY),
+            key_y_to_x=_sub(LABEL_MSG_YX),
+            sync_key=_sub(LABEL_SYNC),
+            evo_seed=_sub(LABEL_EVO_SEED),
+        )
+    finally:
+        wipe(master)
 
 
 # ---------------------------------------------------------------------------
