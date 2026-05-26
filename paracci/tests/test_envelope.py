@@ -315,3 +315,30 @@ def test_envelope_with_wrong_aead_key_rejected():
     with pytest.raises(EnvelopeError) as exc_info:
         open_envelope(sealed.file_bytes, meta_y2)
     assert any(term in str(exc_info.value).lower() for term in ["does not belong to this session", "decryption failed", "sync block decryption failed"])
+
+
+@oqs_required
+def test_envelope_large_ratchet_jump_rejected():
+    """Test that an evolution step jump exceeding MAX_EVO_JUMP is rejected."""
+    meta_x, meta_y = _establish_bonded_pair()
+    sealed = seal_envelope("Secret message", meta_x)
+    header = envelope_module._parse_header(sealed.file_bytes)
+    
+    header = header._replace(evo_step=meta_y.rx_count + 150)
+    
+    with pytest.raises(EnvelopeError, match="jump too large"):
+        envelope_module._derive_receive_keys(header, None, meta_y)
+
+
+@oqs_required
+def test_new_bond_large_ratchet_jump_rejected():
+    """Test that establishing a new bond with step count exceeding MAX_EVO_JUMP is rejected."""
+    meta_x, meta_y = _make_sessions()
+    sealed_x = seal_envelope("First message", meta_x)
+    header = envelope_module._parse_header(sealed_x.file_bytes)
+    
+    header = header._replace(evo_step=150)
+    
+    bond_nonce = os.urandom(16)
+    with pytest.raises(EnvelopeError, match="jump too large"):
+        envelope_module._derive_receive_keys(header, bond_nonce, meta_y)
