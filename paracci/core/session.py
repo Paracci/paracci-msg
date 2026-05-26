@@ -758,68 +758,217 @@ def require_transcript_bound_session(meta: SessionMeta) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# Binary serialization helpers for secret session fields (v3 format)
+# ---------------------------------------------------------------------------
+
+_SESSION_BINARY_VERSION = b"\x02"
+_SESSION_V3_AAD = b"paracci.db.session.v3"
+
+
+def _pack_secret_field(buf: bytearray, value: bytes | bytearray | None) -> None:
+    """Append a 2-byte length-prefixed raw field to *buf*.
+
+    Uses ``0xFFFF`` as a sentinel to represent an absent (``None``) field so
+    that no immutable heap string is ever created for secret key material.
+    """
+    if value is None:
+        buf += (0xFFFF).to_bytes(2, "big")
+    else:
+        n = len(value)
+        if n >= 0xFFFF:
+            raise SessionError("Secret field too large to serialize.")
+        buf += n.to_bytes(2, "big")
+        buf += bytes(value)
+
+
+def _unpack_secret_field(blob: bytes | bytearray, offset: int) -> tuple:
+    """Read one length-prefixed field from *blob* at *offset*.
+
+    Returns ``(bytearray | None, new_offset)``.  The returned bytearray
+    is a copy that the caller may wipe independently.
+    """
+    length = int.from_bytes(blob[offset: offset + 2], "big")
+    if length == 0xFFFF:
+        return None, offset + 2
+    return bytearray(blob[offset + 2: offset + 2 + length]), offset + 2 + length
+
+
 def serialize_session_meta(meta: SessionMeta, device_key: bytes) -> bytes:
-    """Serializes session data by encrypting it for the local database."""
-    keys_data = None
-    if meta.keys:
-        keys_data = {
-            "x_to_y": meta.keys.key_x_to_y.hex(),
-            "y_to_x": meta.keys.key_y_to_x.hex(),
-            "sync": meta.keys.sync_key.hex(),
-            "evo": meta.keys.evo_seed.hex(),
-        }
-    data = {
-        "session_id": meta.session_id.hex(),
-        "role": meta.role,
-        "my_priv": meta.my_priv.hex() if meta.my_priv else None,
-        "my_pub": meta.my_pub.hex(),
-        "peer_pub": meta.peer_pub.hex() if meta.peer_pub else None,
-        "keys": keys_data,
-        "bond_seed": meta.bond_seed.hex() if meta.bond_seed else None,
-        "send_seed": meta.send_seed.hex() if meta.send_seed else None,
-        "recv_seed": meta.recv_seed.hex() if meta.recv_seed else None,
-        "bond_nonce": meta.bond_nonce.hex() if meta.bond_nonce else None,
-        "tx_count": meta.tx_count,
-        "rx_count": meta.rx_count,
-        "my_qseed": meta.my_qseed.hex() if meta.my_qseed else None,
-        "peer_qseed": meta.peer_qseed.hex() if meta.peer_qseed else None,
-        "peer_username": meta.peer_username,
-        "color": meta.color,
-        "evo_config": serialize_evo_config(meta.evo_config).hex(),
-        "state": meta.state,
-        "label": meta.label,
-        "created_at": meta.created_at,
-        "my_identity_pub": meta.my_identity_pub.hex() if meta.my_identity_pub else None,
-        "peer_identity_pub": meta.peer_identity_pub.hex() if meta.peer_identity_pub else None,
-        "handshake_version": meta.handshake_version,
+    """Serializes session data by encrypting it for the local database.
+
+    Secret key material (session keys, ratchet seeds, private keys) is packed
+    into a raw binary blob that is passed directly to the AEAD cipher — it
+    never passes through a Python ``str`` or ``.hex()`` call.  Non-secret,
+    public fields (counters, state strings, public keys, timestamps) are
+    JSON-encoded as before.
+
+    Wire format (plaintext after AEAD decryption)::
+
+        [1 byte  ] version tag = 0x02
+        [4 bytes ] big-endian length of secret blob
+        [N bytes ] secret blob  — length-prefixed raw fields (canonical order)
+        [4 bytes ] big-endian length of public JSON blob
+        [M bytes ] public JSON  — UTF-8
+
+    Old records (v1 / v2 AAD) continue to be readable through the legacy
+    fallback path in ``deserialize_session_meta`` and are silently upgraded
+    to v3 on the next write.
+    """
+    # --- 1. Build the secret binary blob (bytearray, never str) ---
+    secret_buf = bytearray()
+    _pack_secret_field(secret_buf, meta.my_priv)
+    _pack_secret_field(secret_buf, meta.keys.key_x_to_y if meta.keys else None)
+    _pack_secret_field(secret_buf, meta.keys.key_y_to_x if meta.keys else None)
+    _pack_secret_field(secret_buf, meta.keys.sync_key   if meta.keys else None)
+    _pack_secret_field(secret_buf, meta.keys.evo_seed   if meta.keys else None)
+    _pack_secret_field(secret_buf, meta.bond_seed)
+    _pack_secret_field(secret_buf, meta.send_seed)
+    _pack_secret_field(secret_buf, meta.recv_seed)
+    _pack_secret_field(secret_buf, meta.bond_nonce)
+    _pack_secret_field(secret_buf, meta.my_qseed)
+    _pack_secret_field(secret_buf, meta.peer_qseed)
+    _pack_secret_field(secret_buf, meta.ml_kem_secret_key)
+
+    # --- 2. Build the public JSON blob (non-secret fields only) ---
+    public_data: dict = {
+        "session_id":             meta.session_id.hex(),
+        "role":                   meta.role,
+        "my_pub":                 meta.my_pub.hex(),
+        "peer_pub":               meta.peer_pub.hex() if meta.peer_pub else None,
+        "has_keys":               meta.keys is not None,
+        "tx_count":               meta.tx_count,
+        "rx_count":               meta.rx_count,
+        "peer_username":          meta.peer_username,
+        "color":                  meta.color,
+        "evo_config":             serialize_evo_config(meta.evo_config).hex(),
+        "state":                  meta.state,
+        "label":                  meta.label,
+        "created_at":             meta.created_at,
+        "my_identity_pub":        meta.my_identity_pub.hex() if meta.my_identity_pub else None,
+        "peer_identity_pub":      meta.peer_identity_pub.hex() if meta.peer_identity_pub else None,
+        "handshake_version":      meta.handshake_version,
         "handshake_file_version": meta.handshake_file_version,
-        "transcript_version": meta.transcript_version,
-        "safety_confirmed": meta.safety_confirmed,
-        "safety_confirmed_at": meta.safety_confirmed_at,
+        "transcript_version":     meta.transcript_version,
+        "safety_confirmed":       meta.safety_confirmed,
+        "safety_confirmed_at":    meta.safety_confirmed_at,
+        "ml_kem_public_key":      meta.ml_kem_public_key.hex() if meta.ml_kem_public_key else None,
+        "ml_kem_ciphertext":      meta.ml_kem_ciphertext.hex() if meta.ml_kem_ciphertext else None,
     }
-    if meta.ml_kem_public_key is not None:
-        data["ml_kem_public_key"] = meta.ml_kem_public_key.hex()
-    if meta.ml_kem_secret_key is not None:
-        data["ml_kem_secret_key"] = meta.ml_kem_secret_key.hex()
-    if meta.ml_kem_ciphertext is not None:
-        data["ml_kem_ciphertext"] = meta.ml_kem_ciphertext.hex()
-    raw = json.dumps(data, separators=(",", ":")).encode("utf-8")
-    blob = encrypt(device_key, raw, aad=b"paracci.db.session.v2")
-    return blob.nonce + blob.ciphertext
+    json_bytes = json.dumps(public_data, separators=(",", ":")).encode("utf-8")
 
+    # --- 3. Assemble the versioned envelope ---
+    secret_len = len(secret_buf)
+    json_len = len(json_bytes)
+    envelope = bytearray()
+    envelope += _SESSION_BINARY_VERSION
+    envelope += secret_len.to_bytes(4, "big")
+    envelope += secret_buf
+    envelope += json_len.to_bytes(4, "big")
+    envelope += json_bytes
 
-def deserialize_session_meta(encrypted_data: bytes, device_key: bytes) -> SessionMeta:
-    """Converts an encrypted database record into SessionMeta."""
-    nonce = encrypted_data[:NONCE_LEN]
-    blob = EncryptedBlob(nonce=nonce, ciphertext=encrypted_data[NONCE_LEN:])
+    # --- 4. Encrypt then wipe all sensitive buffers ---
     try:
-        raw = decrypt(device_key, blob, aad=b"paracci.db.session.v2")
-    except (InvalidTag, ValueError, TypeError):
-        try:
-            raw = decrypt(device_key, blob, aad=b"paracci.db.session.v1")
-        except (InvalidTag, ValueError, TypeError) as exc:
-            raise SessionError("Session data could not be decrypted.") from exc
+        blob = encrypt(device_key, bytes(envelope), aad=_SESSION_V3_AAD)
+        return blob.nonce + blob.ciphertext
+    finally:
+        wipe(secret_buf)
+        wipe(envelope)
 
+
+def _deserialize_v3(raw: bytes | bytearray) -> "SessionMeta":
+    """Reconstruct a ``SessionMeta`` from a decrypted v3 binary envelope."""
+    # --- 1. Parse envelope ---
+    if len(raw) < 9:  # 1 version + 4 secret_len + 4 json_len minimum
+        raise SessionError("Session data is too short.")
+    secret_len = int.from_bytes(raw[1:5], "big")
+    secret_blob = raw[5: 5 + secret_len]
+    json_offset = 5 + secret_len
+    json_len = int.from_bytes(raw[json_offset: json_offset + 4], "big")
+    json_bytes = raw[json_offset + 4: json_offset + 4 + json_len]
+
+    # --- 2. Unpack secret fields (fixed canonical order — must match serialize) ---
+    pos = 0
+    my_priv,           pos = _unpack_secret_field(secret_blob, pos)
+    keys_x_to_y,       pos = _unpack_secret_field(secret_blob, pos)
+    keys_y_to_x,       pos = _unpack_secret_field(secret_blob, pos)
+    keys_sync,         pos = _unpack_secret_field(secret_blob, pos)
+    keys_evo,          pos = _unpack_secret_field(secret_blob, pos)
+    bond_seed,         pos = _unpack_secret_field(secret_blob, pos)
+    send_seed,         pos = _unpack_secret_field(secret_blob, pos)
+    recv_seed,         pos = _unpack_secret_field(secret_blob, pos)
+    bond_nonce,        pos = _unpack_secret_field(secret_blob, pos)
+    my_qseed_ba,       pos = _unpack_secret_field(secret_blob, pos)
+    peer_qseed_ba,     pos = _unpack_secret_field(secret_blob, pos)
+    ml_kem_secret_key, pos = _unpack_secret_field(secret_blob, pos)
+
+    # --- 3. Parse public JSON ---
+    data = json.loads(json_bytes.decode("utf-8"))
+
+    # --- 4. Reconstruct DerivedKeys if present ---
+    keys = None
+    if data.get("has_keys") and all(
+        k is not None for k in (keys_x_to_y, keys_y_to_x, keys_sync, keys_evo)
+    ):
+        keys = DerivedKeys(
+            key_x_to_y=keys_x_to_y,
+            key_y_to_x=keys_y_to_x,
+            sync_key=keys_sync,
+            evo_seed=keys_evo,
+        )
+
+    # --- 5. Reconstruct version / safety state (same logic as legacy path) ---
+    handshake_version = int(data.get("handshake_version", LEGACY_HANDSHAKE_VERSION))
+    handshake_file_version = int(data.get("handshake_file_version", HANDSHAKE_FILE_VERSION_V4))
+    transcript_version_raw = data.get("transcript_version")
+    transcript_version = int(transcript_version_raw) if transcript_version_raw is not None else None
+    transcript_bound = (
+        handshake_file_version >= HANDSHAKE_FILE_VERSION_V5
+        and transcript_version == HANDSHAKE_TRANSCRIPT_VERSION
+    )
+    safety_confirmed = bool(data.get("safety_confirmed", False)) if transcript_bound else False
+    state = data["state"]
+    if not transcript_bound and state == SESSION_STATE_ACTIVE:
+        state = SESSION_STATE_UNVERIFIED
+    if transcript_bound and not safety_confirmed and state == SESSION_STATE_ACTIVE:
+        state = SESSION_STATE_UNVERIFIED
+
+    return SessionMeta(
+        session_id=bytes.fromhex(data["session_id"]),
+        role=data["role"],
+        my_priv=my_priv,
+        my_pub=bytes.fromhex(data["my_pub"]),
+        peer_pub=bytes.fromhex(data["peer_pub"]) if data.get("peer_pub") else None,
+        keys=keys,
+        bond_seed=bond_seed,
+        send_seed=send_seed,
+        recv_seed=recv_seed,
+        bond_nonce=bond_nonce,
+        tx_count=data.get("tx_count", 0),
+        rx_count=data.get("rx_count", 0),
+        my_qseed=bytes(my_qseed_ba) if my_qseed_ba is not None else None,
+        peer_qseed=bytes(peer_qseed_ba) if peer_qseed_ba is not None else None,
+        peer_username=data.get("peer_username"),
+        color=data.get("color") or SESSION_COLORS[int(data["session_id"], 16) % len(SESSION_COLORS)],
+        evo_config=deserialize_evo_config(bytes.fromhex(data["evo_config"])),
+        state=state,
+        label=data["label"],
+        created_at=data["created_at"],
+        my_identity_pub=bytes.fromhex(data["my_identity_pub"]) if data.get("my_identity_pub") else None,
+        peer_identity_pub=bytes.fromhex(data["peer_identity_pub"]) if data.get("peer_identity_pub") else None,
+        handshake_version=handshake_version,
+        safety_confirmed=safety_confirmed,
+        safety_confirmed_at=data.get("safety_confirmed_at"),
+        ml_kem_public_key=bytes.fromhex(data["ml_kem_public_key"]) if data.get("ml_kem_public_key") else None,
+        ml_kem_secret_key=ml_kem_secret_key,
+        ml_kem_ciphertext=bytes.fromhex(data["ml_kem_ciphertext"]) if data.get("ml_kem_ciphertext") else None,
+        handshake_file_version=handshake_file_version,
+        transcript_version=transcript_version,
+    )
+
+
+def _deserialize_legacy_json(raw: bytes) -> "SessionMeta":
+    """Reconstruct a ``SessionMeta`` from a legacy v1/v2 JSON plaintext."""
     data = json.loads(raw.decode("utf-8"))
     keys = None
     if data.get("keys"):
@@ -877,6 +1026,50 @@ def deserialize_session_meta(encrypted_data: bytes, device_key: bytes) -> Sessio
         handshake_file_version=handshake_file_version,
         transcript_version=transcript_version,
     )
+
+
+def deserialize_session_meta(encrypted_data: bytes, device_key: bytes) -> SessionMeta:
+    """Converts an encrypted database record into SessionMeta.
+
+    Supports three record versions:
+
+    - **v3** (new): binary envelope, AAD = ``b"paracci.db.session.v3"``
+    - **v2** (legacy): JSON plaintext, AAD = ``b"paracci.db.session.v2"``
+    - **v1** (legacy): JSON plaintext, AAD = ``b"paracci.db.session.v1"``
+
+    Old records are transparently read through the fallback chain and
+    silently upgraded to v3 format on the next ``serialize_session_meta`` call.
+    """
+    nonce = encrypted_data[:NONCE_LEN]
+    blob = EncryptedBlob(nonce=nonce, ciphertext=encrypted_data[NONCE_LEN:])
+
+    # --- Try v3 first ---
+    # Only catch InvalidTag here (= decryption key mismatch / wrong AAD).
+    # ValueError / TypeError raised by _deserialize_v3 (e.g. from a malicious
+    # evo_config or structural corruption of a successfully-decrypted envelope)
+    # must propagate directly to the caller — swallowing them would let the
+    # fallback chain silently discard tampered data instead of rejecting it.
+    try:
+        raw = decrypt(device_key, blob, aad=_SESSION_V3_AAD)
+    except InvalidTag:
+        pass
+    else:
+        if raw[:1] == _SESSION_BINARY_VERSION:
+            return _deserialize_v3(raw)
+        raise SessionError("Session data format is unrecognized.")
+
+    # --- Fall back to legacy JSON paths (v2 then v1) ---
+    try:
+        raw = decrypt(device_key, blob, aad=b"paracci.db.session.v2")
+        return _deserialize_legacy_json(raw)
+    except (InvalidTag, ValueError, TypeError):
+        pass
+
+    try:
+        raw = decrypt(device_key, blob, aad=b"paracci.db.session.v1")
+        return _deserialize_legacy_json(raw)
+    except (InvalidTag, ValueError, TypeError) as exc:
+        raise SessionError("Session data could not be decrypted.") from exc
 class SessionFileError(Exception):
     pass
 
