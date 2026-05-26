@@ -220,7 +220,27 @@ def _mark_sensitive_no_store(response):
     return response
 
 
-def _native_save_response(file_bytes: bytes, filename: str):
+def _resolve_content_path(file_data):
+    """Retrieve content_path from file_data, or dump 'content' bytes to a temp file for legacy/test compatibility."""
+    if not file_data:
+        return None
+    content_path = file_data.get("content_path")
+    if content_path:
+        if os.path.exists(content_path):
+            return str(content_path)
+    content = file_data.get("content")
+    if content is not None:
+        temp_dir = Path(os.environ.get("DATA_DIR", "data")) / "temp"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        token = secrets.token_hex(16)
+        temp_file_path = temp_dir / f"legacy_compat_{token}.bin"
+        temp_file_path.write_bytes(content)
+        file_data["content_path"] = str(temp_file_path)
+        return str(temp_file_path)
+    return None
+
+
+def _native_save_response(file_bytes: bytes | None, filename: str, file_path: str | Path | None = None):
     """Issue a one-shot native save grant when the desktop client requests one."""
     if request.headers.get(NATIVE_SAVE_REQUEST_HEADER) != "1":
         return None
@@ -230,7 +250,7 @@ def _native_save_response(file_bytes: bytes, filename: str):
         ), 409
     try:
         validated_filename = validate_native_download_filename(filename)
-        native_save_token = native_save_grants.issue(file_bytes, validated_filename)
+        native_save_token = native_save_grants.issue(file_bytes, validated_filename, file_path=file_path)
     except ValueError as exc:
         return _mark_sensitive_no_store(
             jsonify({"success": False, "error": str(exc)})
@@ -241,8 +261,38 @@ def _native_save_response(file_bytes: bytes, filename: str):
     }))
 
 
+
 @bp.after_app_request
 def add_security_headers(response):
+    """Add global security headers."""
+    return _apply_security_headers(response)
+
+def _drop_cached_entry(entry, byte_keys):
+    """Drop Paracci-owned references to cached plaintext bytes.
+
+    Python cannot guarantee zeroization of immutable bytes; this only shortens
+    the lifetime of references controlled by this process.
+    """
+    if not isinstance(entry, dict):
+        return
+    for key in byte_keys:
+        value = entry.get(key)
+        if isinstance(value, (bytearray, list)):
+            wipe(value)
+        entry[key] = b""
+    entry.clear()
+
+
+def _normalize_cache_ids(raw_ids):
+    """Return bounded string cache IDs, or None to mean all cache entries."""
+    if raw_ids is None:
+        return None
+    if not isinstance(raw_ids, (list, tuple, set)):
+        return []
+    normalized = []
+    for value in raw_ids:
+        if not isinstance(value, str):
+            continue
     """Add global security headers."""
     return _apply_security_headers(response)
 
@@ -289,6 +339,12 @@ def _clear_preview_cache(ids=None):
         entry = PREVIEW_CACHE.pop(cache_id, None)
         if entry is None:
             continue
+        content_path = entry.get("content_path")
+        if content_path and os.path.exists(content_path):
+            try:
+                os.remove(content_path)
+            except OSError:
+                pass
         _drop_cached_entry(entry, ("content", "preview_content"))
         cleared += 1
     return cleared
@@ -300,13 +356,20 @@ def _cleanup_preview_cache():
     expired = [k for k, v in PREVIEW_CACHE.items() if v["expires"] < now]
     return _clear_preview_cache(expired)
 
-def _add_to_preview_cache(filename, content, mime, allow_download, ttl=600):
+def _add_to_preview_cache(filename, content_path, mime, allow_download, ttl=600):
     """Adds a file temporarily to the preview cache."""
     _cleanup_preview_cache()
+    if isinstance(content_path, bytes):
+        temp_dir = Path(os.environ.get("DATA_DIR", "data")) / "temp"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        token = secrets.token_hex(16)
+        temp_file_path = temp_dir / f"preview_compat_{token}.bin"
+        temp_file_path.write_bytes(content_path)
+        content_path = temp_file_path
     pid = str(uuid.uuid4())
     PREVIEW_CACHE[pid] = {
         "filename": sanitize_attachment_filename(filename),
-        "content": content,
+        "content_path": Path(content_path),
         "mime": mime,
         "expires": time.time() + ttl,
         "allow_download": allow_download,
@@ -360,6 +423,12 @@ def _clear_staged_attachment_cache(ids=None):
         entry = STAGED_ATTACHMENT_CACHE.pop(cache_id, None)
         if entry is None:
             continue
+        content_path = entry.get("content_path")
+        if content_path and os.path.exists(content_path):
+            try:
+                os.remove(content_path)
+            except OSError:
+                pass
         _drop_cached_entry(entry, ("content",))
         cleared += 1
     return cleared
@@ -372,13 +441,20 @@ def _cleanup_staged_attachment_cache():
     return _clear_staged_attachment_cache(expired)
 
 
-def _add_to_staged_attachment_cache(filename, content, ttl=600):
+def _add_to_staged_attachment_cache(filename, content_path, ttl=600):
     """Adds a native attachment temporarily until the next seal request consumes it."""
     _cleanup_staged_attachment_cache()
+    if isinstance(content_path, bytes):
+        temp_dir = Path(os.environ.get("DATA_DIR", "data")) / "temp"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        token = secrets.token_hex(16)
+        temp_file_path = temp_dir / f"staged_compat_{token}.bin"
+        temp_file_path.write_bytes(content_path)
+        content_path = temp_file_path
     attachment_id = str(uuid.uuid4())
     STAGED_ATTACHMENT_CACHE[attachment_id] = {
         "filename": sanitize_attachment_filename(filename),
-        "content": content,
+        "content_path": Path(content_path),
         "expires": time.time() + ttl,
     }
     return attachment_id
@@ -445,27 +521,57 @@ def stage_native_attachment_paths(paths: Sequence[str | Path]) -> list[dict]:
     staged_ids = []
     staged_items = []
     total_size = 0
+    temp_dir = Path(os.environ.get("DATA_DIR", "data")) / "temp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    
     try:
         for native_path in selected:
-            content = _import_from_native(native_path)
-            if content is None:
-                raise NativeAttachmentStagingError("Could not read attachment.")
-            total_size += len(content)
+            token = secrets.token_hex(16)
+            temp_file_path = temp_dir / f"staged_web_{token}.bin"
+            
+            try:
+                with open(native_path, "rb") as src, open(temp_file_path, "wb") as dest:
+                    while True:
+                        chunk = src.read(64 * 1024)
+                        if not chunk:
+                            break
+                        dest.write(chunk)
+            except OSError as exc:
+                raise NativeAttachmentStagingError("Could not read attachment.") from exc
+                
+            file_size = os.path.getsize(temp_file_path)
+            total_size += file_size
             if total_size > MAX_ATTACHMENT_SIZE:
+                try:
+                    os.remove(temp_file_path)
+                except OSError:
+                    pass
                 raise NativeAttachmentStagingError(
                     f"Total file size exceeds the {MAX_ATTACHMENT_SIZE // (1024*1024)}MB limit."
                 )
+                
             safe_fname = sanitize_attachment_filename(Path(native_path).name)
             try:
-                content = sanitize_image(content, safe_fname)
+                ext = safe_fname.split('.')[-1].lower()
+                if ext in ['jpg', 'jpeg', 'png', 'webp']:
+                    with open(temp_file_path, "rb") as f:
+                        image_bytes = f.read()
+                    sanitized = sanitize_image(image_bytes, safe_fname)
+                    temp_file_path.write_bytes(sanitized)
+                    file_size = len(sanitized)
             except SanitizationError as exc:
+                try:
+                    os.remove(temp_file_path)
+                except OSError:
+                    pass
                 raise NativeAttachmentStagingError(SanitizationError.user_message) from exc
-            attachment_id = _add_to_staged_attachment_cache(safe_fname, content)
+                
+            attachment_id = _add_to_staged_attachment_cache(safe_fname, temp_file_path)
             staged_ids.append(attachment_id)
             staged_items.append({
                 "id": attachment_id,
                 "filename": safe_fname,
-                "size": len(content),
+                "size": file_size,
             })
         return staged_items
     except Exception:
@@ -1359,20 +1465,8 @@ def hex_filter(b):
 
 
 # ---------------------------------------------------------------------------
-# Security Checks
-# ---------------------------------------------------------------------------
-
-
-
-# ---------------------------------------------------------------------------
 # GET / — Main Screen
 # ---------------------------------------------------------------------------
-
-@bp.after_request
-def add_security_headers(response):
-    """Adds strict security headers to every response."""
-    return _apply_security_headers(response)
-
 
 @bp.route("/")
 def index():
@@ -1617,19 +1711,20 @@ def api_prepare_preview():
         return jsonify({"error": "Attachment not found."}), 404
 
     filename = sanitize_attachment_filename(file_data.get("filename") or "attachment.bin")
-    file_bytes = file_data.get("content", b"")
-    if not isinstance(file_bytes, bytes):
-        file_bytes = bytes(file_bytes or b"")
+    content_path = _resolve_content_path(file_data)
+    if not content_path or not os.path.exists(content_path):
+        return jsonify({"error": "Attachment content not found."}), 404
+        
     stored_mime = str(file_data.get("mime") or "").strip()
     guessed_mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
     mime_type = stored_mime if stored_mime and stored_mime != "application/octet-stream" else guessed_mime
     allow_download = file_data.get("allow_download") is True
-    token = preview_store.generate_token(file_bytes, filename, mime_type, allow_download=allow_download)
+    token = preview_store.generate_token(None, filename, mime_type, allow_download=allow_download, file_path=content_path)
     response = jsonify({
         "preview_token": token,
         "filename": filename,
         "mime_type": mime_type,
-        "file_size": len(file_bytes),
+        "file_size": os.path.getsize(content_path),
         "downloadable": allow_download,
         "allow_download": allow_download,
     })
@@ -1930,28 +2025,99 @@ def _gather_attachments(upload_files, staged_ids=None):
 
     if len(upload_files) + len(staged_id_list) > MAX_ATTACHMENT_COUNT:
         return None, f"Maximum {MAX_ATTACHMENT_COUNT} files can be attached."
+
+    temp_dir = Path(os.environ.get("DATA_DIR", "data")) / "temp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
         
     for f in upload_files:
         safe_fname = sanitize_attachment_filename(f.filename)
-        content = f.read()
-        total_size += len(content)
-        if total_size > MAX_ATTACHMENT_SIZE:
-            return None, f"Total file size exceeds the {MAX_ATTACHMENT_SIZE // (1024*1024)}MB limit."
+        token = secrets.token_hex(16)
+        temp_path = temp_dir / f"upload_{token}.bin"
+        
         try:
-            content = sanitize_image(content, safe_fname)
+            with open(temp_path, "wb") as dest:
+                while True:
+                    chunk = f.stream.read(64 * 1024)
+                    if not chunk:
+                        break
+                    dest.write(chunk)
+        except OSError as exc:
+            for name, path in files:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+            return None, "Failed to write uploaded attachment to disk."
+            
+        file_size = os.path.getsize(temp_path)
+        total_size += file_size
+        if total_size > MAX_ATTACHMENT_SIZE:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+            for name, path in files:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+            return None, f"Total file size exceeds the {MAX_ATTACHMENT_SIZE // (1024*1024)}MB limit."
+            
+        try:
+            ext = safe_fname.split('.')[-1].lower()
+            if ext in ['jpg', 'jpeg', 'png', 'webp']:
+                with open(temp_path, "rb") as reader:
+                    img_bytes = reader.read()
+                sanitized = sanitize_image(img_bytes, safe_fname)
+                temp_path.write_bytes(sanitized)
         except SanitizationError:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+            for name, path in files:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
             return None, _(SanitizationError.i18n_key)
-        files.append((safe_fname, content))
+            
+        files.append((safe_fname, temp_path))
 
     for attachment_id in staged_id_list:
         staged = STAGED_ATTACHMENT_CACHE.pop(attachment_id, None)
         if not staged or staged["expires"] < time.time():
+            for name, path in files:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
             return None, "A staged attachment expired. Please attach it again."
-        content = staged.get("content", b"")
-        total_size += len(content)
+            
+        content_path = _resolve_content_path(staged)
+        if not content_path or not os.path.exists(content_path):
+            for name, path in files:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+            return None, "A staged attachment could not be read."
+            
+        file_size = os.path.getsize(content_path)
+        total_size += file_size
         if total_size > MAX_ATTACHMENT_SIZE:
+            try:
+                os.remove(content_path)
+            except OSError:
+                pass
+            for name, path in files:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
             return None, f"Total file size exceeds the {MAX_ATTACHMENT_SIZE // (1024*1024)}MB limit."
-        files.append((staged["filename"], content))
+            
+        files.append((staged["filename"], content_path))
         _drop_cached_entry(staged, ("content",))
 
     return files, None
@@ -1993,24 +2159,49 @@ def session_seal(sid: str):
         flash(error, "error")
         return redirect(url_for("main.session_detail", sid=sid))
 
-    package_blob = b""
+    # Write ZIP and envelope directly to disk to minimize memory usage
+    temp_dir = Path(os.environ.get("DATA_DIR", "data")) / "temp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    token = secrets.token_hex(16)
+    temp_zip_path = temp_dir / f"package_{token}.zip"
+    envelope_path = temp_dir / f"envelope_{token}.paracci"
+    
     try:
-        package_blob = create_package(text, files, allow_download=allow_download)
+        import inspect
+        sig = inspect.signature(create_package)
+        if "output_path" in sig.parameters:
+            create_package(text, files, allow_download=allow_download, output_path=temp_zip_path)
+        else:
+            pkg_bytes = create_package(text, files, allow_download)
+            with open(temp_zip_path, "wb") as f:
+                f.write(pkg_bytes)
         sealed = seal_envelope(
-            package_blob,
+            temp_zip_path,
             meta,
             single_use=True,
             ttl_seconds=ttl_seconds,
             allow_download=allow_download,
+            output_path=envelope_path,
         )
         updated = meta._replace(tx_count=meta.tx_count + 1, send_seed=sealed.next_seed)
         _save_session(updated)
         filename = f"msg_step_{sealed.next_step - 1:06d}_{sealed.msg_id.hex()[:12]}.paracci"
-        native_response = _native_save_response(sealed.file_bytes, filename)
+        
+        native_response = _native_save_response(None, filename, file_path=envelope_path)
         if native_response is not None:
+            try: os.remove(envelope_path)
+            except OSError: pass
             return native_response
+            
+        from flask import after_this_request
+        @after_this_request
+        def remove_envelope(response):
+            try: os.remove(envelope_path)
+            except OSError: pass
+            return response
+            
         return send_file(
-            io.BytesIO(sealed.file_bytes),
+            envelope_path,
             mimetype="application/octet-stream",
             as_attachment=True,
             download_name=filename,
@@ -2022,8 +2213,13 @@ def session_seal(sid: str):
         flash(_('session.unexpected_error'), "error")
         return redirect(url_for("main.session_detail", sid=sid))
     finally:
-        files.clear()
-        package_blob = b""
+        if temp_zip_path.exists():
+            try: os.remove(temp_zip_path)
+            except OSError: pass
+        for name, path in files:
+            if isinstance(path, (str, Path)) and os.path.exists(path):
+                try: os.remove(path)
+                except OSError: pass
 
 
 def _prepare_open_response(meta, opened, sid, is_ajax, secure_delete_warning=None):
@@ -2040,11 +2236,25 @@ def _prepare_open_response(meta, opened, sid, is_ajax, secure_delete_warning=Non
         except Exception:
             safety_code = None
     evo_info = {"tx_count": updated_meta.tx_count, "bonded": updated_meta.is_bonded, "secs_remaining": seconds_until_expiry(updated_meta.evo_config)} if updated_meta.keys else None
+    
+    temp_dir = Path(os.environ.get("DATA_DIR", "data")) / "temp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    token = secrets.token_hex(16)
+    temp_zip_path = temp_dir / f"decrypted_{token}.zip"
+    
+    try:
+        temp_zip_path.write_bytes(opened.payload)
+        package = extract_package(
+            default_allow_download=not opened.has_download_policy,
+            file_path=temp_zip_path,
+        )
+    except PackageLimitError as exc:
+        raise
+    finally:
+        if temp_zip_path.exists():
+            try: os.remove(temp_zip_path)
+            except OSError: pass
 
-    package = extract_package(
-        opened.payload,
-        default_allow_download=not opened.has_download_policy,
-    )
     effective_allow_download = (
         opened.allow_download
         if opened.has_download_policy
@@ -2055,12 +2265,12 @@ def _prepare_open_response(meta, opened, sid, is_ajax, secure_delete_warning=Non
     attachments = []
     for att in package.attachments:
         safe_name = sanitize_attachment_filename(att.filename)
-        pid = _add_to_preview_cache(safe_name, att.content, att.mime_type, effective_allow_download)
+        pid = _add_to_preview_cache(safe_name, att.content_path, att.mime_type, effective_allow_download)
         attachments.append({
             "pid": pid,
             "filename": safe_name,
             "mime_type": att.mime_type,
-            "size": len(att.content),
+            "size": att.size,
             "is_media": att.mime_type.startswith(("image/", "video/")),
             "preview_url": _preview_url("main.preview", pid),
             "download_url": _preview_url("main.preview_download", pid),
@@ -2116,18 +2326,46 @@ def session_open(sid: str):
     uploaded = request.files.get("paracci_file")
     file_bytes = None
     native_file_path = None
+    temp_upload_path = None
+    
     if native_file_id:
         file_bytes, native_ref = _import_from_native_ref(native_file_id)
         native_file_path = native_ref["path"] if native_ref else None
     elif uploaded and uploaded.filename != "":
-        file_bytes = uploaded.read()
+        temp_dir = Path(os.environ.get("DATA_DIR", "data")) / "temp"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        token = secrets.token_hex(16)
+        temp_upload_path = temp_dir / f"open_upload_{token}.bin"
+        try:
+            with open(temp_upload_path, "wb") as dest:
+                while True:
+                    chunk = uploaded.stream.read(64 * 1024)
+                    if not chunk:
+                        break
+                    dest.write(chunk)
+        except OSError as exc:
+            msg = "Failed to write upload file to disk."
+            return jsonify({"success": False, "error": msg}) if is_ajax else (flash(msg, "error") or redirect(url_for("main.session_detail", sid=sid)))
+        native_file_path = temp_upload_path
 
-    if not file_bytes:
+    if native_file_path is None and not file_bytes:
         msg = "No file selected."
         return jsonify({"success": False, "error": msg}) if is_ajax else (flash(msg, "error") or redirect(url_for("main.session_detail", sid=sid)))
 
-    raw = _parse_file_header_raw(file_bytes)
+    if native_file_path is not None:
+        try:
+            with open(native_file_path, "rb") as f:
+                header_bytes_prefix = f.read(100)
+        except OSError:
+            header_bytes_prefix = b""
+        raw = _parse_file_header_raw(header_bytes_prefix)
+    else:
+        raw = _parse_file_header_raw(file_bytes)
+
     if raw is None:
+        if temp_upload_path and temp_upload_path.exists():
+            try: os.remove(temp_upload_path)
+            except OSError: pass
         msg = _('session.invalid_file')
         return jsonify({"success": False, "error": msg}) if is_ajax else (flash(msg, "error") or redirect(url_for("main.session_detail", sid=sid)))
 
@@ -2136,7 +2374,10 @@ def session_open(sid: str):
     try:
         burn_reserved = guard.pre_open_check(msg_id=raw["msg_id"], expire_at=raw["expire_at"], single_use=raw["single_use"])
         try:
-            opened = open_envelope(file_bytes, meta)
+            if native_file_path is not None:
+                opened = open_envelope(session=meta, file_path=native_file_path)
+            else:
+                opened = open_envelope(file_bytes, meta)
         except EnvelopeError as e:
             if burn_reserved:
                 guard.mark_open_failed(raw["msg_id"], str(e))
@@ -2155,7 +2396,7 @@ def session_open(sid: str):
             session_id=opened.session_id,
             direction=opened.direction,
             single_use=opened.single_use,
-            file_path=native_file_path,
+            file_path=native_file_path if native_file_id else None,
         )
         secure_delete_warning = (
             None if secure_delete_succeeded else _('session.secure_delete_failed')
@@ -2185,6 +2426,10 @@ def session_open(sid: str):
         if is_ajax:
             return jsonify({"success": False, "error": stable_msg}), 500
         return _render_session_error(meta, sid, stable_msg)
+    finally:
+        if temp_upload_path and temp_upload_path.exists():
+            try: os.remove(temp_upload_path)
+            except OSError: pass
 
 
 def _render_session_error(meta, sid, msg):
@@ -2295,14 +2540,6 @@ def session_export(sid: str):
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-
-
-
-# ---------------------------------------------------------------------------
 # GET/POST /settings — Application Settings
 # ---------------------------------------------------------------------------
 
@@ -2382,8 +2619,8 @@ def _get_preview_response_data(file_data, pid):
     filename = sanitize_attachment_filename(file_data["filename"])
     mime = file_data.get("mime") or mimetypes.guess_type(filename)[0] or "application/octet-stream"
     allow_download = file_data.get("allow_download") is True
-    content = file_data.get("content", b"")
-    file_size = len(content) if isinstance(content, (bytes, bytearray)) else 0
+    content_path = _resolve_content_path(file_data)
+    file_size = os.path.getsize(content_path) if content_path and os.path.exists(content_path) else 0
     content_url = ""
 
     if mime.startswith("image/") and not allow_download:
@@ -2439,7 +2676,7 @@ def _get_preview_token_response_data(entry: PreviewEntry):
         token=entry.token,
         filename=filename,
         mime_type=mime,
-        file_size=len(entry.file_bytes),
+        file_size=entry.file_size,
         content_url=content_url,
         media_url=content_url,
         allow_download=allow_download,
@@ -2470,15 +2707,24 @@ def preview(pid: str):
     file_data = PREVIEW_CACHE.get(pid)
     if not file_data: return f"<h3>{_('preview.not_found_title')}</h3><p>{_('preview.not_found_desc')}</p>", 404
 
+    content_path = _resolve_content_path(file_data)
+    if not content_path or not os.path.exists(content_path):
+        abort(404)
+
     if request.args.get("raw") == "1":
         if not _can_send_original_attachment(file_data):
             abort(403)
-        response = send_file(io.BytesIO(file_data["content"]), mimetype=file_data["mime"], as_attachment=False)
+        response = send_file(content_path, mimetype=file_data["mime"], as_attachment=False)
         return _mark_sensitive_no_store(response)
 
     if request.args.get("variant") == "preview":
+        try:
+            with open(content_path, "rb") as f:
+                img_bytes = f.read()
+        except OSError:
+            abort(404)
         preview_data = build_no_download_image_preview(
-            file_data.get("content", b""),
+            img_bytes,
             file_data.get("mime", ""),
         )
         if not preview_data:
@@ -2544,12 +2790,16 @@ def preview_download(pid: str):
     if not _can_send_original_attachment(file_data):
         abort(403)
 
+    content_path = _resolve_content_path(file_data)
+    if not content_path or not os.path.exists(content_path):
+        abort(404)
+
     filename = sanitize_attachment_filename(file_data["filename"])
-    native_response = _native_save_response(file_data["content"], filename)
+    native_response = _native_save_response(None, filename, file_path=content_path)
     if native_response is not None:
         return native_response
     response = send_file(
-        io.BytesIO(file_data["content"]),
+        content_path,
         mimetype=file_data["mime"],
         as_attachment=True,
         download_name=filename

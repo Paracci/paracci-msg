@@ -273,17 +273,28 @@ def _derive_legacy_payload_key_v1_v2(
     )
 
 
+import os
+from pathlib import Path
+
 def seal_envelope(
-    payload_bytes: bytes | str,
+    payload_bytes: bytes | str | Path,
     session: SessionMeta,
     single_use: bool = True,
     ttl_seconds: int = 0,
     *,
     allow_download: bool = False,
+    output_path: str | Path | None = None,
 ) -> SealedEnvelope:
     """Encrypts a payload into a .paracci message envelope."""
-    if isinstance(payload_bytes, str):
-        payload_bytes = payload_bytes.encode("utf-8")
+    if isinstance(payload_bytes, (str, Path)) and not isinstance(payload_bytes, bytes) and os.path.exists(payload_bytes):
+        with open(payload_bytes, "rb") as f:
+            payload_bytes_resolved = f.read()
+    else:
+        if isinstance(payload_bytes, str):
+            payload_bytes_resolved = payload_bytes.encode("utf-8")
+        else:
+            payload_bytes_resolved = payload_bytes
+
     if ttl_seconds < 0:
         raise EnvelopeError("Message TTL cannot be negative.")
 
@@ -302,7 +313,7 @@ def seal_envelope(
         expire_at,
     )
 
-    payload_blob = encrypt(msg_key, payload_bytes, aad=header)
+    payload_blob = encrypt(msg_key, payload_bytes_resolved, aad=header)
 
     is_bond_init = session.role == "X" and step == 0 and session.bond_nonce is not None
     sync_raw = _build_sync_payload(
@@ -313,15 +324,27 @@ def seal_envelope(
     )
     sync_blob = encrypt(session.keys.sync_key, sync_raw, aad=header + b"sync")
 
-    content = (
-        header
-        + pack_uint32(len(payload_blob.ciphertext))
-        + payload_blob.nonce
-        + payload_blob.ciphertext
-        + sync_blob.nonce
-        + sync_blob.ciphertext
-    )
-    file_bytes = content
+    if output_path is not None:
+        out_path = Path(output_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, "wb") as f:
+            f.write(header)
+            f.write(pack_uint32(len(payload_blob.ciphertext)))
+            f.write(payload_blob.nonce)
+            f.write(payload_blob.ciphertext)
+            f.write(sync_blob.nonce)
+            f.write(sync_blob.ciphertext)
+        file_bytes = b""
+    else:
+        content = (
+            header
+            + pack_uint32(len(payload_blob.ciphertext))
+            + payload_blob.nonce
+            + payload_blob.ciphertext
+            + sync_blob.nonce
+            + sync_blob.ciphertext
+        )
+        file_bytes = content
 
     return SealedEnvelope(
         file_bytes=file_bytes,
@@ -332,23 +355,59 @@ def seal_envelope(
     )
 
 
-def open_envelope(file_bytes: bytes, session: SessionMeta) -> OpenedEnvelope:
+def open_envelope(
+    file_bytes: bytes | None = None,
+    session: SessionMeta = None,
+    *,
+    file_path: str | Path | None = None,
+) -> OpenedEnvelope:
     """Parses and decrypts a .paracci message envelope."""
-    if len(file_bytes) < HEADER_SIZE + 4 + (NONCE_LEN * 2) + 16:
-        raise EnvelopeError("File too small.")
-
-    header_bytes = file_bytes[:HEADER_SIZE]
-    header = _parse_header(header_bytes)
-    if header.version == LEGACY_FILE_VERSION:
-        if len(file_bytes) < HEADER_SIZE + 4 + (NONCE_LEN * 2) + 16 + LEGACY_SEAL_SIZE:
+    if file_path is not None:
+        path = Path(file_path)
+        try:
+            file_size = path.stat().st_size
+        except OSError as exc:
+            raise EnvelopeError("Could not read message file.") from exc
+        if file_size < HEADER_SIZE + 4 + (NONCE_LEN * 2) + 16:
             raise EnvelopeError("File too small.")
-        content = file_bytes[:-LEGACY_SEAL_SIZE]
-        header_bytes = content[:HEADER_SIZE]
+        with open(path, "rb") as f:
+            header_bytes = f.read(HEADER_SIZE)
+            if len(header_bytes) < HEADER_SIZE:
+                raise EnvelopeError("File too short.")
     else:
-        content = file_bytes
+        if file_bytes is None:
+            raise ValueError("Either file_bytes or file_path must be provided.")
+        file_size = len(file_bytes)
+        if file_size < HEADER_SIZE + 4 + (NONCE_LEN * 2) + 16:
+            raise EnvelopeError("File too small.")
+        header_bytes = file_bytes[:HEADER_SIZE]
+
+    header = _parse_header(header_bytes)
     _validate_envelope_context(header, session)
 
-    payload_blob, sync_blob = _split_body(content[HEADER_SIZE:])
+    if file_path is not None:
+        if header.version == LEGACY_FILE_VERSION:
+            content_len = file_size - LEGACY_SEAL_SIZE
+        else:
+            content_len = file_size
+        if content_len < HEADER_SIZE + 4 + (NONCE_LEN * 2) + 16:
+            raise EnvelopeError("File too small.")
+        with open(path, "rb") as f:
+            f.seek(HEADER_SIZE)
+            body = f.read(content_len - HEADER_SIZE)
+    else:
+        if header.version == LEGACY_FILE_VERSION:
+            if len(file_bytes) < HEADER_SIZE + 4 + (NONCE_LEN * 2) + 16 + LEGACY_SEAL_SIZE:
+                raise EnvelopeError("File too small.")
+            content = file_bytes[:-LEGACY_SEAL_SIZE]
+            header_bytes = content[:HEADER_SIZE]
+        else:
+            content = file_bytes
+        if len(content) < HEADER_SIZE + 4 + (NONCE_LEN * 2) + 16:
+            raise EnvelopeError("File too small.")
+        body = content[HEADER_SIZE:]
+
+    payload_blob, sync_blob = _split_body(body)
     sync_data, bond_nonce = _decrypt_sync_block(header_bytes, sync_blob, session)
     msg_key, next_seed = _derive_receive_keys(header, bond_nonce, session)
 

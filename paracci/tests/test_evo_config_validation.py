@@ -162,6 +162,8 @@ def test_evolution_steps_are_bounded():
 def test_signed_malicious_initiator_rejects_legacy_compatibility_metadata_before_key_derivation(monkeypatch):
     malicious_file = _signed_initiator_file(_malicious_evo_config_hex())
     y_identity_priv, y_identity_pub = _identity()
+    malicious_file = _signed_initiator_file(_malicious_evo_config_hex())
+    y_identity_priv, y_identity_pub = _identity()
 
     def fail_if_called(*_args, **_kwargs):
         raise AssertionError("derive_session_keys should not be called")
@@ -187,17 +189,46 @@ def test_persisted_session_metadata_rejects_malicious_evo_config():
     )
     device_key = random_bytes(32)
     encrypted = serialize_session_meta(meta, device_key)
+
+    # --- Tamper with the v3 binary envelope ---
+    # Decrypt the v3 envelope, parse it, corrupt the evo_config in the public
+    # JSON section, re-assemble, re-encrypt, and verify that deserialization
+    # catches the malicious evolution configuration.
+    from core.session import (
+        _SESSION_BINARY_VERSION,
+        _SESSION_V3_AAD,
+    )
     blob = EncryptedBlob(
         nonce=encrypted[:NONCE_LEN],
         ciphertext=encrypted[NONCE_LEN:],
     )
-    data = json.loads(decrypt(device_key, blob, aad=b"paracci.db.session.v2").decode("utf-8"))
+    plaintext = decrypt(device_key, blob, aad=_SESSION_V3_AAD)
+    assert plaintext[:1] == _SESSION_BINARY_VERSION, "Expected v3 binary envelope"
+
+    # Parse the envelope layout: [1B ver][4B secret_len][secret][4B json_len][json]
+    secret_len = int.from_bytes(plaintext[1:5], "big")
+    secret_blob = plaintext[5: 5 + secret_len]
+    json_offset = 5 + secret_len
+    json_len = int.from_bytes(plaintext[json_offset: json_offset + 4], "big")
+    json_bytes = plaintext[json_offset + 4: json_offset + 4 + json_len]
+
+    # Corrupt the evo_config in the public JSON
+    data = json.loads(json_bytes.decode("utf-8"))
     data["evo_config"] = _malicious_evo_config_hex()
-    raw = json.dumps(data, separators=(",", ":")).encode("utf-8")
-    tampered = encrypt(device_key, raw, aad=b"paracci.db.session.v2")
+    tampered_json = json.dumps(data, separators=(",", ":")).encode("utf-8")
+
+    # Reassemble the envelope with the tampered JSON
+    tampered_plain = bytearray()
+    tampered_plain += _SESSION_BINARY_VERSION
+    tampered_plain += secret_len.to_bytes(4, "big")
+    tampered_plain += secret_blob
+    tampered_plain += len(tampered_json).to_bytes(4, "big")
+    tampered_plain += tampered_json
+
+    tampered_blob = encrypt(device_key, bytes(tampered_plain), aad=_SESSION_V3_AAD)
 
     with pytest.raises(ValueError):
-        deserialize_session_meta(tampered.nonce + tampered.ciphertext, device_key)
+        deserialize_session_meta(tampered_blob.nonce + tampered_blob.ciphertext, device_key)
 
 
 def test_envelope_rejects_invalid_legacy_compatibility_metadata_for_current_seal(monkeypatch):

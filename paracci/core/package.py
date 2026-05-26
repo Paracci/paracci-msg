@@ -140,11 +140,68 @@ def _read_zip_entry_limited(
     return output.getvalue()
 
 
-class Attachment(NamedTuple):
-    """Data structure representing message attachments."""
-    filename: str
-    content: bytes
-    mime_type: str = "application/octet-stream"
+import os
+import secrets
+from pathlib import Path
+
+class Attachment:
+    """Tuple-compatible structure representing message attachments using disk storage."""
+    def __init__(
+        self,
+        filename: str,
+        content: bytes | str | Path | None = None,
+        mime_type: str = "application/octet-stream",
+        content_path: str | Path | None = None,
+    ):
+        self.filename = filename
+        self.mime_type = mime_type
+
+        if content_path is not None:
+            self.content_path = str(content_path)
+        elif isinstance(content, (str, Path)):
+            self.content_path = str(content)
+        elif isinstance(content, bytes):
+            temp_dir = Path(os.environ.get("DATA_DIR", "data")) / "temp"
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            att_token = secrets.token_hex(16)
+            dest_path = temp_dir / f"attachment_{att_token}.bin"
+            try:
+                dest_path.write_bytes(content)
+            except OSError as exc:
+                raise ValueError("Failed to write attachment temp file.") from exc
+            self.content_path = str(dest_path)
+        else:
+            self.content_path = ""
+
+    @property
+    def content(self) -> bytes:
+        if not self.content_path or not os.path.exists(self.content_path):
+            return b""
+        try:
+            with open(self.content_path, "rb") as f:
+                return f.read()
+        except OSError:
+            return b""
+
+    @property
+    def size(self) -> int:
+        if self.content_path and os.path.exists(self.content_path):
+            try:
+                return os.path.getsize(self.content_path)
+            except OSError:
+                return 0
+        return 0
+
+    def __iter__(self):
+        yield self.filename
+        yield self.content
+        yield self.mime_type
+
+    def __getitem__(self, index):
+        return [self.filename, self.content, self.mime_type][index]
+
+    def __len__(self):
+        return 3
 
 class Package(NamedTuple):
     """Package structure containing message content and attachments."""
@@ -152,26 +209,81 @@ class Package(NamedTuple):
     attachments: List[Attachment]
     allow_download: bool = False
 
-def create_package(text: str, files: List[Tuple[str, bytes]], allow_download: bool = False) -> bytes:
+
+def _extract_zip_entry_limited_to_file(
+    zf: zipfile.ZipFile,
+    info: zipfile.ZipInfo,
+    max_uncompressed_bytes: int,
+    dest_path: str | Path,
+    label: str,
+) -> int:
+    """Stream a ZIP entry into a file on disk only after enforcing expansion limits."""
+    _validate_zip_entry_info(info, max_uncompressed_bytes, label)
+    total = 0
+    with open(dest_path, "wb") as dest:
+        try:
+            with zf.open(info) as src:
+                while True:
+                    chunk = src.read(_ZIP_READ_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > max_uncompressed_bytes:
+                        raise PackageLimitError(f"{label} is too large to open safely.")
+                    dest.write(chunk)
+        except PackageLimitError:
+            raise
+        except (zipfile.BadZipFile, RuntimeError, OSError, EOFError, zlib.error) as exc:
+            raise PackageLimitError("Package is malformed and cannot be opened safely.") from exc
+    return total
+
+
+def create_package(
+    text: str,
+    files: List[Tuple[str, bytes | str | Path]],
+    allow_download: bool = False,
+    output_path: str | Path | None = None,
+) -> bytes | None:
     """
     Converts text and files into a ZIP package before encryption.
+    If output_path is provided, writes the ZIP directly to disk to optimize memory.
     TRAFFIC ANALYSIS PROTECTION: Adds random size padding (junk data) to the package.
     """
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+    if output_path is not None:
+        zf_target = output_path
+    else:
+        zf_target = io.BytesIO()
+
+    with zipfile.ZipFile(zf_target, "w", zipfile.ZIP_DEFLATED) as zf:
         # 1. Message text
         zf.writestr("message.md", text.encode("utf-8"))
         
         # 2. Attachments
         metadata = []
-        for i, (fname, content) in enumerate(files):
+        for i, (fname, content_or_path) in enumerate(files):
             safe_fname = sanitize_attachment_filename(fname)
             internal_path = f"attachments/{i}_{safe_fname}"
-            zf.writestr(internal_path, content)
+            
+            if isinstance(content_or_path, (str, Path)) and os.path.exists(content_or_path):
+                zf.write(content_or_path, internal_path)
+                file_size = os.path.getsize(content_or_path)
+            elif isinstance(content_or_path, bytes):
+                zf.writestr(internal_path, content_or_path)
+                file_size = len(content_or_path)
+            else:
+                with zf.open(internal_path, "w") as dest:
+                    file_size = 0
+                    while True:
+                        chunk = content_or_path.read(64 * 1024)
+                        if not chunk:
+                            break
+                        dest.write(chunk)
+                        file_size += len(chunk)
+
             metadata.append({
                 "original_name": safe_fname,
                 "internal_path": internal_path,
-                "size": len(content)
+                "size": file_size
             })
             
         # 3. Metadata
@@ -181,23 +293,36 @@ def create_package(text: str, files: List[Tuple[str, bytes]], allow_download: bo
         }).encode("utf-8"))
 
         # 4. RANDOM PADDING (Size Analysis Protection)
-        # Add random data between 1 KB and 256 KB
         padding_size = random.randint(1024, 256 * 1024)
         zf.writestr(".padding", random_bytes(padding_size))
         
-    return buffer.getvalue()
+    if output_path is None:
+        return zf_target.getvalue()
 
-def extract_package(blob: bytes, *, default_allow_download: bool = False) -> Package:
+
+def extract_package(
+    blob: bytes | None = None,
+    *,
+    default_allow_download: bool = False,
+    file_path: str | Path | None = None,
+) -> Package:
     """
-    Extracts the components of the decrypted package blob.
+    Extracts the components of the decrypted package.
+    Attachments are extracted directly to secure temp files.
     """
-    buffer = io.BytesIO(blob)
     text = ""
     attachments = []
     allow_download = default_allow_download
     
+    if file_path is not None:
+        zf_source = file_path
+    else:
+        if blob is None:
+            raise ValueError("Either blob or file_path must be provided.")
+        zf_source = io.BytesIO(blob)
+    
     try:
-        with zipfile.ZipFile(buffer, "r") as zf:
+        with zipfile.ZipFile(zf_source, "r") as zf:
             infos = zf.infolist()
             if len(infos) > MAX_PACKAGE_ZIP_ENTRY_COUNT:
                 raise PackageLimitError("Package contains too many files to open safely.")
@@ -269,26 +394,46 @@ def extract_package(blob: bytes, *, default_allow_download: bool = False) -> Pac
                     info = zip_info_by_name[path]
                     if total_attachment_bytes + info.file_size > MAX_PACKAGE_TOTAL_ATTACHMENT_BYTES:
                         raise PackageLimitError("Package attachments are too large to open safely.")
-                    content = _read_zip_entry_limited(
+                    
+                    # Create a secure temp file for this attachment
+                    temp_dir = Path(os.environ.get("DATA_DIR", "data")) / "temp"
+                    temp_dir.mkdir(parents=True, exist_ok=True)
+                    att_token = secrets.token_hex(16)
+                    dest_path = temp_dir / f"extracted_{att_token}.bin"
+                    
+                    file_size = _extract_zip_entry_limited_to_file(
                         zf,
                         info,
                         MAX_PACKAGE_ATTACHMENT_BYTES,
+                        dest_path,
                         "Package attachment",
                     )
-                    total_attachment_bytes += len(content)
+                    total_attachment_bytes += file_size
                     if total_attachment_bytes > MAX_PACKAGE_TOTAL_ATTACHMENT_BYTES:
+                        try:
+                            os.remove(dest_path)
+                        except OSError:
+                            pass
                         raise PackageLimitError("Package attachments are too large to open safely.")
 
                     filename = sanitize_attachment_filename(item.get("original_name"))
                     attachments.append(Attachment(
                         filename=filename,
-                        content=content,
+                        content_path=str(dest_path),
                         mime_type=_guess_mime(filename)
                     ))
     except PackageLimitError:
         raise
     except (zipfile.BadZipFile, RuntimeError, OSError, EOFError, zlib.error, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        # Cleanup any temporary files created in this partial run
+        for att in attachments:
+            try:
+                os.remove(att.content_path)
+            except OSError:
+                pass
         raise PackageLimitError("Package is malformed and cannot be opened safely.") from exc
+                    
+    return Package(text=text, attachments=attachments, allow_download=allow_download)
                     
     return Package(text=text, attachments=attachments, allow_download=allow_download)
 
@@ -318,7 +463,7 @@ def package_to_template_data(package: Package) -> Dict:
     """
     if len(package.attachments) > MAX_PACKAGE_ATTACHMENT_COUNT:
         raise PackageLimitError("Package contains too many attachments to open safely.")
-    total_attachment_bytes = sum(len(att.content) for att in package.attachments)
+    total_attachment_bytes = sum(att.size for att in package.attachments)
     if total_attachment_bytes > MAX_PACKAGE_TOTAL_ATTACHMENT_BYTES:
         raise PackageLimitError("Package attachments are too large to open safely.")
 
@@ -332,7 +477,7 @@ def package_to_template_data(package: Package) -> Dict:
             "mime_type": att.mime_type,
             "is_media": is_media,
             "data_b64": "",
-            "size": len(att.content),
+            "size": att.size,
             "full_b64": ""
         })
         
