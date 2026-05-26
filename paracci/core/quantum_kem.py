@@ -71,6 +71,12 @@ def kem_generate_keypair() -> tuple[bytes, bytes]:
     Generate a ML-KEM-768 keypair.
     Returns (public_key, secret_key).
     Raises QuantumKEMError on failure.
+
+    MEMORY HYGIENE LIMITATION: secret_key is immutable bytes returned by
+    liboqs. Python cannot zero the underlying C buffer. The caller must call
+    wipe(secret_key) for audit-log purposes and should minimise the time
+    the secret key lives in Python scope. See initiator_kem_complete() for
+    the reference cleanup pattern.
     """
     try:
         oqs = _load_oqs()
@@ -129,6 +135,11 @@ def kem_decapsulate(secret_key: bytes, ciphertext: bytes) -> bytes:
     Decapsulate and recover the shared secret.
     Returns shared_secret.
     Raises QuantumKEMError on failure.
+
+    MEMORY HYGIENE LIMITATION: both secret_key (passed in) and shared_secret
+    (returned) are immutable bytes. Python cannot zero the underlying liboqs
+    C buffers. The caller must call wipe() on the shared secret for audit-log
+    purposes after use. See initiator_kem_complete() for the reference pattern.
     """
     _require_bytes("secret key", secret_key, _KEM_SECRET_KEY_BYTES)
     _require_bytes("ciphertext", ciphertext, _KEM_CIPHERTEXT_BYTES)

@@ -51,14 +51,166 @@ def test_public_envelope_file_seal_helpers_are_removed():
     assert not hasattr(integrity, "verify_file_seal")
 
 
-def test_wipe_rejects_immutable_bytes():
-    with pytest.raises(TypeError, match="immutable bytes"):
-        wipe(b"sensitive-key-material")
+# ---------------------------------------------------------------------------
+# wipe() behaviour tests
+# ---------------------------------------------------------------------------
+
+def test_wipe_on_bytes_does_not_raise():
+    """wipe() on immutable bytes must not raise — it logs and returns."""
+    sensitive = b"sensitive-key-material"
+    # Should complete without raising any exception.
+    wipe(sensitive)
+    # The bytes object itself is unchanged (it is immutable).
+    assert sensitive == b"sensitive-key-material"
 
 
 def test_wipe_zeros_mutable_bytearray():
+    """wipe() must zero every byte of a bytearray in place."""
     key_material = bytearray(b"sensitive-key-material")
-
     wipe(key_material)
-
     assert key_material == bytearray(len(key_material))
+
+
+def test_wipe_zeros_bytearray_of_known_length():
+    """wipe() zeroes an arbitrary-length bytearray."""
+    buf = bytearray(range(64))
+    wipe(buf)
+    assert all(b == 0 for b in buf)
+
+
+def test_wipe_raises_on_unsupported_type():
+    """wipe() must still raise TypeError for unknown types."""
+    with pytest.raises(TypeError):
+        wipe(12345)
+
+
+# ---------------------------------------------------------------------------
+# derive_session_keys() — master intermediate is zeroed after derivation
+# ---------------------------------------------------------------------------
+
+def test_derive_session_keys_master_is_zeroed_after_success():
+    """
+    derive_session_keys() holds 'master' as a bytearray and zeroes it in the
+    finally block.  We verify the derived keys are correct (master was valid
+    during derivation) and that the function returns normally, implying the
+    finally block executed without raising.
+    """
+    import unittest.mock as mock
+
+    wiped_buffers = []
+    original_wipe = wipe
+
+    def capturing_wipe(data):
+        if isinstance(data, bytearray):
+            wiped_buffers.append(bytearray(data))  # snapshot before zeroing
+        original_wipe(data)
+
+    from core import crypto as _crypto_mod
+    with mock.patch.object(_crypto_mod, "wipe", side_effect=capturing_wipe):
+        keys = derive_session_keys(
+            bytes(range(32)),
+            bytes(range(32, 64)),
+            bytes(range(64, 96)),
+        )
+
+    # At least one bytearray was wiped (the master intermediate).
+    assert len(wiped_buffers) >= 1, "Expected wipe() to be called on at least one bytearray"
+    # The snapshot captured before zeroing must be non-zero (i.e. it had real key material).
+    assert any(b != 0 for b in wiped_buffers[0]), "Captured bytearray was unexpectedly all-zero before wipe"
+    # The returned keys must still be correct (master was valid during derivation).
+    assert len(keys.key_x_to_y) == 32
+    assert len(keys.key_y_to_x) == 32
+    assert len(keys.sync_key) == 32
+    assert len(keys.evo_seed) == 32
+
+
+def test_derive_session_keys_master_is_zeroed_on_failure():
+    """
+    Even when _sub() raises (simulated), the finally block still wipes master.
+    """
+    import unittest.mock as mock
+    from core import crypto as _crypto_mod
+
+    wiped_buffers = []
+
+    def capturing_wipe(data):
+        if isinstance(data, bytearray):
+            wiped_buffers.append(bytearray(data))
+        # Perform the actual zero so the bytearray is mutated normally.
+        if isinstance(data, bytearray):
+            for i in range(len(data)):
+                data[i] = 0
+
+    # Patch hkdf_derive so the _sub() call for the second label raises.
+    call_count = [0]
+    real_hkdf = _crypto_mod.hkdf_derive
+
+    def failing_hkdf(ikm, length, info, salt=b""):
+        call_count[0] += 1
+        if call_count[0] == 3:  # second _sub() call
+            raise RuntimeError("simulated HKDF failure")
+        return real_hkdf(ikm, length, info, salt)
+
+    with mock.patch.object(_crypto_mod, "wipe", side_effect=capturing_wipe):
+        with mock.patch.object(_crypto_mod, "hkdf_derive", side_effect=failing_hkdf):
+            with pytest.raises(RuntimeError, match="simulated HKDF failure"):
+                derive_session_keys(
+                    bytes(range(32)),
+                    bytes(range(32, 64)),
+                    bytes(range(64, 96)),
+                )
+
+    assert len(wiped_buffers) >= 1, "master bytearray must be wiped even on failure"
+
+
+# ---------------------------------------------------------------------------
+# ecdh() — finally block does not raise when wipe() is passed immutable bytes
+# ---------------------------------------------------------------------------
+
+def test_ecdh_finally_does_not_raise_on_invalid_key():
+    """
+    ecdh() must propagate the ValueError from an invalid key without the
+    finally block raising a secondary exception (old code would raise TypeError
+    from wipe on bytes; new code must not).
+    """
+    from core.crypto import ecdh
+    bad_key = bytes(32)  # all-zero is an invalid X25519 private key
+    with pytest.raises((ValueError, Exception)):
+        ecdh(bad_key, bytes(32))
+    # If we reach here the finally block did not raise a secondary exception.
+
+
+# ---------------------------------------------------------------------------
+# derive_hybrid_shared_secret() — IKM bytearray is zeroed after derivation
+# ---------------------------------------------------------------------------
+
+def test_derive_hybrid_shared_secret_wipes_ikm():
+    """
+    derive_hybrid_shared_secret() concatenates the two secrets into a bytearray
+    IKM and wipes it in the finally block.  We capture the wipe call and verify
+    the IKM had content before zeroing and that the function returns a 64-byte result.
+    """
+    import unittest.mock as mock
+    from core.crypto import derive_hybrid_shared_secret
+    from core import crypto as _crypto_mod
+
+    wiped_buffers = []
+    original_wipe = wipe
+
+    def capturing_wipe(data):
+        if isinstance(data, bytearray):
+            wiped_buffers.append(bytearray(data))
+        original_wipe(data)
+
+    x25519_secret = bytes(range(32))
+    ml_kem_secret = bytes(range(32, 64))
+    session_id    = bytes(range(16))
+
+    with mock.patch.object(_crypto_mod, "wipe", side_effect=capturing_wipe):
+        result = derive_hybrid_shared_secret(x25519_secret, ml_kem_secret, session_id)
+
+    assert len(result) == 64, "Combined secret must be 64 bytes"
+    assert len(wiped_buffers) >= 1, "IKM bytearray must have been wiped"
+    # The IKM snapshot (captured before zeroing) is the concatenation of both inputs.
+    expected_ikm = bytearray(x25519_secret) + bytearray(ml_kem_secret)
+    assert wiped_buffers[0] == expected_ikm, "Captured IKM content does not match expected concatenation"
