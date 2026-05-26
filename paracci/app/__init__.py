@@ -188,6 +188,10 @@ def lock_device() -> None:
     if db is not None:
         db.release_device_key()
     db = BurnDB(DATA_DIR / "sessions.db")
+    try:
+        db.retry_pending_deletions()
+    except Exception as exc:
+        logger.error("Failed to run lock pending deletions cleanup: %s", exc)
 
     # 6. Clear system clipboard if it contains Paracci-owned text
     try:
@@ -257,6 +261,10 @@ def create_app(*, loopback_auth_token: str) -> Flask:
 
     # Database (Device key will remain None until PIN is entered)
     db = BurnDB(DATA_DIR / "sessions.db")
+    try:
+        db.retry_pending_deletions()
+    except Exception as exc:
+        logger.error("Failed to run startup pending deletions cleanup: %s", exc)
 
     # Blueprint registration
     # NOTE: Imported inside the function to prevent circular dependency.

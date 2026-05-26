@@ -174,3 +174,123 @@ def test_force_burn_raises_when_secure_delete_fails(tmp_path, monkeypatch, caplo
 
     assert db.get_burn_status(msg_id) == BURN_STATUS_BURNED
     assert "Secure deletion failed for a sensitive source file." in caplog.text
+
+
+def test_secure_delete_failure_registers_retry_and_cleans_up(tmp_path, monkeypatch, caplog):
+    db = BurnDB(tmp_path / "sessions.db")
+    guard = BurnGuard(db)
+    msg_id = new_message_id()
+    session_id = new_message_id()
+
+    sensitive_file = tmp_path / "sensitive.paracci"
+    sensitive_file.write_bytes(b"sensitive content")
+    assert sensitive_file.exists()
+
+    should_fail = [True]
+    original_secure_delete = burn_module.shield.secure_delete
+    def mock_secure_delete(path):
+        if should_fail[0]:
+            return False
+        return original_secure_delete(path)
+
+    monkeypatch.setattr(burn_module.shield, "secure_delete", mock_secure_delete)
+
+    assert guard.pre_open_check(msg_id, expire_at=0, single_use=True) is True
+
+    with caplog.at_level(logging.CRITICAL, logger=burn_module.__name__):
+        deleted = guard.post_open_burn(
+            msg_id,
+            session_id,
+            direction=1,
+            single_use=True,
+            file_path=sensitive_file,
+        )
+
+    assert deleted is False
+    conn = db._connect()
+    rows = conn.execute("SELECT file_path FROM pending_deletions").fetchall()
+    conn.close()
+    assert len(rows) == 1
+    assert rows[0][0] == str(sensitive_file.resolve())
+
+    assert "SECURITY EVENT: Secure deletion failed" in caplog.text
+
+    should_fail[0] = False
+    db.retry_pending_deletions()
+
+    assert not sensitive_file.exists()
+    conn = db._connect()
+    rows = conn.execute("SELECT file_path FROM pending_deletions").fetchall()
+    conn.close()
+    assert len(rows) == 0
+
+
+def test_startup_and_lock_integration(tmp_path, monkeypatch):
+    import os
+    import app as ag_app
+    from desktop.services import NativeServices
+
+    flask_data_dir = tmp_path / "flask_data"
+    flask_data_dir.mkdir()
+    desktop_data_dir = tmp_path / "desktop_data"
+    desktop_data_dir.mkdir()
+
+    flask_file = flask_data_dir / "flask_failed.paracci"
+    flask_file.write_bytes(b"content")
+    desktop_file = desktop_data_dir / "desktop_failed.paracci"
+    desktop_file.write_bytes(b"content")
+
+    flask_db = BurnDB(flask_data_dir / "sessions.db")
+    flask_db.register_pending_deletion(flask_file)
+
+    desktop_db = BurnDB(desktop_data_dir / "sessions.db")
+    desktop_db.register_pending_deletion(desktop_file)
+
+    conn = flask_db._connect()
+    assert len(conn.execute("SELECT file_path FROM pending_deletions").fetchall()) == 1
+    conn.close()
+
+    conn = desktop_db._connect()
+    assert len(conn.execute("SELECT file_path FROM pending_deletions").fetchall()) == 1
+    conn.close()
+
+    monkeypatch.setattr(ag_app, "DATA_DIR", flask_data_dir)
+    monkeypatch.setattr(ag_app, "db", None)
+
+    from app import create_app
+    monkeypatch.setenv("PARACCI_LOOPBACK_PORT", "12345")
+    monkeypatch.setenv("PARACCI_LOOPBACK_HOST", "127.0.0.1")
+    app_instance = create_app(loopback_auth_token="test_token")
+
+    assert not flask_file.exists()
+    conn = ag_app.db._connect()
+    assert len(conn.execute("SELECT file_path FROM pending_deletions").fetchall()) == 0
+    conn.close()
+
+    flask_file_lock = flask_data_dir / "flask_failed_lock.paracci"
+    flask_file_lock.write_bytes(b"content")
+    ag_app.db.register_pending_deletion(flask_file_lock)
+
+    from app import lock_device
+    lock_device()
+
+    assert not flask_file_lock.exists()
+    conn = ag_app.db._connect()
+    assert len(conn.execute("SELECT file_path FROM pending_deletions").fetchall()) == 0
+    conn.close()
+
+    services = NativeServices(desktop_data_dir)
+    assert not desktop_file.exists()
+    conn = services.device.db._connect()
+    assert len(conn.execute("SELECT file_path FROM pending_deletions").fetchall()) == 0
+    conn.close()
+
+    desktop_file_lock = desktop_data_dir / "desktop_failed_lock.paracci"
+    desktop_file_lock.write_bytes(b"content")
+    services.device.db.register_pending_deletion(desktop_file_lock)
+
+    services.device.lock()
+    assert not desktop_file_lock.exists()
+    conn = services.device.db._connect()
+    assert len(conn.execute("SELECT file_path FROM pending_deletions").fetchall()) == 0
+    conn.close()
