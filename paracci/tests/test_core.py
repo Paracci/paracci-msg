@@ -137,7 +137,7 @@ def test_derived_keys_asymmetric():
     salt = b"test"
     keys = derive_session_keys(secret, pub_x, pub_y, extra_salt=salt)
     # All keys must be different
-    all_keys = [keys.key_x_to_y, keys.key_y_to_x, keys.sync_key, keys.evo_seed]
+    all_keys = [bytes(keys.key_x_to_y), bytes(keys.key_y_to_x), bytes(keys.sync_key), bytes(keys.evo_seed)]
     assert len(set(all_keys)) == 4, "Derived keys are the same!"
 
 run_test("HKDF derivation - 4 different keys", test_derived_keys_asymmetric)

@@ -88,10 +88,10 @@ _log = get_logger("crypto")
 
 class DerivedKeys(NamedTuple):
     """All session keys derived from ECDH + HKDF result."""
-    key_x_to_y:   bytes   # Only Y can open (X→Y messages)
-    key_y_to_x:   bytes   # Only X can open (Y→X messages)
-    sync_key:     bytes   # Encryption for secret metadata block
-    evo_seed:     bytes   # Evolution chain starting seed
+    key_x_to_y:   bytearray   # Only Y can open (X→Y messages)
+    key_y_to_x:   bytearray   # Only X can open (Y→X messages)
+    sync_key:     bytearray   # Encryption for secret metadata block
+    evo_seed:     bytearray   # Evolution chain starting seed
 
 
 class EncryptedBlob(NamedTuple):
@@ -123,20 +123,15 @@ def current_timestamp() -> int:
 # X25519 Key Pair Operations
 # ---------------------------------------------------------------------------
 
-def generate_keypair() -> Tuple[bytes, bytes]:
+def generate_keypair() -> Tuple[bytearray, bytes]:
     """
     Generates a new X25519 key pair.
     Returns: (private_key_bytes, public_key_bytes)
-
-    MEMORY HYGIENE LIMITATION: private_bytes is returned as immutable bytes
-    because callers persist it to encrypted storage. Conversion to bytearray
-    here would change the public API. The caller is responsible for wiping
-    their copy when the key is no longer needed.
     """
     private_key = X25519PrivateKey.generate()
-    private_bytes = private_key.private_bytes(
+    private_bytes = bytearray(private_key.private_bytes(
         Encoding.Raw, PrivateFormat.Raw, NoEncryption()
-    )
+    ))
     public_bytes = private_key.public_key().public_bytes(
         Encoding.Raw, PublicFormat.Raw
     )
@@ -145,19 +140,15 @@ def generate_keypair() -> Tuple[bytes, bytes]:
     return private_bytes, public_bytes
 
 
-def generate_identity_keypair() -> Tuple[bytes, bytes]:
+def generate_identity_keypair() -> Tuple[bytearray, bytes]:
     """
     Generates a long-term Ed25519 identity key pair.
     Returns: (private_key_bytes, public_key_bytes)
-
-    MEMORY HYGIENE LIMITATION: private_bytes is returned as immutable bytes
-    because callers persist it to encrypted storage. The caller is responsible
-    for wiping their copy when the key is no longer needed.
     """
     private_key = Ed25519PrivateKey.generate()
-    private_bytes = private_key.private_bytes(
+    private_bytes = bytearray(private_key.private_bytes(
         Encoding.Raw, PrivateFormat.Raw, NoEncryption()
-    )
+    ))
     public_bytes = private_key.public_key().public_bytes(
         Encoding.Raw, PublicFormat.Raw
     )
@@ -217,27 +208,24 @@ def wipe(data: bytes | bytearray | list) -> None:
     gc.collect()
 
 
-def ecdh(private_key_bytes: bytes, peer_public_key_bytes: bytes) -> bytes:
+def ecdh(
+    private_key_bytes: bytes | bytearray,
+    peer_public_key_bytes: bytes | bytearray,
+) -> bytearray:
     """
     X25519 ECDH: own private key + peer's public key → shared secret.
     """
     try:
-        private_key = X25519PrivateKey.from_private_bytes(private_key_bytes)
-        peer_public  = X25519PublicKey.from_public_bytes(peer_public_key_bytes)
+        private_key = X25519PrivateKey.from_private_bytes(bytes(private_key_bytes))
+        peer_public  = X25519PublicKey.from_public_bytes(bytes(peer_public_key_bytes))
         shared_secret = private_key.exchange(peer_public)
-        return shared_secret
+        return bytearray(shared_secret)
     finally:
         # LIMITATION: X25519PrivateKey is an opaque C object owned by the
         # cryptography library. Python cannot zero its internal key bytes;
         # del only removes this reference, not the underlying memory.
         if 'private_key' in locals():
             del private_key
-        # LIMITATION: shared_secret is immutable bytes returned by exchange().
-        # wipe() logs the gap but cannot zero it in place. The return value
-        # is needed by the caller so we do not zero it here — we call wipe()
-        # only to record the gap in the security log.
-        if 'shared_secret' in locals():
-            wipe(shared_secret)
 
 
 # ---------------------------------------------------------------------------
@@ -346,11 +334,11 @@ def compute_handshake_transcript(
 # ---------------------------------------------------------------------------
 
 def hkdf_derive(
-    input_key_material: bytes,
+    input_key_material: bytes | bytearray,
     length: int,
-    info: bytes,
-    salt: bytes = b"",
-) -> bytes:
+    info: bytes | bytearray,
+    salt: bytes | bytearray = b"",
+) -> bytearray:
     """
     Derives a key of a specified length and label using HKDF-SHA512.
     If salt is left empty, the standard HKDF behavior (zero-filled salt) is applied.
@@ -358,18 +346,18 @@ def hkdf_derive(
     hkdf = HKDF(
         algorithm=HKDF_HASH,
         length=length,
-        salt=salt if salt else None,
-        info=info,
+        salt=bytes(salt) if salt else None,
+        info=bytes(info),
     )
-    return hkdf.derive(input_key_material)
+    return bytearray(hkdf.derive(bytes(input_key_material)))
 
 
 def derive_hybrid_shared_secret(
-    x25519_shared: bytes,
-    ml_kem_shared: bytes,
-    session_id: bytes,
-    transcript: bytes | None = None,
-) -> bytes:
+    x25519_shared: bytes | bytearray,
+    ml_kem_shared: bytes | bytearray,
+    session_id: bytes | bytearray,
+    transcript: bytes | bytearray | None = None,
+) -> bytearray:
     """
     Combines X25519 and ML-KEM shared secrets into one 64-byte hybrid secret.
 
@@ -377,59 +365,58 @@ def derive_hybrid_shared_secret(
     handshake identities and KEM transcript. A missing transcript is retained
     only as the M-1A compatibility path until session.py is integrated in M-1B.
     """
-    if not isinstance(x25519_shared, bytes):
-        raise ValueError("X25519 shared secret must be bytes.")
+    if not isinstance(x25519_shared, (bytes, bytearray)):
+        raise ValueError("X25519 shared secret must be bytes or bytearray.")
     if len(x25519_shared) != 32:
         raise ValueError("X25519 shared secret must be 32 bytes.")
-    if not isinstance(ml_kem_shared, bytes):
-        raise ValueError("ML-KEM shared secret must be bytes.")
+    if not isinstance(ml_kem_shared, (bytes, bytearray)):
+        raise ValueError("ML-KEM shared secret must be bytes or bytearray.")
     if len(ml_kem_shared) != 32:
         raise ValueError("ML-KEM shared secret must be 32 bytes.")
-    if not isinstance(session_id, bytes):
-        raise ValueError("Session ID must be bytes.")
+    if not isinstance(session_id, (bytes, bytearray)):
+        raise ValueError("Session ID must be bytes or bytearray.")
     if len(session_id) != 16:
         raise ValueError("Session ID must be 16 bytes.")
     if transcript is not None:
-        if not isinstance(transcript, bytes):
-            raise ValueError("Handshake transcript must be bytes.")
+        if not isinstance(transcript, (bytes, bytearray)):
+            raise ValueError("Handshake transcript must be bytes or bytearray.")
         if len(transcript) != 32:
             raise ValueError("Handshake transcript must be 32 bytes.")
 
-    info = HYBRID_KEM_DOMAIN if transcript is None else HYBRID_KEM_DOMAIN + transcript
+    info = HYBRID_KEM_DOMAIN if transcript is None else HYBRID_KEM_DOMAIN + bytes(transcript)
     # Use bytearray for the concatenated IKM so it can be explicitly zeroed
     # before being dereferenced. hkdf_derive() accepts bytes-like objects.
     ikm = bytearray(x25519_shared) + bytearray(ml_kem_shared)
     try:
-        return hkdf_derive(bytes(ikm), length=64, info=info, salt=session_id)
+        return bytearray(hkdf_derive(bytes(ikm), length=64, info=info, salt=session_id))
     finally:
         wipe(ikm)
+        wipe(x25519_shared)
+        wipe(ml_kem_shared)
 
 
 def derive_session_keys(
-    shared_secret: bytes,
-    x_public: bytes,
-    y_public: bytes,
-    extra_salt: bytes = b"",
+    shared_secret: bytes | bytearray,
+    x_public: bytes | bytearray,
+    y_public: bytes | bytearray,
+    extra_salt: bytes | bytearray = b"",
 ) -> DerivedKeys:
     """
     Derives session keys from the high-entropy hybrid shared secret using HKDF.
 
-    MEMORY HYGIENE: The intermediate `master` key material is held in a
-    bytearray and zeroed in a finally block. The four returned sub-keys in
-    DerivedKeys remain as immutable bytes because changing their type would
-    break the public API and all callers.
+    MEMORY HYGIENE: The derived sub-keys in DerivedKeys are returned as mutable
+    bytearrays so that they can be zeroed out in-place when no longer needed.
     """
     # Deterministic salt: binds the identity of the parties
-    salt = hashlib.sha3_256(x_public + y_public + extra_salt).digest()
+    salt = hashlib.sha3_256(bytes(x_public) + bytes(y_public) + bytes(extra_salt)).digest()
 
     # Frozen compatibility length from the original v3 derivation.
     length = SESSION_MASTER_HKDF_LENGTH_V3
 
     # Hold master in a bytearray so it can be explicitly zeroed after use.
-    # hkdf_derive() returns bytes; wrap immediately to minimise the window
-    # in which the immutable bytes object coexists with the bytearray.
+    # hkdf_derive() returns bytearray.
     master = bytearray(hkdf_derive(
-        shared_secret,
+        bytes(shared_secret),
         length=length,
         info=DOMAIN_SESSION_MASTER_V3,
         salt=salt,
@@ -437,7 +424,7 @@ def derive_session_keys(
     # Shrink the master key back to original length (still a bytearray).
     master = master[:KEY_LEN * 4]
 
-    def _sub(label: bytes) -> bytes:
+    def _sub(label: bytes) -> bytearray:
         """Derives a sub-key via HKDF for a specific label (purpose)."""
         return hkdf_derive(bytes(master), KEY_LEN, info=label)
 
@@ -450,6 +437,7 @@ def derive_session_keys(
         )
     finally:
         wipe(master)
+        wipe(shared_secret)
 
 
 # ---------------------------------------------------------------------------

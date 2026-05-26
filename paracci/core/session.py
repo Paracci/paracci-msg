@@ -39,6 +39,7 @@ from .crypto import (
     random_bytes,
     sign_identity,
     verify_identity_signature,
+    wipe,
 )
 from .evolution import (
     EVO_UNLIMITED,
@@ -517,81 +518,100 @@ def accept_initiator_and_create_responder(
     info = parse_initiator_file(initiator_file_bytes)
     session_id = info["session_id"]
     x_pub = info["x_pub"]
+
+
+def accept_initiator_and_create_responder(
+    initiator_file_bytes: bytes,
+    local_label: str,
+    my_username: Optional[str] = None,
+    color: Optional[str] = None,
+    *,
+    identity_pub: bytes,
+    identity_priv: bytes,
+) -> tuple[SessionMeta, bytes]:
+    """Y side: verifies the initiator file, creates a signed responder file."""
+    _expect_len(identity_pub, ED25519_PUBLIC_LEN, "identity public key")
+    info = parse_initiator_file(initiator_file_bytes)
+    session_id = info["session_id"]
+    x_pub = info["x_pub"]
     x_identity_pub = info["x_identity_pub"]
     ml_kem_public_key = info["ml_kem_public_key"]
     evo_config = validate_evo_config(info["evo_config"])
 
     y_priv, y_pub = generate_keypair()
-    kem_response = responder_kem_respond(ml_kem_public_key)
-    ml_kem_ciphertext = kem_response["ml_kem_ciphertext"]
-    ml_kem_shared = kem_response["ml_kem_shared_secret"]
-    x25519_shared = ecdh(y_priv, x_pub)
-    transcript = compute_handshake_transcript(
-        session_id=session_id,
-        initiator_identity_pub=x_identity_pub,
-        responder_identity_pub=identity_pub,
-        ml_kem_algorithm=KEM_ALGORITHM,
-        ml_kem_public_key=ml_kem_public_key,
-        ml_kem_ciphertext=ml_kem_ciphertext,
-    )
-    shared_secret = derive_hybrid_shared_secret(
-        x25519_shared=x25519_shared,
-        ml_kem_shared=ml_kem_shared,
-        session_id=session_id,
-        transcript=transcript,
-    )
-    keys = derive_session_keys(
-        shared_secret,
-        x_public=x_pub,
-        y_public=y_pub,
-        extra_salt=session_id,
-    )
+    try:
+        kem_response = responder_kem_respond(ml_kem_public_key)
+        ml_kem_ciphertext = kem_response["ml_kem_ciphertext"]
+        ml_kem_shared = kem_response["ml_kem_shared_secret"]
+        x25519_shared = ecdh(y_priv, x_pub)
+        transcript = compute_handshake_transcript(
+            session_id=session_id,
+            initiator_identity_pub=x_identity_pub,
+            responder_identity_pub=identity_pub,
+            ml_kem_algorithm=KEM_ALGORITHM,
+            ml_kem_public_key=ml_kem_public_key,
+            ml_kem_ciphertext=ml_kem_ciphertext,
+        )
+        shared_secret = derive_hybrid_shared_secret(
+            x25519_shared=x25519_shared,
+            ml_kem_shared=ml_kem_shared,
+            session_id=session_id,
+            transcript=transcript,
+        )
+        keys = derive_session_keys(
+            shared_secret,
+            x_public=x_pub,
+            y_public=y_pub,
+            extra_salt=session_id,
+        )
 
-    meta = SessionMeta(
-        session_id=session_id,
-        role="Y",
-        my_priv=y_priv,
-        my_pub=y_pub,
-        peer_pub=x_pub,
-        keys=keys,
-        bond_seed=None,
-        send_seed=None,
-        recv_seed=None,
-        bond_nonce=None,
-        tx_count=0,
-        rx_count=0,
-        my_qseed=None,
-        peer_qseed=None,
-        peer_username=info.get("username"),
-        color=color or random.choice(SESSION_COLORS),
-        evo_config=evo_config,
-        state=SESSION_STATE_UNVERIFIED,
-        label=local_label,
-        created_at=evo_config.created_at,
-        my_identity_pub=identity_pub,
-        peer_identity_pub=x_identity_pub,
-        handshake_version=HANDSHAKE_VERSION,
-        safety_confirmed=False,
-        safety_confirmed_at=None,
-        ml_kem_public_key=ml_kem_public_key,
-        ml_kem_secret_key=None,
-        ml_kem_ciphertext=ml_kem_ciphertext,
-        handshake_file_version=HANDSHAKE_FILE_VERSION,
-        transcript_version=HANDSHAKE_TRANSCRIPT_VERSION,
-    )
-    resp_bytes = serialize_responder_file(
-        session_id,
-        y_pub,
-        evo_config,
-        info["label"],
-        username=my_username,
-        x_pub=x_pub,
-        x_identity_pub=x_identity_pub,
-        y_identity_pub=identity_pub,
-        identity_priv=identity_priv,
-        ml_kem_ciphertext=ml_kem_ciphertext,
-    )
-    return meta, resp_bytes
+        meta = SessionMeta(
+            session_id=session_id,
+            role="Y",
+            my_priv=None,  # Ephemeral private key zeroized, no need to persist
+            my_pub=y_pub,
+            peer_pub=x_pub,
+            keys=keys,
+            bond_seed=None,
+            send_seed=None,
+            recv_seed=None,
+            bond_nonce=None,
+            tx_count=0,
+            rx_count=0,
+            my_qseed=None,
+            peer_qseed=None,
+            peer_username=info.get("username"),
+            color=color or random.choice(SESSION_COLORS),
+            evo_config=evo_config,
+            state=SESSION_STATE_UNVERIFIED,
+            label=local_label,
+            created_at=evo_config.created_at,
+            my_identity_pub=identity_pub,
+            peer_identity_pub=x_identity_pub,
+            handshake_version=HANDSHAKE_VERSION,
+            safety_confirmed=False,
+            safety_confirmed_at=None,
+            ml_kem_public_key=ml_kem_public_key,
+            ml_kem_secret_key=None,
+            ml_kem_ciphertext=ml_kem_ciphertext,
+            handshake_file_version=HANDSHAKE_FILE_VERSION,
+            transcript_version=HANDSHAKE_TRANSCRIPT_VERSION,
+        )
+        resp_bytes = serialize_responder_file(
+            session_id,
+            y_pub,
+            evo_config,
+            info["label"],
+            username=my_username,
+            x_pub=x_pub,
+            x_identity_pub=x_identity_pub,
+            y_identity_pub=identity_pub,
+            identity_priv=identity_priv,
+            ml_kem_ciphertext=ml_kem_ciphertext,
+        )
+        return meta, resp_bytes
+    finally:
+        wipe(y_priv)
 
 
 def finalize_initiator_session(meta: SessionMeta, responder_file_bytes: bytes) -> SessionMeta:
@@ -611,55 +631,61 @@ def finalize_initiator_session(meta: SessionMeta, responder_file_bytes: bytes) -
     if not meta.ml_kem_public_key:
         raise HybridKEMError("Missing ML-KEM public key.", "hybrid_kem_complete_failed")
     evo_config = validate_evo_config(meta.evo_config)
-    ml_kem_shared = initiator_kem_complete(meta.ml_kem_secret_key, ml_kem_ciphertext)
-    x25519_shared = ecdh(meta.my_priv, y_pub)
-    transcript = compute_handshake_transcript(
-        session_id=meta.session_id,
-        initiator_identity_pub=meta.my_identity_pub,
-        responder_identity_pub=info["y_identity_pub"],
-        ml_kem_algorithm=KEM_ALGORITHM,
-        ml_kem_public_key=meta.ml_kem_public_key,
-        ml_kem_ciphertext=ml_kem_ciphertext,
-    )
-    shared_secret = derive_hybrid_shared_secret(
-        x25519_shared=x25519_shared,
-        ml_kem_shared=ml_kem_shared,
-        session_id=meta.session_id,
-        transcript=transcript,
-    )
-    keys = derive_session_keys(
-        shared_secret,
-        x_public=meta.my_pub,
-        y_public=y_pub,
-        extra_salt=meta.session_id,
-    )
+    try:
+        ml_kem_shared = initiator_kem_complete(meta.ml_kem_secret_key, ml_kem_ciphertext)
+        x25519_shared = ecdh(meta.my_priv, y_pub)
+        transcript = compute_handshake_transcript(
+            session_id=meta.session_id,
+            initiator_identity_pub=meta.my_identity_pub,
+            responder_identity_pub=info["y_identity_pub"],
+            ml_kem_algorithm=KEM_ALGORITHM,
+            ml_kem_public_key=meta.ml_kem_public_key,
+            ml_kem_ciphertext=ml_kem_ciphertext,
+        )
+        shared_secret = derive_hybrid_shared_secret(
+            x25519_shared=x25519_shared,
+            ml_kem_shared=ml_kem_shared,
+            session_id=meta.session_id,
+            transcript=transcript,
+        )
+        keys = derive_session_keys(
+            shared_secret,
+            x_public=meta.my_pub,
+            y_public=y_pub,
+            extra_salt=meta.session_id,
+        )
 
-    bond_nonce = random_bytes(32)
-    bond_seed = compute_bond_seed(keys.evo_seed, bond_nonce)
+        bond_nonce = random_bytes(32)
+        bond_seed = compute_bond_seed(keys.evo_seed, bond_nonce)
 
-    return meta._replace(
-        peer_pub=y_pub,
-        keys=keys,
-        bond_seed=bond_seed,
-        send_seed=bond_seed,
-        recv_seed=bond_seed,
-        bond_nonce=bond_nonce,
-        tx_count=0,
-        rx_count=0,
-        peer_qseed=None,
-        peer_username=info.get("username"),
-        evo_config=evo_config,
-        state=SESSION_STATE_UNVERIFIED,
-        peer_identity_pub=info["y_identity_pub"],
-        handshake_version=HANDSHAKE_VERSION,
-        safety_confirmed=False,
-        safety_confirmed_at=None,
-        ml_kem_public_key=None,
-        ml_kem_secret_key=None,
-        ml_kem_ciphertext=ml_kem_ciphertext,
-        handshake_file_version=HANDSHAKE_FILE_VERSION,
-        transcript_version=HANDSHAKE_TRANSCRIPT_VERSION,
-    )
+        return meta._replace(
+            peer_pub=y_pub,
+            keys=keys,
+            bond_seed=bond_seed,
+            send_seed=bond_seed,
+            recv_seed=bond_seed,
+            bond_nonce=bond_nonce,
+            tx_count=0,
+            rx_count=0,
+            peer_qseed=None,
+            peer_username=info.get("username"),
+            evo_config=evo_config,
+            state=SESSION_STATE_UNVERIFIED,
+            peer_identity_pub=info["y_identity_pub"],
+            handshake_version=HANDSHAKE_VERSION,
+            safety_confirmed=False,
+            safety_confirmed_at=None,
+            ml_kem_public_key=None,
+            ml_kem_secret_key=None,
+            ml_kem_ciphertext=ml_kem_ciphertext,
+            handshake_file_version=HANDSHAKE_FILE_VERSION,
+            transcript_version=HANDSHAKE_TRANSCRIPT_VERSION,
+        )
+    finally:
+        if meta.my_priv is not None:
+            wipe(meta.my_priv)
+        if meta.ml_kem_secret_key is not None:
+            wipe(meta.ml_kem_secret_key)
 
 
 def apply_bond_nonce_to_y(meta: SessionMeta, bond_nonce: bytes) -> SessionMeta:
@@ -745,7 +771,7 @@ def serialize_session_meta(meta: SessionMeta, device_key: bytes) -> bytes:
     data = {
         "session_id": meta.session_id.hex(),
         "role": meta.role,
-        "my_priv": meta.my_priv.hex(),
+        "my_priv": meta.my_priv.hex() if meta.my_priv else None,
         "my_pub": meta.my_pub.hex(),
         "peer_pub": meta.peer_pub.hex() if meta.peer_pub else None,
         "keys": keys_data,
@@ -798,10 +824,10 @@ def deserialize_session_meta(encrypted_data: bytes, device_key: bytes) -> Sessio
     keys = None
     if data.get("keys"):
         keys = DerivedKeys(
-            key_x_to_y=bytes.fromhex(data["keys"]["x_to_y"]),
-            key_y_to_x=bytes.fromhex(data["keys"]["y_to_x"]),
-            sync_key=bytes.fromhex(data["keys"]["sync"]),
-            evo_seed=bytes.fromhex(data["keys"]["evo"]),
+            key_x_to_y=bytearray(bytes.fromhex(data["keys"]["x_to_y"])),
+            key_y_to_x=bytearray(bytes.fromhex(data["keys"]["y_to_x"])),
+            sync_key=bytearray(bytes.fromhex(data["keys"]["sync"])),
+            evo_seed=bytearray(bytes.fromhex(data["keys"]["evo"])),
         )
 
     handshake_version = int(data.get("handshake_version", LEGACY_HANDSHAKE_VERSION))
@@ -822,14 +848,14 @@ def deserialize_session_meta(encrypted_data: bytes, device_key: bytes) -> Sessio
     return SessionMeta(
         session_id=bytes.fromhex(data["session_id"]),
         role=data["role"],
-        my_priv=bytes.fromhex(data["my_priv"]),
+        my_priv=bytearray(bytes.fromhex(data["my_priv"])) if data.get("my_priv") else None,
         my_pub=bytes.fromhex(data["my_pub"]),
         peer_pub=bytes.fromhex(data["peer_pub"]) if data.get("peer_pub") else None,
         keys=keys,
-        bond_seed=bytes.fromhex(data["bond_seed"]) if data.get("bond_seed") else None,
-        send_seed=bytes.fromhex(data["send_seed"]) if data.get("send_seed") else None,
-        recv_seed=bytes.fromhex(data["recv_seed"]) if data.get("recv_seed") else None,
-        bond_nonce=bytes.fromhex(data["bond_nonce"]) if data.get("bond_nonce") else None,
+        bond_seed=bytearray(bytes.fromhex(data["bond_seed"])) if data.get("bond_seed") else None,
+        send_seed=bytearray(bytes.fromhex(data["send_seed"])) if data.get("send_seed") else None,
+        recv_seed=bytearray(bytes.fromhex(data["recv_seed"])) if data.get("recv_seed") else None,
+        bond_nonce=bytearray(bytes.fromhex(data["bond_nonce"])) if data.get("bond_nonce") else None,
         tx_count=data.get("tx_count", 0),
         rx_count=data.get("rx_count", 0),
         my_qseed=bytes.fromhex(data["my_qseed"]) if data.get("my_qseed") else None,
@@ -846,13 +872,11 @@ def deserialize_session_meta(encrypted_data: bytes, device_key: bytes) -> Sessio
         safety_confirmed=safety_confirmed,
         safety_confirmed_at=data.get("safety_confirmed_at"),
         ml_kem_public_key=bytes.fromhex(data["ml_kem_public_key"]) if data.get("ml_kem_public_key") else None,
-        ml_kem_secret_key=bytes.fromhex(data["ml_kem_secret_key"]) if data.get("ml_kem_secret_key") else None,
+        ml_kem_secret_key=bytearray(bytes.fromhex(data["ml_kem_secret_key"])) if data.get("ml_kem_secret_key") else None,
         ml_kem_ciphertext=bytes.fromhex(data["ml_kem_ciphertext"]) if data.get("ml_kem_ciphertext") else None,
         handshake_file_version=handshake_file_version,
         transcript_version=transcript_version,
     )
-
-
 class SessionFileError(Exception):
     pass
 

@@ -263,7 +263,7 @@ def _derive_legacy_payload_key_v1_v2(
             "This legacy message cannot be opened because compatibility key parameters are unavailable."
         )
     return hash_secret_raw(
-        secret=msg_key,
+        secret=bytes(msg_key),
         salt=header + (qseed or b"no-quantum-armor"),
         time_cost=config.legacy_argon2_time,
         memory_cost=config.legacy_argon2_mem,
