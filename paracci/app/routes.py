@@ -749,6 +749,13 @@ def enforce_loopback_security():
         return _reject_security("missing protected bearer token")
     g.loopback_token_verified = True
 
+    # Reset the inactivity timer on every authenticated request so the device
+    # is not locked while the user is actively using the application.
+    if ag_app.device_key is not None:
+        ag_app.inactivity_timer.reset(
+            flask_testing=current_app.config.get("TESTING", False)
+        )
+
     if _preview_store_request_token():
         g.preview_access_ok = True
         return
@@ -1157,6 +1164,20 @@ def set_locale(lang):
         if parsed.query:
             target = f"{target}?{parsed.query}"
     return redirect(target or url_for('main.index'))
+
+
+@bp.route("/api/lock", methods=["POST"])
+def api_lock():
+    """Explicitly lock the device and wipe the in-memory device key.
+
+    This route is reachable only after bearer + CSRF checks (standard POST
+    gate).  It is callable from the UI lock button and headless/automation
+    callers that manage session lifetime explicitly.
+    After this call any protected route returns a locked/redirect-to-unlock
+    response until the user re-authenticates.
+    """
+    ag_app.lock_device()
+    return jsonify({"locked": True})
 
 
 # ---------------------------------------------------------------------------

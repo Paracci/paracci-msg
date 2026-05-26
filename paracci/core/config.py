@@ -17,7 +17,8 @@ class ParacciConfig:
         "language": "tr",
         "theme_mode": "dark",
         "downloads_dir": "downloads", # Subfolder within DATA_DIR
-        "auto_cleanup_hours": 24      # After how many hours should old files be deleted?
+        "auto_cleanup_hours": 24,     # After how many hours should old files be deleted?
+        "inactivity_timeout_minutes": 15  # Minutes of inactivity before auto-lock; 0 = disabled
     }
 
     def __init__(self):
