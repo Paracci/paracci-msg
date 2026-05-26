@@ -205,9 +205,36 @@ def lock_device() -> None:
 # Application factory
 # ---------------------------------------------------------------------------
 
-def create_app(*, loopback_auth_token: str) -> Flask:
+def create_app(
+    *,
+    loopback_auth_token: str,
+    data_dir: str | Path | None = None,
+    loopback_host: str | None = None,
+    loopback_port: str | int | None = None,
+    no_gui_mode: bool | None = None,
+) -> Flask:
     """Initializes and configures the Paracci Flask application factory."""
-    global db, device_key, loopback_token, loopback_host, loopback_port, loopback_origin, no_gui_mode, active_client_id
+    global db, device_key, loopback_token, globals_loopback_host, globals_loopback_port, loopback_origin, globals_no_gui_mode, active_client_id, DATA_DIR, DATA_MODE
+
+    if data_dir is not None:
+        DATA_DIR = Path(data_dir).absolute()
+        os.environ["DATA_DIR"] = str(DATA_DIR)
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    if loopback_host is not None:
+        globals()["loopback_host"] = loopback_host
+    else:
+        globals()["loopback_host"] = os.environ.get("PARACCI_LOOPBACK_HOST", "127.0.0.1")
+
+    if loopback_port is not None:
+        globals()["loopback_port"] = str(loopback_port)
+    else:
+        globals()["loopback_port"] = os.environ.get("PARACCI_LOOPBACK_PORT")
+
+    if no_gui_mode is not None:
+        globals()["no_gui_mode"] = no_gui_mode
+    else:
+        globals()["no_gui_mode"] = os.environ.get("PARACCI_NO_GUI") == "1"
 
     os.environ.pop("PARACCI_LOOPBACK_TOKEN", None)
     if not isinstance(loopback_auth_token, str) or not loopback_auth_token:
@@ -218,12 +245,9 @@ def create_app(*, loopback_auth_token: str) -> Flask:
                 template_folder=str(APP_DIR / "templates"), 
                 static_folder=str(APP_DIR / "static"))
 
-    loopback_host = os.environ.get("PARACCI_LOOPBACK_HOST", "127.0.0.1")
-    loopback_port = os.environ.get("PARACCI_LOOPBACK_PORT")
-    no_gui_mode = os.environ.get("PARACCI_NO_GUI") == "1"
-    if not loopback_port:
+    if not globals()["loopback_port"]:
         raise RuntimeError("Paracci loopback port must be set before app initialization.")
-    loopback_origin = f"http://{loopback_host}:{loopback_port}"
+    loopback_origin = f"http://{globals()['loopback_host']}:{globals()['loopback_port']}"
     if db is not None:
         db.release_device_key()
     for pending in PENDING_UNLOCKS.values():
@@ -240,7 +264,7 @@ def create_app(*, loopback_auth_token: str) -> Flask:
     active_client_id = None
 
     app.config.update(
-        TRUSTED_HOSTS=[f"{loopback_host}:{loopback_port}"],
+        TRUSTED_HOSTS=[f"{globals()['loopback_host']}:{globals()['loopback_port']}"],
         SESSION_COOKIE_NAME="paracci_session",
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
