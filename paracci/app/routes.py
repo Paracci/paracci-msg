@@ -739,6 +739,18 @@ def enforce_loopback_security():
     if source_error:
         return source_error
 
+    # --- NEW: Allow initial preview-window navigation without the SW bearer ---
+    # Preview windows open a fresh browser context that has no Service Worker
+    # registered yet. The per-entry preview token (64 hex chars embedded in the
+    # URL path) is sufficient authentication for initial navigation GETs.
+    # All subsequent requests from within the loaded page still require the
+    # loopback bearer through the Service Worker as before.
+    if request.method in {"GET", "HEAD"}:
+        preview_store_token = _preview_store_request_token()
+        if preview_store_token:
+            g.preview_access_ok = True
+            return
+
     token_verified = _token_matches(_extract_loopback_token(), ag_app.loopback_token)
     if _is_public_request():
         if token_verified:
@@ -756,10 +768,7 @@ def enforce_loopback_security():
             flask_testing=current_app.config.get("TESTING", False)
         )
 
-    if _preview_store_request_token():
-        g.preview_access_ok = True
-        return
-
+    # Token-verified path: also check old-style per-entry preview_token
     preview_access_ok = _valid_preview_access_request()
     if preview_access_ok:
         g.preview_access_ok = True
