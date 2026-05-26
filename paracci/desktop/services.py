@@ -271,6 +271,7 @@ def _validate_migrated_data(data_dir: Path) -> dict:
                 report["session_rows"] = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
                 report["device_initialized"] = (
                     conn.execute(
+                        # 'pin_salt' key is kept in SQLite for database compatibility
                         "SELECT 1 FROM device_meta WHERE key='pin_salt' LIMIT 1"
                     ).fetchone()
                     is not None
@@ -351,9 +352,9 @@ class DeviceService:
     def is_initialized(self) -> bool:
         return is_device_initialized(self.db)
 
-    def initialize(self, pin: str) -> bytearray:
+    def initialize(self, passphrase: str) -> bytearray:
         self.device_binding_warning = None
-        device_key = initialize_device_with_binding(self.db, pin)
+        device_key = initialize_device_with_binding(self.db, passphrase)
         try:
             self._activate_keyed_db(device_key)
         except Exception:
@@ -363,9 +364,9 @@ class DeviceService:
         self.device_binding_warning = consume_device_binding_warning()
         return self.device_key
 
-    def unlock(self, pin: str) -> bytearray:
+    def unlock(self, passphrase: str) -> bytearray:
         self.device_binding_warning = None
-        device_key = unlock_device_with_binding(self.db, pin)
+        device_key = unlock_device_with_binding(self.db, passphrase)
         try:
             self._activate_keyed_db(device_key)
         except Exception:
