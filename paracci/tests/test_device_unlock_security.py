@@ -169,9 +169,9 @@ def test_successful_unlock_reserves_attempt_before_kdf_and_clears_it(tmp_path, m
     observed_failed_attempts = []
     real_derive_master_key = burn_module.derive_master_key
 
-    def observed_derive_master_key(pin, salt):
+    def observed_derive_master_key(passphrase, salt):
         observed_failed_attempts.append(db.get_unlock_rate_limit()["failed_attempts"])
-        return real_derive_master_key(pin, salt)
+        return real_derive_master_key(passphrase, salt)
 
     monkeypatch.setattr(burn_module, "derive_master_key", observed_derive_master_key)
 
@@ -190,7 +190,7 @@ def test_parallel_wrong_unlocks_are_serialized_and_stopped_before_kdf(tmp_path, 
     active_kdfs = 0
     maximum_active_kdfs = 0
 
-    def slow_wrong_derive_master_key(_pin, _salt):
+    def slow_wrong_derive_master_key(_passphrase, _salt):
         nonlocal kdf_calls, active_kdfs, maximum_active_kdfs
         with metrics_lock:
             kdf_calls += 1
@@ -279,16 +279,17 @@ def test_unlock_lockout_state_is_durable(tmp_path):
 
 def test_existing_short_legacy_pin_can_still_unlock(tmp_path):
     db = BurnDB(tmp_path / "sessions.db")
-    legacy_pin = "95175328"
-    pin_salt = random_bytes(16)
-    master_key = derive_master_key(legacy_pin, pin_salt)
+    legacy_passphrase = "95175328"
+    passphrase_salt = random_bytes(16)
+    master_key = derive_master_key(legacy_passphrase, passphrase_salt)
     device_key = random_bytes(32)
     blob = encrypt(master_key, device_key, aad=b"paracci.device_key.v1")
 
-    db.set_device_meta("pin_salt", pin_salt)
+    # "pin_salt" is retained in device metadata keys to avoid breaking database compatibility
+    db.set_device_meta("pin_salt", passphrase_salt)
     db.set_device_meta("encrypted_device_key", blob.nonce + blob.ciphertext)
 
-    assert unlock_device(db, legacy_pin) == device_key
+    assert unlock_device(db, legacy_passphrase) == device_key
 
 
 def test_device_master_keys_are_mutable_and_zeroed_after_use(tmp_path, monkeypatch):

@@ -84,7 +84,7 @@ def test_parallel_windows_bound_wrong_unlocks_are_serialized_before_kdf(tmp_path
     active_kdfs = 0
     maximum_active_kdfs = 0
 
-    def slow_wrong_derive_master_key(_pin, _salt):
+    def slow_wrong_derive_master_key(_passphrase, _salt):
         nonlocal kdf_calls, active_kdfs, maximum_active_kdfs
         with metrics_lock:
             kdf_calls += 1

@@ -25,7 +25,7 @@ from core.burn import (
     init_device as legacy_init_device,
     is_device_initialized,
     unlock_device as legacy_unlock_device,
-    validate_pin_strength,
+    validate_passphrase_strength,
 )
 from core.crypto import EncryptedBlob, decrypt, derive_master_key, encrypt, random_bytes, wipe
 
@@ -121,37 +121,37 @@ def consume_device_binding_warning() -> DeviceBindingWarning | None:
     return warning
 
 
-def initialize_device_with_binding(db: BurnDB, pin: str) -> bytearray:
+def initialize_device_with_binding(db: BurnDB, passphrase: str) -> bytearray:
     """Initialize the profile, adding platform binding when available."""
     _clear_device_binding_warning()
     if sys.platform == "win32":
-        return _initialize_windows_device_with_binding(db, pin)
+        return _initialize_windows_device_with_binding(db, passphrase)
     if sys.platform == "darwin":
         return _initialize_platform_bound_device(
             db,
-            pin,
+            passphrase,
             MACOS_KEYCHAIN_KIND,
             _store_keychain_factor,
             _keychain_failed_error,
         )
     if sys.platform.startswith("linux"):
-        return _initialize_linux_bound_or_fallback(db, pin)
-    return legacy_init_device(db, pin)
+        return _initialize_linux_bound_or_fallback(db, passphrase)
+    return legacy_init_device(db, passphrase)
 
 
-def unlock_device_with_binding(db: BurnDB, pin: str) -> bytearray:
+def unlock_device_with_binding(db: BurnDB, passphrase: str) -> bytearray:
     """Unlock the profile, requiring platform binding when available."""
     _clear_device_binding_warning()
     if sys.platform == "win32":
         dpapi_blob = db.get_device_meta(DPAPI_BLOB_META_KEY)
         if not dpapi_blob:
-            return _unlock_legacy_and_bind(db, pin)
-        return _unlock_bound_device(db, pin, dpapi_blob)
+            return _unlock_legacy_and_bind(db, passphrase)
+        return _unlock_bound_device(db, passphrase, dpapi_blob)
     if sys.platform == "darwin":
-        return _unlock_macos_bound_device(db, pin)
+        return _unlock_macos_bound_device(db, passphrase)
     if sys.platform.startswith("linux"):
-        return _unlock_linux_bound_or_fallback(db, pin)
-    return legacy_unlock_device(db, pin)
+        return _unlock_linux_bound_or_fallback(db, passphrase)
+    return legacy_unlock_device(db, passphrase)
 
 
 def delete_device_binding_for_profile(db: BurnDB) -> None:
@@ -178,13 +178,13 @@ def delete_device_binding_for_profile(db: BurnDB) -> None:
     db.delete_device_meta(PLATFORM_BINDING_KIND_META_KEY)
 
 
-def _initialize_windows_device_with_binding(db: BurnDB, pin: str) -> bytearray:
-    validate_pin_strength(pin)
+def _initialize_windows_device_with_binding(db: BurnDB, passphrase: str) -> bytearray:
+    validate_passphrase_strength(passphrase)
     if is_device_initialized(db):
         raise DeviceError("Device already set up.")
 
-    pin_salt = random_bytes(16)
-    master_key = derive_master_key(pin, pin_salt)
+    passphrase_salt = random_bytes(16)
+    master_key = derive_master_key(passphrase, passphrase_salt)
     dpapi_factor = None
     storage_key = None
 
@@ -197,7 +197,7 @@ def _initialize_windows_device_with_binding(db: BurnDB, pin: str) -> bytearray:
         _set_device_meta_batch(
             db,
             {
-                "pin_salt": pin_salt,
+                "pin_salt": passphrase_salt,
                 "encrypted_device_key": encrypted.nonce + encrypted.ciphertext,
                 DPAPI_BLOB_META_KEY: stored_dpapi_blob,
             },
@@ -211,10 +211,11 @@ def _initialize_windows_device_with_binding(db: BurnDB, pin: str) -> bytearray:
             wipe(storage_key)
 
 
-def _unlock_bound_device(db: BurnDB, pin: str, stored_dpapi_blob: bytes) -> bytearray:
-    pin_salt = db.get_device_meta("pin_salt")
+def _unlock_bound_device(db: BurnDB, passphrase: str, stored_dpapi_blob: bytes) -> bytearray:
+    # "pin_salt" is retained in device metadata keys to avoid breaking database compatibility
+    passphrase_salt = db.get_device_meta("pin_salt")
     encrypted_device_key = db.get_device_meta("encrypted_device_key")
-    if not pin_salt or not encrypted_device_key:
+    if not passphrase_salt or not encrypted_device_key:
         raise DeviceError("Device not set up yet.")
 
     with _serialized_unlock_attempt():
@@ -233,7 +234,7 @@ def _unlock_bound_device(db: BurnDB, pin: str, stored_dpapi_blob: bytes) -> byte
                 raise _keyfile_damaged_error()
 
             state = db.reserve_unlock_attempt()
-            master_key = derive_master_key(pin, pin_salt)
+            master_key = derive_master_key(passphrase, passphrase_salt)
             storage_key = _derive_bound_storage_key(master_key, dpapi_factor)
             try:
                 device_key = _decrypt_stored_device_key(
@@ -264,13 +265,14 @@ def _unlock_bound_device(db: BurnDB, pin: str, stored_dpapi_blob: bytes) -> byte
                 wipe(storage_key)
 
 
-def _unlock_legacy_and_bind(db: BurnDB, pin: str) -> bytearray:
-    device_key = legacy_unlock_device(db, pin)
-    pin_salt = db.get_device_meta("pin_salt")
-    if not pin_salt:
+def _unlock_legacy_and_bind(db: BurnDB, passphrase: str) -> bytearray:
+    device_key = legacy_unlock_device(db, passphrase)
+    # "pin_salt" is retained in device metadata keys to avoid breaking database compatibility
+    passphrase_salt = db.get_device_meta("pin_salt")
+    if not passphrase_salt:
         raise DeviceError("Device not set up yet.")
 
-    master_key = derive_master_key(pin, pin_salt)
+    master_key = derive_master_key(passphrase, passphrase_salt)
     dpapi_factor = None
     storage_key = None
     try:
@@ -293,11 +295,11 @@ def _unlock_legacy_and_bind(db: BurnDB, pin: str) -> bytearray:
     return device_key
 
 
-def _initialize_linux_bound_or_fallback(db: BurnDB, pin: str) -> bytearray:
+def _initialize_linux_bound_or_fallback(db: BurnDB, passphrase: str) -> bytearray:
     try:
         return _initialize_platform_bound_device(
             db,
-            pin,
+            passphrase,
             LINUX_SECRET_SERVICE_KIND,
             _store_secret_service_factor,
             _secret_service_failed_error,
@@ -307,17 +309,17 @@ def _initialize_linux_bound_or_fallback(db: BurnDB, pin: str) -> bytearray:
             raise
         logger.warning("Linux Secret Service unavailable during initialization; using passphrase-only mode.")
         _set_device_binding_warning(_secret_service_unavailable_warning())
-        return legacy_init_device(db, pin)
+        return legacy_init_device(db, passphrase)
 
 
-def _unlock_macos_bound_device(db: BurnDB, pin: str) -> bytearray:
+def _unlock_macos_bound_device(db: BurnDB, passphrase: str) -> bytearray:
     profile_id = _read_profile_id(db)
     kind = _read_binding_kind(db)
     if not profile_id and not kind:
-        device_key = legacy_unlock_device(db, pin)
+        device_key = legacy_unlock_device(db, passphrase)
         return _bind_legacy_device_with_platform_factor(
             db,
-            pin,
+            passphrase,
             device_key,
             MACOS_KEYCHAIN_KIND,
             _store_keychain_factor,
@@ -327,22 +329,22 @@ def _unlock_macos_bound_device(db: BurnDB, pin: str) -> bytearray:
         raise _keychain_missing_error()
     return _unlock_platform_bound_device(
         db,
-        pin,
+        passphrase,
         MACOS_KEYCHAIN_KIND,
         _load_keychain_factor,
         _keychain_failed_error,
     )
 
 
-def _unlock_linux_bound_or_fallback(db: BurnDB, pin: str) -> bytearray:
+def _unlock_linux_bound_or_fallback(db: BurnDB, passphrase: str) -> bytearray:
     profile_id = _read_profile_id(db)
     kind = _read_binding_kind(db)
     if not profile_id and not kind:
-        device_key = legacy_unlock_device(db, pin)
+        device_key = legacy_unlock_device(db, passphrase)
         try:
             return _bind_legacy_device_with_platform_factor(
                 db,
-                pin,
+                passphrase,
                 device_key,
                 LINUX_SECRET_SERVICE_KIND,
                 _store_secret_service_factor,
@@ -358,7 +360,7 @@ def _unlock_linux_bound_or_fallback(db: BurnDB, pin: str) -> bytearray:
         raise _secret_service_missing_error()
     return _unlock_platform_bound_device(
         db,
-        pin,
+        passphrase,
         LINUX_SECRET_SERVICE_KIND,
         _load_secret_service_factor,
         _secret_service_failed_error,
@@ -367,17 +369,17 @@ def _unlock_linux_bound_or_fallback(db: BurnDB, pin: str) -> bytearray:
 
 def _initialize_platform_bound_device(
     db: BurnDB,
-    pin: str,
+    passphrase: str,
     kind: bytes,
     store_factor,
     damaged_error_factory,
 ) -> bytearray:
-    validate_pin_strength(pin)
+    validate_passphrase_strength(passphrase)
     if is_device_initialized(db):
         raise DeviceError("Device already set up.")
 
-    pin_salt = random_bytes(16)
-    master_key = derive_master_key(pin, pin_salt)
+    passphrase_salt = random_bytes(16)
+    master_key = derive_master_key(passphrase, passphrase_salt)
     binding_factor = None
     storage_key = None
     profile_id = _new_profile_id()
@@ -394,7 +396,7 @@ def _initialize_platform_bound_device(
             _set_device_meta_batch(
                 db,
                 {
-                    "pin_salt": pin_salt,
+                    "pin_salt": passphrase_salt,
                     "encrypted_device_key": encrypted.nonce + encrypted.ciphertext,
                     PLATFORM_BINDING_PROFILE_ID_META_KEY: profile_id.encode("ascii"),
                     PLATFORM_BINDING_KIND_META_KEY: kind,
@@ -419,16 +421,17 @@ def _initialize_platform_bound_device(
 
 def _unlock_platform_bound_device(
     db: BurnDB,
-    pin: str,
+    passphrase: str,
     kind: bytes,
     load_factor,
     damaged_error_factory,
 ) -> bytearray:
-    pin_salt = db.get_device_meta("pin_salt")
+    # "pin_salt" is retained in device metadata keys to avoid breaking database compatibility
+    passphrase_salt = db.get_device_meta("pin_salt")
     encrypted_device_key = db.get_device_meta("encrypted_device_key")
     profile_id = _read_profile_id(db)
     stored_kind = _read_binding_kind(db)
-    if not pin_salt or not encrypted_device_key:
+    if not passphrase_salt or not encrypted_device_key:
         raise DeviceError("Device not set up yet.")
     if not profile_id or stored_kind != kind:
         raise damaged_error_factory()
@@ -444,7 +447,7 @@ def _unlock_platform_bound_device(
                 raise damaged_error_factory()
 
             state = db.reserve_unlock_attempt()
-            master_key = derive_master_key(pin, pin_salt)
+            master_key = derive_master_key(passphrase, passphrase_salt)
             storage_key = _derive_bound_storage_key(master_key, binding_factor)
             try:
                 device_key = _decrypt_stored_device_key(
@@ -477,17 +480,18 @@ def _unlock_platform_bound_device(
 
 def _bind_legacy_device_with_platform_factor(
     db: BurnDB,
-    pin: str,
+    passphrase: str,
     device_key: bytes | bytearray,
     kind: bytes,
     store_factor,
     damaged_error_factory,
 ) -> bytes | bytearray:
-    pin_salt = db.get_device_meta("pin_salt")
-    if not pin_salt:
+    # "pin_salt" is retained in device metadata keys to avoid breaking database compatibility
+    passphrase_salt = db.get_device_meta("pin_salt")
+    if not passphrase_salt:
         raise DeviceError("Device not set up yet.")
 
-    master_key = derive_master_key(pin, pin_salt)
+    master_key = derive_master_key(passphrase, passphrase_salt)
     binding_factor = None
     storage_key = None
     profile_id = _new_profile_id()

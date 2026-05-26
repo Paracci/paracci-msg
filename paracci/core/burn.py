@@ -1221,9 +1221,9 @@ def is_device_initialized(db: BurnDB) -> bool:
     """Has the device been set up with a passphrase before?"""
     return db.get_device_meta("pin_salt") is not None
 
-def validate_pin_strength(pin: str):
+def validate_passphrase_strength(passphrase: str):
     """
-    Validates passphrase strength. The function name is retained for callers.
+    Validates passphrase strength.
 
     Criteria:
     - 12 to 128 characters
@@ -1231,7 +1231,7 @@ def validate_pin_strength(pin: str):
     - Must have enough character diversity and estimated entropy
     - Must not be obvious sequences, common weak phrases, or repeated tokens
     """
-    passphrase = pin or ""
+    passphrase = passphrase or ""
     compact = _compact_passphrase(passphrase)
 
     if len(passphrase) < PASSPHRASE_MIN_LENGTH:
@@ -1260,21 +1260,21 @@ def validate_pin_strength(pin: str):
         )
 
 
-def init_device(db: BurnDB, pin: str) -> bytearray:
+def init_device(db: BurnDB, passphrase: str) -> bytearray:
     """
     Sets up the device for the first time:
-    1. Produces a new pin_salt.
+    1. Produces a new passphrase_salt.
     2. Derives master_key from the passphrase.
     3. Produces a random device_key.
     4. Encrypts and saves the device_key with the master_key.
     """
-    validate_pin_strength(pin)
+    validate_passphrase_strength(passphrase)
     
     if is_device_initialized(db):
         raise DeviceError("Device already set up.")
     
-    pin_salt = random_bytes(16)
-    master_key = derive_master_key(pin, pin_salt)
+    passphrase_salt = random_bytes(16)
+    master_key = derive_master_key(passphrase, passphrase_salt)
     
     try:
         device_key = bytearray(random_bytes(32))
@@ -1285,7 +1285,8 @@ def init_device(db: BurnDB, pin: str) -> bytearray:
         blob = encrypt(master_key, device_key, aad=b"paracci.device_key.v1")
         
         # Save
-        db.set_device_meta("pin_salt", pin_salt)
+        # "pin_salt" is retained in device metadata keys to avoid breaking database compatibility
+        db.set_device_meta("pin_salt", passphrase_salt)
         db.set_device_meta("encrypted_device_key", blob.nonce + blob.ciphertext)
         
         return device_key
@@ -1295,19 +1296,20 @@ def init_device(db: BurnDB, pin: str) -> bytearray:
             wipe(master_key)
 
 
-def unlock_device(db: BurnDB, pin: str) -> bytearray:
+def unlock_device(db: BurnDB, passphrase: str) -> bytearray:
     """
     Unlocks the device key with the passphrase.
     """
-    pin_salt = db.get_device_meta("pin_salt")
+    # "pin_salt" is retained in device metadata keys to avoid breaking database compatibility
+    passphrase_salt = db.get_device_meta("pin_salt")
     enc_data = db.get_device_meta("encrypted_device_key")
     
-    if not pin_salt or not enc_data:
+    if not passphrase_salt or not enc_data:
         raise DeviceError("Device not set up yet.")
 
     with _serialized_unlock_attempt():
         state = db.reserve_unlock_attempt()
-        master_key = derive_master_key(pin, pin_salt)
+        master_key = derive_master_key(passphrase, passphrase_salt)
 
         try:
             # enc_data: nonce(12) + ciphertext
