@@ -590,6 +590,7 @@ def test_burn_workflow():
         except TTLExpiredError:
             pass
         assert db.get_burn_status(expired_msg_id) is None
+        db.close()
 
 run_test("Single-use message burn workflow", test_burn_workflow)
 
@@ -606,6 +607,7 @@ def test_ttl_check():
             assert False, "Expired message passed!"
         except TTLExpiredError:
             pass
+        db.close()
 
 run_test("TTL expired message burn check", test_ttl_check)
 
@@ -618,6 +620,7 @@ def test_device_key_persistence():
         key2 = unlock_device(db, pin)
         assert key1 == key2
         assert len(key1) == 32
+        db.close()
 
 run_test("Device key persistence (PIN init -> unlock)", test_device_key_persistence)
 
@@ -648,6 +651,7 @@ def test_session_db_roundtrip():
         restored = deserialize_session_meta(row[2], device_key)
         assert restored.session_id == meta_x2.session_id
         assert restored.keys.evo_seed == meta_x2.keys.evo_seed
+        db.close()
 
 run_test("Session DB save / load", test_session_db_roundtrip)
 
