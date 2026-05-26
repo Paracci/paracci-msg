@@ -90,7 +90,7 @@ def test_preview_token_page_returns_html(tmp_path, monkeypatch):
     assert b"secret-content" not in response.data
 
 
-def test_preview_token_without_main_bearer_returns_403(tmp_path, monkeypatch):
+def test_preview_token_without_main_bearer_succeeds_with_valid_token(tmp_path, monkeypatch):
     _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
     _routes, store = fresh_preview_store(monkeypatch)
     token = store.generate_token(b"secret-content", "note.txt", "text/plain")
@@ -101,7 +101,33 @@ def test_preview_token_without_main_bearer_returns_403(tmp_path, monkeypatch):
         headers={"Host": HOST},
     )
 
+    assert response.status_code == 200
+
+
+def test_preview_token_without_main_bearer_fails_for_invalid_format(tmp_path, monkeypatch):
+    _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    _routes, store = fresh_preview_store(monkeypatch)
+
+    response = flask_app.test_client().get(
+        "/preview/not-64-hex-chars-at-all",
+        base_url=ORIGIN,
+        headers={"Host": HOST},
+    )
+
     assert response.status_code == 403
+
+
+def test_preview_token_without_main_bearer_returns_404_for_non_existent_64_hex_token(tmp_path, monkeypatch):
+    _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    _routes, store = fresh_preview_store(monkeypatch)
+
+    response = flask_app.test_client().get(
+        f"/preview/{'b' * 64}",
+        base_url=ORIGIN,
+        headers={"Host": HOST},
+    )
+
+    assert response.status_code == 404
 
 
 def test_preview_token_page_returns_404_for_invalid_token(tmp_path, monkeypatch):
