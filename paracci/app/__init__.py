@@ -7,11 +7,14 @@ import os
 import sys
 import threading
 import datetime
+import logging
 from pathlib import Path
 from flask import Flask
 from .i18n_manager import i18n
 from core.burn import BurnDB
 from core.crypto import wipe
+
+logger = logging.getLogger(__name__)
 
 # Project root directory: paracci/
 # _MEIPASS check for PyInstaller compatibility
@@ -185,6 +188,13 @@ def lock_device() -> None:
     if db is not None:
         db.release_device_key()
     db = BurnDB(DATA_DIR / "sessions.db")
+
+    # 6. Clear system clipboard if it contains Paracci-owned text
+    try:
+        from core.shields import shield
+        shield.clear_owned_clipboard()
+    except Exception as exc:
+        logger.error("Failed to clear clipboard on lock: %s", exc)
 
 
 # ---------------------------------------------------------------------------
