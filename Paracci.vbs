@@ -2,12 +2,35 @@ Dim fso, WshShell
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set WshShell = CreateObject("WScript.Shell")
 
-Dim parentFolder, errorLogPath, successTmpPath
+Dim parentFolder
 parentFolder = fso.GetParentFolderName(WScript.ScriptFullName)
 If parentFolder = "" Then parentFolder = "."
 
-errorLogPath = parentFolder & "\paracci_startup_error.log"
-successTmpPath = parentFolder & "\paracci_startup_success.tmp"
+' Resolve OS-specific local AppData path for Paracci
+Dim localAppData, userDir
+localAppData = WshShell.ExpandEnvironmentStrings("%LOCALAPPDATA%")
+If localAppData = "%LOCALAPPDATA%" Or localAppData = "" Then
+    Dim userProfile
+    userProfile = WshShell.ExpandEnvironmentStrings("%USERPROFILE%")
+    If userProfile = "%USERPROFILE%" Or userProfile = "" Then
+        userDir = parentFolder & "\data"
+    Else
+        userDir = userProfile & "\AppData\Local\Paracci"
+    End If
+Else
+    userDir = localAppData & "\Paracci"
+End If
+
+' Ensure the directory exists
+If Not fso.FolderExists(userDir) Then
+    On Error Resume Next
+    fso.CreateFolder userDir
+    On Error GoTo 0
+End If
+
+Dim errorLogPath, successTmpPath
+errorLogPath = userDir & "\paracci_startup_error.log"
+successTmpPath = userDir & "\paracci_startup_success.tmp"
 
 ' Clean up files from any previous execution
 If fso.FileExists(errorLogPath) Then
@@ -51,8 +74,8 @@ Do While elapsed < maxWaitSeconds
 Loop
 
 If errorDetected Then
-    ' Display warning popup (48) with 30-second timeout
-    WshShell.Popup "Paracci failed to start. Please check 'paracci_startup_error.log' in the application directory for details.", 30, "Paracci Startup Error", 48
+    ' Display warning popup (48) with 30-second timeout showing the error log location
+    WshShell.Popup "Paracci failed to start. Please check '" & errorLogPath & "' for details.", 30, "Paracci Startup Error", 48
 ElseIf successDetected Then
     ' Clean up the sentinel file
     On Error Resume Next
