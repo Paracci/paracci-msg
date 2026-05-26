@@ -12,6 +12,8 @@ This module:
 
 import os
 import sqlite3
+import subprocess
+import sys
 import hashlib
 import json
 import logging
@@ -217,9 +219,73 @@ class BurnDB:
             self._local.conn = conn
         return _ConnectionProxy(conn)
 
+    @staticmethod
+    def _secure_db_permissions(db_path: str) -> None:
+        """Restrict the database file and WAL sidecar permissions to the owner only.
+
+        POSIX: sets mode 0o600 (rw-------) on the main file and any existing
+        sidecar files (-wal, -shm).
+        Windows: removes inherited ACEs and grants Full Control exclusively to
+        the current user via ``icacls``.
+
+        Failures are logged as warnings rather than exceptions so that an
+        unusual mount-point (e.g. NFS with squash) cannot prevent the
+        application from starting.
+        """
+        try:
+            if sys.platform == "win32":
+                username = os.environ.get("USERNAME", "")
+                if not username:
+                    logger.warning(
+                        "Could not restrict database file permissions: USERNAME env var is empty."
+                    )
+                    return
+                targets = [db_path] + [
+                    db_path + suffix
+                    for suffix in ("-wal", "-shm")
+                    if os.path.exists(db_path + suffix)
+                ]
+                for target in targets:
+                    result = subprocess.run(
+                        [
+                            "icacls", target,
+                            "/inheritance:r",
+                            "/grant:r", f"{username}:F",
+                        ],
+                        check=False,
+                        capture_output=True,
+                    )
+                    if result.returncode != 0:
+                        logger.warning(
+                            "icacls could not restrict permissions on %s (rc=%d): %s",
+                            target,
+                            result.returncode,
+                            result.stderr.decode(errors="replace").strip(),
+                        )
+            else:
+                os.chmod(db_path, 0o600)
+                for suffix in ("-wal", "-shm"):
+                    sidecar = db_path + suffix
+                    if os.path.exists(sidecar):
+                        os.chmod(sidecar, 0o600)
+        except Exception as exc:
+            logger.warning("Could not restrict database file permissions: %s", exc)
+
     def _init_db(self):
         """Creates the database tables (burned_messages, sessions, device_meta)."""
-        conn = self._connect()
+        # On POSIX, tighten the umask before the first connect() call so that
+        # SQLite creates sessions.db with 0o600 from birth rather than the
+        # process-default 0o644.  The umask is restored immediately after the
+        # connection (and therefore the file) has been established.
+        _old_mask = None
+        if sys.platform != "win32":
+            _old_mask = os.umask(0o177)
+        try:
+            conn = self._connect()
+        finally:
+            if _old_mask is not None:
+                os.umask(_old_mask)
+
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS burned_messages (
                 fingerprint     BLOB PRIMARY KEY,   -- SHA3-256(msg_id)
@@ -260,6 +326,9 @@ class BurnDB:
             self._migrate_burned_messages(conn)
         conn.commit()
         conn.close()
+        # Belt-and-suspenders: enforce owner-only permissions regardless of
+        # whether the file already existed before this process started.
+        self._secure_db_permissions(self.db_path)
 
     def _require_device_key(self) -> bytearray:
         if self._device_key is None:

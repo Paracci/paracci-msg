@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import secrets
 
 logger = logging.getLogger(__name__)
 import shutil
@@ -147,16 +148,57 @@ class ImportResult:
 
 @dataclass(frozen=True)
 class AttachmentPayload:
-    """Opened attachment held only in memory."""
+    """Opened attachment held on disk."""
 
     filename: str
-    content: bytes
+    content_path: str
     mime_type: str
     allow_download: bool
 
+    def __init__(
+        self,
+        filename: str,
+        content_path: str | None = None,
+        mime_type: str = "application/octet-stream",
+        allow_download: bool = True,
+        content: bytes | None = None,
+    ):
+        object.__setattr__(self, "filename", filename)
+        object.__setattr__(self, "mime_type", mime_type)
+        object.__setattr__(self, "allow_download", allow_download)
+        if content_path is not None:
+            object.__setattr__(self, "content_path", str(content_path))
+        elif content is not None:
+            temp_dir = Path(os.environ.get("DATA_DIR", "data")) / "temp"
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            token = secrets.token_hex(16)
+            temp_file_path = temp_dir / f"test_payload_{token}.bin"
+            try:
+                temp_file_path.write_bytes(content)
+            except OSError:
+                pass
+            object.__setattr__(self, "content_path", str(temp_file_path))
+        else:
+            object.__setattr__(self, "content_path", "")
+
+    @property
+    def content(self) -> bytes:
+        if not self.content_path or not os.path.exists(self.content_path):
+            return b""
+        try:
+            with open(self.content_path, "rb") as f:
+                return f.read()
+        except OSError:
+            return b""
+
     @property
     def size(self) -> int:
-        return len(self.content)
+        if self.content_path and os.path.exists(self.content_path):
+            try:
+                return os.path.getsize(self.content_path)
+            except OSError:
+                return 0
+        return 0
 
     @property
     def is_image(self) -> bool:
@@ -666,7 +708,8 @@ class MessageService:
         attachment_paths: list[Path],
         allow_download: bool,
         ttl_seconds: int = 0,
-    ) -> tuple[bytes, str]:
+        output_path: str | Path | None = None,
+    ) -> tuple[bytes | None, str]:
         meta = self.sessions.load(session_id_hex)
         try:
             require_transcript_bound_session(meta)
@@ -677,22 +720,53 @@ class MessageService:
 
         normalized_text = unicodedata.normalize("NFC", text.strip())
         files = self._read_attachments(attachment_paths)
-        package_blob = create_package(normalized_text, files, allow_download=allow_download)
-        sealed = seal_envelope(
-            package_blob,
-            meta,
-            single_use=True,
-            ttl_seconds=ttl_seconds,
-            allow_download=allow_download,
-        )
+        
+        # Write ZIP directly to disk to minimize memory usage
+        temp_dir = Path(os.environ.get("DATA_DIR", "data")) / "temp"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        token = secrets.token_hex(16)
+        temp_zip_path = temp_dir / f"package_{token}.zip"
+        
+        try:
+            import inspect
+            sig = inspect.signature(create_package)
+            if "output_path" in sig.parameters:
+                create_package(normalized_text, files, allow_download=allow_download, output_path=temp_zip_path)
+            else:
+                pkg_bytes = create_package(normalized_text, files, allow_download)
+                with open(temp_zip_path, "wb") as f:
+                    f.write(pkg_bytes)
+            
+            sealed = seal_envelope(
+                temp_zip_path,
+                meta,
+                single_use=True,
+                ttl_seconds=ttl_seconds,
+                allow_download=allow_download,
+                output_path=output_path,
+            )
+        finally:
+            if temp_zip_path.exists():
+                try:
+                    os.remove(temp_zip_path)
+                except OSError:
+                    pass
+            for name, temp_file_path in files:
+                if isinstance(temp_file_path, (str, Path)) and os.path.exists(temp_file_path):
+                    try:
+                        os.remove(temp_file_path)
+                    except OSError:
+                        pass
+        
         self.sessions.save(meta._replace(tx_count=meta.tx_count + 1, send_seed=sealed.next_seed))
-        return sealed.file_bytes, f"msg_step_{sealed.next_step - 1:06d}_{sealed.msg_id.hex()[:12]}.paracci"
+        return sealed.file_bytes if output_path is None else None, f"msg_step_{sealed.next_step - 1:06d}_{sealed.msg_id.hex()[:12]}.paracci"
 
     def open_message(
         self,
         session_id_hex: str,
-        file_bytes: bytes,
+        file_bytes: bytes | None = None,
         source_path: Path | None = None,
+        burn_source: bool = True,
     ) -> OpenedMessage:
         meta = self.sessions.load(session_id_hex)
         try:
@@ -702,7 +776,18 @@ class MessageService:
         if not meta.can_open:
             raise MessageServiceError("Session safety code has not been confirmed.")
 
-        header = parse_file_header(file_bytes)
+        if source_path is not None:
+            try:
+                with open(source_path, "rb") as f:
+                    header_bytes_prefix = f.read(100)
+            except OSError as exc:
+                raise MessageServiceError("Could not read message file.") from exc
+            header = parse_file_header(header_bytes_prefix)
+        else:
+            if file_bytes is None:
+                raise ValueError("Either file_bytes or source_path must be provided.")
+            header = parse_file_header(file_bytes)
+            
         if not header or header["file_type"] != TYPE_MESSAGE:
             raise MessageServiceError("Invalid Paracci message file.")
 
@@ -714,7 +799,10 @@ class MessageService:
                 single_use=header["single_use"],
             )
             try:
-                opened = open_envelope(file_bytes, meta)
+                if source_path is not None:
+                    opened = open_envelope(session=meta, file_path=source_path)
+                else:
+                    opened = open_envelope(file_bytes, meta)
             except EnvelopeError as exc:
                 if burn_reserved:
                     guard.mark_open_failed(header["msg_id"], str(exc))
@@ -728,20 +816,34 @@ class MessageService:
                 session_id=opened.session_id,
                 direction=opened.direction,
                 single_use=opened.single_use,
-                file_path=source_path,
+                file_path=source_path if burn_source else None,
             )
         except (AlreadyBurnedError, TTLExpiredError, EnvelopeTTLError) as exc:
             raise MessageServiceError("This message was already opened or has expired.") from exc
         except EnvelopeError as exc:
             raise MessageServiceError(str(exc)) from exc
 
+        # Decrypt payload directly to a temp file
+        temp_dir = Path(os.environ.get("DATA_DIR", "data")) / "temp"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        token = secrets.token_hex(16)
+        temp_zip_path = temp_dir / f"decrypted_{token}.zip"
+        
         try:
+            temp_zip_path.write_bytes(opened.payload)
             package = extract_package(
-                opened.payload,
                 default_allow_download=not opened.has_download_policy,
+                file_path=temp_zip_path,
             )
         except PackageLimitError as exc:
             raise MessageServiceError(str(exc)) from exc
+        finally:
+            if temp_zip_path.exists():
+                try:
+                    os.remove(temp_zip_path)
+                except OSError:
+                    pass
+                    
         effective_allow_download = (
             opened.allow_download
             if opened.has_download_policy
@@ -750,7 +852,7 @@ class MessageService:
         attachments = [
             AttachmentPayload(
                 filename=att.filename,
-                content=att.content,
+                content_path=att.content_path,
                 mime_type=att.mime_type,
                 allow_download=effective_allow_download,
             )
@@ -768,29 +870,81 @@ class MessageService:
             secure_delete_failed=not secure_delete_succeeded,
         )
 
-    def _read_attachments(self, paths: list[Path]) -> list[tuple[str, bytes]]:
+    def _read_attachments(self, paths: list[Path]) -> list[tuple[str, Path]]:
         if len(paths) > MAX_ATTACHMENT_COUNT:
             raise MessageServiceError(f"Maximum {MAX_ATTACHMENT_COUNT} files can be attached.")
 
-        files: list[tuple[str, bytes]] = []
+        files: list[tuple[str, Path]] = []
         total_size = 0
+        temp_dir = Path(os.environ.get("DATA_DIR", "data")) / "temp"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        
         for path in paths:
             if not path:
                 continue
             p = Path(path)
             if not p.is_file():
+                for name, tf in files:
+                    try:
+                        os.remove(tf)
+                    except OSError:
+                        pass
                 raise MessageServiceError(f"Attachment not found: {p}")
-            content = p.read_bytes()
-            total_size += len(content)
+                
+            token = secrets.token_hex(16)
+            temp_file_path = temp_dir / f"staged_desk_{token}.bin"
+            
+            try:
+                with open(p, "rb") as src, open(temp_file_path, "wb") as dest:
+                    while True:
+                        chunk = src.read(64 * 1024)
+                        if not chunk:
+                            break
+                        dest.write(chunk)
+            except OSError as exc:
+                for name, tf in files:
+                    try:
+                        os.remove(tf)
+                    except OSError:
+                        pass
+                raise MessageServiceError("Could not read attachment.") from exc
+                
+            file_size = os.path.getsize(temp_file_path)
+            total_size += file_size
             if total_size > MAX_ATTACHMENT_SIZE:
+                try:
+                    os.remove(temp_file_path)
+                except OSError:
+                    pass
+                for name, tf in files:
+                    try:
+                        os.remove(tf)
+                    except OSError:
+                        pass
                 raise MessageServiceError(
                     f"Total attachment size exceeds {MAX_ATTACHMENT_SIZE // (1024 * 1024)}MB."
                 )
+                
             try:
-                content = sanitize_image(content, p.name)
+                ext = p.name.split('.')[-1].lower()
+                if ext in ['jpg', 'jpeg', 'png', 'webp']:
+                    with open(temp_file_path, "rb") as f:
+                        image_bytes = f.read()
+                    sanitized = sanitize_image(image_bytes, p.name)
+                    temp_file_path.write_bytes(sanitized)
             except SanitizationError as exc:
+                try:
+                    os.remove(temp_file_path)
+                except OSError:
+                    pass
+                for name, tf in files:
+                    try:
+                        os.remove(tf)
+                    except OSError:
+                        pass
                 raise MessageServiceError(SanitizationError.user_message) from exc
-            files.append((p.name, content))
+                
+            files.append((p.name, temp_file_path))
         return files
 
 

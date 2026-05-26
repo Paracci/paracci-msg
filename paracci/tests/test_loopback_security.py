@@ -439,7 +439,10 @@ def test_native_attachment_staging_helper_consumes_python_selected_paths(tmp_pat
 
     files, error = routes_module._gather_attachments([], staged[0]["id"])
     assert error is None
-    assert files == [("note.txt", b"native selected content")]
+    assert len(files) == 1
+    assert files[0][0] == "note.txt"
+    assert isinstance(files[0][1], (str, Path))
+    assert Path(files[0][1]).read_bytes() == b"native selected content"
 
 
 def test_frontend_no_longer_posts_attachment_paths():

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from dataclasses import dataclass
 import secrets
 import threading
@@ -15,21 +17,49 @@ MAX_NATIVE_SAVE_BYTES = 64 * 1024 * 1024
 @dataclass(frozen=True)
 class PreviewEntry:
     token: str
-    file_bytes: bytes
+    file_path: str
     filename: str
     mime_type: str
     allow_download: bool
     created_at: float
     expires_at: float
 
+    @property
+    def file_bytes(self) -> bytes:
+        try:
+            with open(self.file_path, "rb") as f:
+                return f.read()
+        except OSError:
+            return b""
+
+    @property
+    def file_size(self) -> int:
+        if self.file_path and os.path.exists(self.file_path):
+            try:
+                return os.path.getsize(self.file_path)
+            except OSError:
+                return 0
+        return 0
+
 
 @dataclass(frozen=True)
 class NativeSaveGrant:
     token: str
-    file_bytes: bytes
+    file_path: str
     filename: str
     created_at: float
     expires_at: float
+    in_memory_bytes: bytes = None
+
+    @property
+    def file_bytes(self) -> bytes:
+        if self.in_memory_bytes is not None:
+            return self.in_memory_bytes
+        try:
+            with open(self.file_path, "rb") as f:
+                return f.read()
+        except OSError:
+            return b""
 
 
 class PreviewStore:
@@ -47,17 +77,34 @@ class PreviewStore:
 
     def generate_token(
         self,
-        file_bytes: bytes,
-        filename: str,
-        mime_type: str,
+        file_bytes: bytes | None = None,
+        filename: str = "",
+        mime_type: str = "",
         allow_download: bool = True,
+        file_path: str | Path | None = None,
     ) -> str:
         self.cleanup_expired()
         now = self._clock()
         token = secrets.token_hex(32)
+
+        # Write to secure temp file
+        temp_dir = Path(os.environ.get("DATA_DIR", "data")) / "temp"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        dest_path = temp_dir / f"preview_{token}.bin"
+        try:
+            if file_path is not None:
+                import shutil
+                shutil.copy2(file_path, dest_path)
+            else:
+                if file_bytes is None:
+                    raise ValueError("Either file_bytes or file_path must be provided.")
+                dest_path.write_bytes(file_bytes)
+        except OSError as exc:
+            raise ValueError("Failed to write preview temp file.") from exc
+
         entry = PreviewEntry(
             token=token,
-            file_bytes=file_bytes,
+            file_path=str(dest_path),
             filename=filename,
             mime_type=mime_type,
             allow_download=bool(allow_download),
@@ -80,7 +127,12 @@ class PreviewStore:
 
     def revoke(self, token: str) -> None:
         with self._lock:
-            self._entries.pop(token, None)
+            entry = self._entries.pop(token, None)
+        if entry is not None:
+            try:
+                os.remove(entry.file_path)
+            except Exception:
+                pass
 
     def cleanup_expired(self) -> None:
         now = self._clock()
@@ -91,7 +143,12 @@ class PreviewStore:
                 if entry.expires_at < now
             ]
             for token in expired:
-                self._entries.pop(token, None)
+                entry = self._entries.pop(token, None)
+                if entry is not None:
+                    try:
+                        os.remove(entry.file_path)
+                    except Exception:
+                        pass
 
 
 class NativeSaveGrantStore:
@@ -107,16 +164,47 @@ class NativeSaveGrantStore:
         self._entries: dict[str, NativeSaveGrant] = {}
         self._lock = threading.RLock()
 
-    def issue(self, file_bytes: bytes, filename: str) -> str:
-        if not isinstance(file_bytes, bytes) or len(file_bytes) > MAX_NATIVE_SAVE_BYTES:
-            raise ValueError("Native download exceeds the size limit.")
+    def issue(
+        self,
+        file_bytes: bytes | None = None,
+        filename: str = "",
+        *,
+        file_path: str | Path | None = None,
+    ) -> str:
+        if file_bytes is not None:
+            if not isinstance(file_bytes, bytes) or len(file_bytes) > MAX_NATIVE_SAVE_BYTES:
+                raise ValueError("Native download exceeds the size limit.")
+        elif file_path is not None:
+            try:
+                f_size = os.path.getsize(file_path)
+            except OSError as exc:
+                raise ValueError("Could not read source file for save grant.") from exc
+            if f_size > MAX_NATIVE_SAVE_BYTES:
+                raise ValueError("Native download exceeds the size limit.")
+        else:
+            raise ValueError("Either file_bytes or file_path must be provided.")
+
         validated_filename = validate_native_download_filename(filename)
         self.cleanup_expired()
         now = self._clock()
         token = secrets.token_hex(32)
+
+        # Write to secure temp file
+        temp_dir = Path(os.environ.get("DATA_DIR", "data")) / "temp"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        dest_path = temp_dir / f"save_{token}.bin"
+        try:
+            if file_path is not None:
+                import shutil
+                shutil.copy2(file_path, dest_path)
+            else:
+                dest_path.write_bytes(file_bytes)
+        except OSError as exc:
+            raise ValueError("Failed to write native save temp file.") from exc
+
         entry = NativeSaveGrant(
             token=token,
-            file_bytes=file_bytes,
+            file_path=str(dest_path),
             filename=validated_filename,
             created_at=now,
             expires_at=now + self.ttl_seconds,
@@ -132,8 +220,33 @@ class NativeSaveGrantStore:
         with self._lock:
             entry = self._entries.pop(str(token), None)
         if entry is None or entry.expires_at < now:
+            if entry is not None:
+                try:
+                    os.remove(entry.file_path)
+                except Exception:
+                    pass
             return None
-        return entry
+
+        # Read into memory for consumption and clean up file
+        try:
+            with open(entry.file_path, "rb") as f:
+                content = f.read()
+        except OSError:
+            content = b""
+        finally:
+            try:
+                os.remove(entry.file_path)
+            except Exception:
+                pass
+
+        return NativeSaveGrant(
+            token=entry.token,
+            file_path=entry.file_path,
+            filename=entry.filename,
+            created_at=entry.created_at,
+            expires_at=entry.expires_at,
+            in_memory_bytes=content,
+        )
 
     def cleanup_expired(self) -> None:
         now = self._clock()
@@ -144,7 +257,12 @@ class NativeSaveGrantStore:
                 if entry.expires_at < now
             ]
             for token in expired:
-                self._entries.pop(token, None)
+                entry = self._entries.pop(token, None)
+                if entry is not None:
+                    try:
+                        os.remove(entry.file_path)
+                    except Exception:
+                        pass
 
 
 preview_store = PreviewStore()

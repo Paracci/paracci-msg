@@ -277,15 +277,14 @@ class UIApi:
             attachment_paths=[Path(p) for p in attachment_paths or []],
             allow_download=bool(allow_download),
             ttl_seconds=int(ttl_seconds),
+            output_path=output_path,
         )
-        self._write_bytes(output_path, data)
         return {"session_id_hex": session_id_hex, "output_path": str(Path(output_path)), "filename": filename}
 
     def cmd_message_open(self, session_id_hex: str, message_path: str, burn_source: bool = True) -> dict[str, Any]:
         self._cleanup_open_cache()
         path = Path(message_path)
-        source_path = path if burn_source else None
-        opened = self.services.messages.open_message(session_id_hex, path.read_bytes(), source_path)
+        opened = self.services.messages.open_message(session_id_hex, file_bytes=None, source_path=path, burn_source=burn_source)
         open_id = uuid.uuid4().hex
         self._opened[open_id] = CachedOpenMessage(
             message=opened,
@@ -334,7 +333,13 @@ class UIApi:
         attachment = self._get_attachment(open_id, attachment_id)
         if not attachment.allow_download:
             raise UIApiError("download_blocked", "The sender did not allow saving this attachment.")
-        self._write_bytes(output_path, attachment.content)
+        path = Path(output_path).expanduser()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        import shutil
+        try:
+            shutil.copy2(attachment.content_path, path)
+        except OSError as exc:
+            raise UIApiError("save_failed", "Failed to save attachment.") from exc
         return {"open_id": open_id, "attachment_id": attachment_id, "output_path": str(Path(output_path))}
 
     def cmd_open_clear(self, open_id: str | None = None) -> dict[str, Any]:

@@ -342,3 +342,59 @@ def test_new_bond_large_ratchet_jump_rejected():
     bond_nonce = os.urandom(16)
     with pytest.raises(EnvelopeError, match="jump too large"):
         envelope_module._derive_receive_keys(header, bond_nonce, meta_y)
+
+
+@oqs_required
+def test_streaming_operations_from_file_paths(tmp_path):
+    """Test zipping, encryption, decryption, and extraction from file paths."""
+    from core.package import create_package, extract_package
+
+    # 1. Prepare files
+    attachment1 = tmp_path / "note.txt"
+    attachment1.write_bytes(b"note content")
+    attachment2 = tmp_path / "photo.png"
+    attachment2.write_bytes(b"photo bytes")
+
+    # 2. Package to a temporary ZIP file
+    zip_path = tmp_path / "package.zip"
+    create_package(
+        text="Hello world message",
+        files=[("note.txt", attachment1), ("photo.png", attachment2)],
+        allow_download=True,
+        output_path=zip_path
+    )
+    assert zip_path.exists()
+
+    # 3. Encrypt directly from the ZIP path to an envelope file
+    meta_x, meta_y = _make_sessions()
+    envelope_path = tmp_path / "message.paracci"
+    sealed = seal_envelope(
+        payload_bytes=zip_path,
+        session=meta_x,
+        single_use=True,
+        allow_download=True,
+        output_path=envelope_path
+    )
+    assert sealed.file_bytes == b""
+    assert envelope_path.exists()
+
+    # 4. Decrypt directly from the envelope path
+    opened = open_envelope(
+        session=meta_y,
+        file_path=envelope_path
+    )
+    assert opened.payload is not None
+    decrypted_zip_path = tmp_path / "decrypted.zip"
+    decrypted_zip_path.write_bytes(opened.payload)
+
+    # 5. Extract package directly from decrypted ZIP path
+    package = extract_package(file_path=decrypted_zip_path)
+    assert package.text == "Hello world message"
+    assert len(package.attachments) == 2
+    assert package.attachments[0].filename == "note.txt"
+    assert package.attachments[0].size == 12
+    assert package.attachments[0].content == b"note content"
+    assert package.attachments[1].filename == "photo.png"
+    assert package.attachments[1].size == 11
+    assert package.attachments[1].content == b"photo bytes"
+
