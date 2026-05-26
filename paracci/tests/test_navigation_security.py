@@ -430,7 +430,7 @@ def test_save_file_preserves_user_selected_destination_after_authentication(tmp_
 
     downloads = tmp_path / "Downloads"
     downloads.mkdir()
-    chosen = tmp_path / "chosen-location.paracci"
+    chosen = downloads / "chosen-location.paracci"
     monkeypatch.setattr(ParacciConfig, "__init__", lambda self: setattr(self, "full_downloads_path", str(downloads)))
     window = FakeMainWindow(RecordingEventHook())
     window.dialog_path = str(chosen)
@@ -444,6 +444,27 @@ def test_save_file_preserves_user_selected_destination_after_authentication(tmp_
 
     assert result == str(chosen)
     assert chosen.read_bytes() == b"payload"
+
+
+def test_save_file_rejects_destination_outside_downloads(tmp_path, monkeypatch):
+    from core.config import ParacciConfig
+
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    chosen = tmp_path / "outside-location.paracci"
+    monkeypatch.setattr(ParacciConfig, "__init__", lambda self: setattr(self, "full_downloads_path", str(downloads)))
+    window = FakeMainWindow(RecordingEventHook())
+    window.dialog_path = str(chosen)
+    api = run.ProApi(loopback_token=LOOPBACK_TOKEN).bind_window(window)
+
+    result = api.save_file(
+        base64.b64encode(b"payload").decode("ascii"),
+        "message.paracci",
+        LOOPBACK_TOKEN,
+    )
+
+    assert result is None
+    assert not chosen.exists()
 
 
 @pytest.mark.parametrize("content_b64", ["%%%bad-base64%%%", base64.b64encode(b"payload").decode("ascii")])
