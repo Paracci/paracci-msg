@@ -246,3 +246,125 @@ def test_legacy_migration_rolls_back_if_encryption_fails(tmp_path, monkeypatch):
     assert _raw_row(
         db_path, "SELECT value FROM burn_internal_meta WHERE key=?", (STORAGE_MIGRATION_KEY,)
     ) is None
+
+
+def test_v2_protected_fields_and_migration(tmp_path):
+    from core.burn import STORAGE_MIGRATION_V2_KEY
+    db_path = tmp_path / "sessions.db"
+    key = random_bytes(32)
+    session_id = new_message_id()
+    msg_id = new_message_id()
+    fingerprint = message_id_fingerprint(msg_id)
+
+    # Part 1: Test encryption on write for new fields
+    db = BurnDB(db_path, device_key=key)
+    db.save_session(session_id, "Label V2", "active_v2", b"encrypted-session-meta", 12345)
+    assert db.reserve_open(msg_id) is True
+    db.mark_open_burned(msg_id, session_id, 2)
+
+    # Check raw DB has encrypted fields
+    raw_state = _raw_row(db_path, "SELECT state FROM sessions WHERE session_id=?", (session_id,))[0]
+    raw_created_at = _raw_row(db_path, "SELECT created_at FROM sessions WHERE session_id=?", (session_id,))[0]
+    raw_updated_at = _raw_row(db_path, "SELECT updated_at FROM sessions WHERE session_id=?", (session_id,))[0]
+
+    raw_status = _raw_row(db_path, "SELECT status FROM burned_messages WHERE fingerprint=?", (fingerprint,))[0]
+    raw_reserved_at = _raw_row(db_path, "SELECT reserved_at FROM burned_messages WHERE fingerprint=?", (fingerprint,))[0]
+    raw_burned_at = _raw_row(db_path, "SELECT burned_at FROM burned_messages WHERE fingerprint=?", (fingerprint,))[0]
+    raw_session_id = _raw_row(db_path, "SELECT session_id FROM burned_messages WHERE fingerprint=?", (fingerprint,))[0]
+    raw_direction = _raw_row(db_path, "SELECT direction FROM burned_messages WHERE fingerprint=?", (fingerprint,))[0]
+
+    for val in (raw_state, raw_created_at, raw_updated_at, raw_status, raw_reserved_at, raw_burned_at, raw_session_id, raw_direction):
+        assert isinstance(val, bytes)
+        assert val.startswith(PROTECTED_VALUE_PREFIX)
+
+    # API readback checks
+    loaded = db.load_session(session_id)
+    assert loaded[1] == "active_v2"
+    assert loaded[3] == 12345
+
+    sessions = db.list_sessions()
+    assert len(sessions) == 1
+    assert sessions[0]["state"] == "active_v2"
+    assert sessions[0]["created_at"] == 12345
+
+    enc_label = db._encrypt_protected_value("sessions", "label", session_id, "Legacy V1 Label")
+    enc_reason = db._encrypt_protected_value("burned_messages", "failure_reason", fingerprint, "Failed V1 Reason")
+    enc_v1_complete = db._encrypt_protected_value("burn_internal_meta", "value", STORAGE_MIGRATION_KEY, STORAGE_MIGRATION_COMPLETE)
+
+    db.release_device_key()
+
+    # Part 2: Test migration of V2 fields from legacy plaintext database state
+    # We clear the DB path and write raw legacy plaintext/v1-encrypted values
+    if db_path.exists():
+        db_path.unlink()
+    # Delete WAL/shm files if they exist
+    for suffix in ("-wal", "-shm"):
+        p = Path(str(db_path) + suffix)
+        if p.exists():
+            p.unlink()
+
+    # Initialize empty tables
+    BurnDB(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO sessions
+                (session_id, label, state, encrypted_meta, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (session_id, enc_label, "legacy_active", b"enc-meta", 54321, 54322),
+        )
+        conn.execute(
+            """
+            INSERT INTO burned_messages
+                (fingerprint, status, reserved_at, burned_at, failed_at,
+                 session_id, failure_reason, direction)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (fingerprint, "failed", 54321, 54321, 54322, session_id, enc_reason, 1),
+        )
+        # Mark V1 migration complete, but no V2 migration entry
+        conn.execute(
+            "INSERT INTO burn_internal_meta (key, value) VALUES (?, ?)",
+            (STORAGE_MIGRATION_KEY, enc_v1_complete),
+        )
+
+    # Open with key to trigger migration
+    db_migrated = BurnDB(db_path, device_key=key)
+
+    # Check that V2 fields are now encrypted in storage
+    raw_state = _raw_row(db_path, "SELECT state FROM sessions WHERE session_id=?", (session_id,))[0]
+    raw_created_at = _raw_row(db_path, "SELECT created_at FROM sessions WHERE session_id=?", (session_id,))[0]
+    raw_updated_at = _raw_row(db_path, "SELECT updated_at FROM sessions WHERE session_id=?", (session_id,))[0]
+    raw_status = _raw_row(db_path, "SELECT status FROM burned_messages WHERE fingerprint=?", (fingerprint,))[0]
+    raw_reserved_at = _raw_row(db_path, "SELECT reserved_at FROM burned_messages WHERE fingerprint=?", (fingerprint,))[0]
+    raw_burned_at = _raw_row(db_path, "SELECT burned_at FROM burned_messages WHERE fingerprint=?", (fingerprint,))[0]
+    raw_failed_at = _raw_row(db_path, "SELECT failed_at FROM burned_messages WHERE fingerprint=?", (fingerprint,))[0]
+    raw_session_id = _raw_row(db_path, "SELECT session_id FROM burned_messages WHERE fingerprint=?", (fingerprint,))[0]
+    raw_direction = _raw_row(db_path, "SELECT direction FROM burned_messages WHERE fingerprint=?", (fingerprint,))[0]
+
+    for val in (raw_state, raw_created_at, raw_updated_at, raw_status, raw_reserved_at, raw_burned_at, raw_failed_at, raw_session_id, raw_direction):
+        assert isinstance(val, bytes)
+        assert val.startswith(PROTECTED_VALUE_PREFIX)
+
+    # Verify migration status
+    marker_v2 = _raw_row(db_path, "SELECT value FROM burn_internal_meta WHERE key=?", (STORAGE_MIGRATION_V2_KEY,))[0]
+    assert (
+        db_migrated._decrypt_protected_value("burn_internal_meta", "value", STORAGE_MIGRATION_V2_KEY, marker_v2)
+        == STORAGE_MIGRATION_COMPLETE
+    )
+
+    # API check readback of migrated data
+    loaded = db_migrated.load_session(session_id)
+    assert loaded[0] == "Legacy V1 Label"
+    assert loaded[1] == "legacy_active"
+    assert loaded[3] == 54321
+
+    sessions = db_migrated.list_sessions()
+    assert len(sessions) == 1
+    assert sessions[0]["label"] == "Legacy V1 Label"
+    assert sessions[0]["state"] == "legacy_active"
+    assert sessions[0]["created_at"] == 54321
+    assert sessions[0]["updated_at"] == 54322
+
