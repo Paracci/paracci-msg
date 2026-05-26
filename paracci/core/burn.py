@@ -212,6 +212,10 @@ class BurnDB:
                 key             TEXT PRIMARY KEY,
                 value           BLOB NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS pending_deletions (
+                file_path       TEXT PRIMARY KEY
+            );
         """)
         columns = {row[1] for row in conn.execute("PRAGMA table_info(burned_messages)")}
         if "status" not in columns:
@@ -481,6 +485,58 @@ class BurnDB:
             """,
             (BURN_STATUS_OPENING, stale_before),
         )
+
+    def register_pending_deletion(self, file_path: str | Path) -> None:
+        """Saves a file path for secure deletion retry."""
+        path_str = str(Path(file_path).resolve())
+        conn = self._connect()
+        try:
+            conn.execute(
+                "INSERT OR IGNORE INTO pending_deletions (file_path) VALUES (?)",
+                (path_str,)
+            )
+            conn.commit()
+        except Exception as exc:
+            logger.error("Failed to register pending deletion path: %s", exc)
+        finally:
+            conn.close()
+
+    def remove_pending_deletion(self, file_path: str | Path) -> None:
+        """Removes a file path from the pending deletions list."""
+        path_str = str(Path(file_path).resolve())
+        conn = self._connect()
+        try:
+            conn.execute(
+                "DELETE FROM pending_deletions WHERE file_path = ?",
+                (path_str,)
+            )
+            conn.commit()
+        except Exception as exc:
+            logger.error("Failed to remove pending deletion path: %s", exc)
+        finally:
+            conn.close()
+
+    def retry_pending_deletions(self) -> None:
+        """Attempts to securely delete all registered pending deletions."""
+        conn = self._connect()
+        try:
+            rows = conn.execute("SELECT file_path FROM pending_deletions").fetchall()
+        except Exception as exc:
+            logger.error("Failed to query pending deletions: %s", exc)
+            return
+        finally:
+            conn.close()
+
+        for (path_str,) in rows:
+            path = Path(path_str)
+            if not path.exists():
+                self.remove_pending_deletion(path_str)
+                continue
+            if secure_delete(path):
+                logger.info("Successfully cleaned up pending sensitive file: %s", path_str)
+                self.remove_pending_deletion(path_str)
+            else:
+                logger.warning("Retry secure deletion failed for pending sensitive file: %s", path_str)
 
     # --- Message Burning ---
 
@@ -1197,7 +1253,14 @@ class BurnGuard:
 
         # Securely delete the file (if single-use or requested by caller)
         if file_path and single_use:
-            return secure_delete(file_path)
+            succeeded = secure_delete(file_path)
+            if not succeeded:
+                logger.critical(
+                    "SECURITY EVENT: Secure deletion failed for sensitive file at: %s. Registering for retry cleanup.",
+                    file_path
+                )
+                self.db.register_pending_deletion(file_path)
+            return succeeded
         return True
 
     def mark_open_failed(self, msg_id: bytes, reason: str | None = None) -> None:
@@ -1217,10 +1280,17 @@ class BurnGuard:
         Force burn the message (when user wants to delete manually).
         """
         self.db.burn(msg_id, session_id, direction)
-        if file_path and not secure_delete(file_path):
-            raise SecureDeleteError(
-                "The message was burned, but its source file could not be securely deleted."
-            )
+        if file_path:
+            succeeded = secure_delete(file_path)
+            if not succeeded:
+                logger.critical(
+                    "SECURITY EVENT: Secure deletion failed during force burn for file at: %s. Registering for retry cleanup.",
+                    file_path
+                )
+                self.db.register_pending_deletion(file_path)
+                raise SecureDeleteError(
+                    "The message was burned, but its source file could not be securely deleted."
+                )
 
 
 # ---------------------------------------------------------------------------

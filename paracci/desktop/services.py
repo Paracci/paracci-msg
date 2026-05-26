@@ -7,7 +7,10 @@ the existing core protocol and persistence formats intact.
 from __future__ import annotations
 
 import json
+import logging
 import os
+
+logger = logging.getLogger(__name__)
 import shutil
 import sqlite3
 import struct
@@ -384,6 +387,10 @@ class DeviceService:
         self.db.release_device_key()
         self.db = BurnDB(self.data_dir / "sessions.db")
         self.device_binding_warning = None
+        try:
+            self.db.retry_pending_deletions()
+        except Exception as exc:
+            logger.error("Failed to run desktop lock pending deletions cleanup: %s", exc)
 
     def _activate_keyed_db(self, device_key: bytes | bytearray) -> None:
         keyed_db = self.db.with_device_key(device_key)
@@ -850,6 +857,10 @@ class NativeServices:
         self.messages = MessageService(self.sessions, self.settings)
         self.i18n = I18nService(locale)
         self.shield = ShieldService()
+        try:
+            self.device.db.retry_pending_deletions()
+        except Exception as exc:
+            logger.error("Failed to run desktop startup pending deletions cleanup: %s", exc)
 
 
 class SessionServiceError(Exception):
