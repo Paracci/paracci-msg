@@ -1077,3 +1077,83 @@ def test_favicon_route(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.mimetype == "image/vnd.microsoft.icon"
     assert len(response.data) > 0
+
+
+def test_preview_sw_bypass_valid_token(tmp_path, monkeypatch):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    import app.routes as routes_module
+    from core.preview_store import preview_store
+
+    client = flask_app.test_client()
+    bootstrap(client)
+    _unlock_test_client(ag_app, client)
+
+    # Seed a preview store entry
+    token = preview_store.generate_token(b"preview data", "test_file.txt", "text/plain", True)
+
+    # Make a GET request without X-Paracci-Token / CSRF headers (i.e. simulating fresh preview window)
+    response = client.get(
+        f"/preview/{token}",
+        base_url=ORIGIN,
+        headers={"Host": HOST},
+    )
+
+    # Should not be 403
+    assert response.status_code != 403
+    assert response.status_code == 200
+    assert b"test_file.txt" in response.data
+
+    # Cleanup
+    preview_store.revoke(token)
+
+
+def test_preview_sw_bypass_invalid_token(tmp_path, monkeypatch):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+
+    client = flask_app.test_client()
+    bootstrap(client)
+    _unlock_test_client(ag_app, client)
+
+    # 1. Preview GET with non-64-hex token (e.g. UUID) without loopback token
+    response_uuid = client.get(
+        "/preview/123e4567-e89b-12d3-a456-426614174000",
+        base_url=ORIGIN,
+        headers={"Host": HOST},
+    )
+    assert response_uuid.status_code == 403
+
+    # 2. Preview GET with a valid-looking 64-hex token but not seeded in store
+    # It passes the lookalike check so it bypasses security gate, but should fail with token not found (not 403)
+    fake_token = "a" * 64
+    response_fake = client.get(
+        f"/preview/{fake_token}",
+        base_url=ORIGIN,
+        headers={"Host": HOST},
+    )
+    assert response_fake.status_code != 403
+    assert "Preview unavailable" in response_fake.data.decode("utf-8")
+
+
+def test_preview_post_still_requires_loopback(tmp_path, monkeypatch):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+
+    client = flask_app.test_client()
+    bootstrap(client)
+    _unlock_test_client(ag_app, client)
+
+    # Seed token
+    from core.preview_store import preview_store
+    token = preview_store.generate_token(b"preview data", "test_file.txt", "text/plain", True)
+
+    # Preview endpoints only accept GET/HEAD. POST should be rejected (either 405 or 403 depending on routing/security)
+    response = client.post(
+        f"/preview/{token}",
+        base_url=ORIGIN,
+        headers={"Host": HOST},
+        data={"some": "data"}
+    )
+    assert response.status_code in {403, 405}
+
+    # Cleanup
+    preview_store.revoke(token)
+
