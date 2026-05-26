@@ -47,6 +47,11 @@ def _handshake():
         identity_pub=x_identity_pub,
         identity_priv=x_identity_priv,
     )
+    # Copy meta_x before it gets finalized and its ephemeral private keys are zeroed.
+    meta_x_copy = meta_x._replace(
+        my_priv=bytearray(meta_x.my_priv) if meta_x.my_priv else None,
+        ml_kem_secret_key=bytearray(meta_x.ml_kem_secret_key) if meta_x.ml_kem_secret_key else None
+    )
     meta_y, resp_file = accept_initiator_and_create_responder(
         init_file,
         "Bob",
@@ -54,7 +59,7 @@ def _handshake():
         identity_priv=y_identity_priv,
     )
     finalized_x = finalize_initiator_session(meta_x, resp_file)
-    return meta_x, finalized_x, meta_y, init_file, resp_file
+    return meta_x_copy, finalized_x, meta_y, init_file, resp_file
 
 
 def _load_setup_payload(file_bytes: bytes) -> dict:

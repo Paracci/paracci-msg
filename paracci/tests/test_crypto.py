@@ -214,3 +214,65 @@ def test_derive_hybrid_shared_secret_wipes_ikm():
     # The IKM snapshot (captured before zeroing) is the concatenation of both inputs.
     expected_ikm = bytearray(x25519_secret) + bytearray(ml_kem_secret)
     assert wiped_buffers[0] == expected_ikm, "Captured IKM content does not match expected concatenation"
+
+
+def test_crypto_memory_hygiene_bytearrays():
+    """Verify that private keys, shared secrets, and derived keys are returned as bytearrays and can be wiped."""
+    from core.crypto import (
+        generate_keypair,
+        generate_identity_keypair,
+        ecdh,
+        hkdf_derive,
+        derive_hybrid_shared_secret,
+        derive_session_keys,
+    )
+
+    # 1. generate_keypair & generate_identity_keypair
+    priv, pub = generate_keypair()
+    assert isinstance(priv, bytearray)
+    assert isinstance(pub, bytes)
+    wipe(priv)
+    assert all(b == 0 for b in priv)
+
+    priv_id, pub_id = generate_identity_keypair()
+    assert isinstance(priv_id, bytearray)
+    assert isinstance(pub_id, bytes)
+    wipe(priv_id)
+    assert all(b == 0 for b in priv_id)
+
+    # 2. ecdh
+    priv_x, pub_x = generate_keypair()
+    priv_y, pub_y = generate_keypair()
+    secret = ecdh(priv_x, pub_y)
+    assert isinstance(secret, bytearray)
+    wipe(secret)
+    assert all(b == 0 for b in secret)
+
+    # 3. hkdf_derive
+    derived = hkdf_derive(b"input", 32, b"info")
+    assert isinstance(derived, bytearray)
+    wipe(derived)
+    assert all(b == 0 for b in derived)
+
+    # 4. derive_hybrid_shared_secret
+    x_sec = bytearray(range(32))
+    m_sec = bytearray(range(32, 64))
+    sid = bytearray(range(16))
+    shared = derive_hybrid_shared_secret(x_sec, m_sec, sid)
+    assert isinstance(shared, bytearray)
+    # Inputs should be zeroed
+    assert all(b == 0 for b in x_sec)
+    assert all(b == 0 for b in m_sec)
+
+    # 5. derive_session_keys
+    shared_copy = bytearray(shared)
+    keys = derive_session_keys(shared, pub_x, pub_y)
+    assert isinstance(keys.key_x_to_y, bytearray)
+    assert isinstance(keys.key_y_to_x, bytearray)
+    assert isinstance(keys.sync_key, bytearray)
+    assert isinstance(keys.evo_seed, bytearray)
+    assert all(b == 0 for b in shared)  # shared should be zeroed
+
+    # Wipe keys
+    wipe(keys.key_x_to_y)
+    assert all(b == 0 for b in keys.key_x_to_y)

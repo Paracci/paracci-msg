@@ -75,11 +75,9 @@ def responder_kem_respond(ml_kem_public_key: bytes) -> dict:
     The ciphertext is public handshake metadata. The shared secret feeds the
     hybrid X25519 + ML-KEM combiner.
 
-    MEMORY HYGIENE: shared_secret is immutable bytes returned by liboqs.
-    wipe() is called in the finally block to record the gap in the security
-    log; in-place zeroization is not possible for immutable bytes.
+    MEMORY HYGIENE: Returns ml_kem_shared_secret as a mutable bytearray so
+    the caller can zero it out after combining.
     """
-    shared_secret = None
     try:
         ciphertext, shared_secret = kem_encapsulate(ml_kem_public_key)
     except QuantumKEMError as exc:
@@ -90,22 +88,16 @@ def responder_kem_respond(ml_kem_public_key: bytes) -> dict:
         )
     except Exception as exc:
         _raise_hybrid_error("Hybrid KEM response failed.", exc, "hybrid_kem_respond_failed")
-    finally:
-        # LIMITATION: shared_secret is immutable bytes from liboqs; wipe() logs
-        # the gap but cannot zero it in place. The value is returned in the dict
-        # below so we cannot zero it here — the call is for audit-log purposes only.
-        if shared_secret is not None:
-            wipe(shared_secret)
     return {
         "ml_kem_ciphertext": ciphertext,
-        "ml_kem_shared_secret": shared_secret,
+        "ml_kem_shared_secret": bytearray(shared_secret),
     }
 
 
 def initiator_kem_complete(
     ml_kem_secret_key: bytes,
     ml_kem_ciphertext: bytes,
-) -> bytes:
+) -> bytearray:
     """
     Decapsulate the responder ciphertext using the initiator's ML-KEM secret key.
 
@@ -115,7 +107,7 @@ def initiator_kem_complete(
     secret_key_copy = None
     try:
         secret_key_copy = bytearray(ml_kem_secret_key)
-        return kem_decapsulate(bytes(secret_key_copy), ml_kem_ciphertext)
+        return bytearray(kem_decapsulate(bytes(secret_key_copy), ml_kem_ciphertext))
     except QuantumKEMError as exc:
         _raise_hybrid_error(
             f"{constants.KEM_ALGORITHM} decapsulation failed.",
