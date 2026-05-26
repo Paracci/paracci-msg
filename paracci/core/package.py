@@ -26,6 +26,17 @@ _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
 _UNSAFE_FILENAME_CHARS_RE = re.compile(r"[^A-Za-z0-9._ -]+")
 _REPEATED_SEPARATORS_RE = re.compile(r"[\s_-]{2,}")
 _REPEATED_DOTS_RE = re.compile(r"\.{2,}")
+_NATIVE_DOWNLOAD_FILENAME_RE = re.compile(
+    rf"^[A-Za-z0-9._-]{{1,{MAX_ATTACHMENT_FILENAME_LENGTH}}}$"
+)
+_WINDOWS_RESERVED_FILENAME_STEMS = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
 
 
 class PackageLimitError(ValueError):
@@ -57,6 +68,17 @@ def sanitize_attachment_filename(name, fallback: str = FALLBACK_ATTACHMENT_FILEN
             cleaned = cleaned[:MAX_ATTACHMENT_FILENAME_LENGTH].strip(" .") or fallback
 
     return cleaned
+
+
+def validate_native_download_filename(name: str) -> str:
+    """Validate a filename before native code creates a Downloads file."""
+    if not isinstance(name, str) or not _NATIVE_DOWNLOAD_FILENAME_RE.fullmatch(name):
+        raise ValueError("Invalid download filename.")
+    if name in {".", ".."} or name.endswith("."):
+        raise ValueError("Invalid download filename.")
+    if name.split(".", 1)[0].upper() in _WINDOWS_RESERVED_FILENAME_STEMS:
+        raise ValueError("Invalid download filename.")
+    return name
 
 
 def _is_safe_attachment_path(path) -> bool:

@@ -18,11 +18,11 @@ HOST = "127.0.0.1:18080"
 ORIGIN = f"http://{HOST}"
 
 
-def make_flask_app(tmp_path, monkeypatch):
+def make_flask_app(tmp_path, monkeypatch, no_gui=True):
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("PARACCI_LOOPBACK_HOST", "127.0.0.1")
     monkeypatch.setenv("PARACCI_LOOPBACK_PORT", "18080")
-    monkeypatch.setenv("PARACCI_NO_GUI", "1")
+    monkeypatch.setenv("PARACCI_NO_GUI", "1" if no_gui else "0")
 
     import app as ag_app
 
@@ -54,6 +54,112 @@ def auth_headers(client, **extra):
     }
     headers.update(extra)
     return headers
+
+
+def seed_downloadable_preview(routes_module, filename="report.txt"):
+    routes_module.PREVIEW_CACHE.clear()
+    routes_module.PREVIEW_CACHE["native-download"] = {
+        "filename": filename,
+        "content": b"download bytes",
+        "mime": "text/plain",
+        "expires": time.time() + 600,
+        "allow_download": True,
+        "access_token": "preview-access-token",
+    }
+
+
+def test_gui_native_preview_download_returns_one_shot_grant(tmp_path, monkeypatch):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch, no_gui=False)
+    import app.routes as routes_module
+    from core.preview_store import NativeSaveGrantStore
+
+    client = flask_app.test_client()
+    bootstrap(client)
+    _unlock_test_client(ag_app, client)
+    grants = NativeSaveGrantStore()
+    monkeypatch.setattr(routes_module, "native_save_grants", grants)
+    seed_downloadable_preview(routes_module)
+
+    response = client.get(
+        "/preview/native-download/download?preview_token=preview-access-token",
+        base_url=ORIGIN,
+        headers={
+            "Host": HOST,
+            "X-Paracci-Token": TOKEN,
+            "X-Paracci-Native-Save": "1",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["filename"] == "report.txt"
+    grant = grants.consume(payload["native_save_token"])
+    assert grant is not None
+    assert grant.filename == "report.txt"
+    assert grant.file_bytes == b"download bytes"
+    assert grants.consume(payload["native_save_token"]) is None
+
+
+def test_gui_native_preview_download_still_requires_loopback_auth(tmp_path, monkeypatch):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch, no_gui=False)
+    import app.routes as routes_module
+    from core.preview_store import NativeSaveGrantStore
+
+    client = flask_app.test_client()
+    bootstrap(client)
+    _unlock_test_client(ag_app, client)
+    grants = NativeSaveGrantStore()
+    monkeypatch.setattr(routes_module, "native_save_grants", grants)
+    seed_downloadable_preview(routes_module)
+
+    response = client.get(
+        "/preview/native-download/download?preview_token=preview-access-token",
+        base_url=ORIGIN,
+        headers={"Host": HOST, "X-Paracci-Native-Save": "1"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_gui_preview_download_without_native_header_retains_byte_response(tmp_path, monkeypatch):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch, no_gui=False)
+    import app.routes as routes_module
+
+    client = flask_app.test_client()
+    bootstrap(client)
+    _unlock_test_client(ag_app, client)
+    seed_downloadable_preview(routes_module)
+    response = client.get(
+        "/preview/native-download/download?preview_token=preview-access-token",
+        base_url=ORIGIN,
+        headers={"Host": HOST, "X-Paracci-Token": TOKEN},
+    )
+
+    assert response.status_code == 200
+    assert response.data == b"download bytes"
+    assert "attachment" in response.headers["Content-Disposition"]
+
+
+def test_gui_native_preview_download_rejects_non_native_filename(tmp_path, monkeypatch):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch, no_gui=False)
+    import app.routes as routes_module
+
+    client = flask_app.test_client()
+    bootstrap(client)
+    _unlock_test_client(ag_app, client)
+    seed_downloadable_preview(routes_module, filename="quarterly report.txt")
+    response = client.get(
+        "/preview/native-download/download?preview_token=preview-access-token",
+        base_url=ORIGIN,
+        headers={
+            "Host": HOST,
+            "X-Paracci-Token": TOKEN,
+            "X-Paracci-Native-Save": "1",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["success"] is False
 
 
 def test_root_requires_bootstrap(tmp_path, monkeypatch):
@@ -765,6 +871,49 @@ def test_flask_seal_binds_download_policy_in_envelope_header(tmp_path, monkeypat
     flags = response.data[39]
     assert bool(flags & FLAG_HAS_DOWNLOAD_POLICY) is True
     assert bool(flags & FLAG_ALLOW_DOWNLOAD) is allow_download
+
+
+@oqs_required
+def test_gui_native_seal_and_export_return_download_grants(tmp_path, monkeypatch):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch, no_gui=False)
+    import app.routes as routes_module
+    from core.preview_store import NativeSaveGrantStore
+
+    client = flask_app.test_client()
+    bootstrap(client)
+    _unlock_test_client(ag_app, client)
+    meta_x, meta_y = _make_active_handshake()
+    _save_meta(ag_app, meta_x)
+    grants = NativeSaveGrantStore()
+    monkeypatch.setattr(routes_module, "native_save_grants", grants)
+
+    sealed = client.post(
+        f"/session/{meta_x.session_id.hex()}/seal",
+        base_url=ORIGIN,
+        data={"message": "native grant", "ttl_seconds": "0"},
+        headers=auth_headers(client, **{"X-Paracci-Native-Save": "1"}),
+    )
+    assert sealed.status_code == 200
+    sealed_payload = sealed.get_json()
+    assert sealed_payload["filename"].endswith(".paracci")
+    sealed_grant = grants.consume(sealed_payload["native_save_token"])
+    assert sealed_grant is not None
+    assert sealed_grant.filename == sealed_payload["filename"]
+    assert sealed_grant.file_bytes
+
+    _save_meta(ag_app, meta_y)
+    exported = client.get(
+        f"/session/{meta_y.session_id.hex()}/export",
+        base_url=ORIGIN,
+        headers=auth_headers(client, **{"X-Paracci-Native-Save": "1"}),
+    )
+    assert exported.status_code == 200
+    exported_payload = exported.get_json()
+    assert exported_payload["filename"].startswith("session_resp_")
+    exported_grant = grants.consume(exported_payload["native_save_token"])
+    assert exported_grant is not None
+    assert exported_grant.filename == exported_payload["filename"]
+    assert exported_grant.file_bytes
 
 
 @oqs_required

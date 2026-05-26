@@ -35,6 +35,8 @@ class FakeWindow:
         self.kwargs = kwargs
         self.destroyed = False
         self.dialog_path = None
+        self.confirmation_result = True
+        self.confirmations = []
         self.evaluated_js = []
         self.events = SimpleNamespace(closed=EventHook())
 
@@ -43,6 +45,10 @@ class FakeWindow:
 
     def create_file_dialog(self, *args, **kwargs):
         return self.dialog_path
+
+    def create_confirmation_dialog(self, title, message):
+        self.confirmations.append((title, message))
+        return self.confirmation_result
 
     def evaluate_js(self, script):
         self.evaluated_js.append(script)
@@ -179,7 +185,9 @@ def test_preview_api_download_saves_to_downloads_folder(
     created, store = reset_preview_window_state
     run.open_preview_window(TOKEN_A, "note.txt", "text/plain", 12)
     from core.config import ParacciConfig
-    monkeypatch.setattr(ParacciConfig, "__init__", lambda self: setattr(self, "full_downloads_path", str(tmp_path / "Downloads")))
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    monkeypatch.setattr(ParacciConfig, "__init__", lambda self: setattr(self, "full_downloads_path", str(downloads)))
     store.entries[TOKEN_A] = SimpleNamespace(
         file_bytes=b"preview-bytes",
         filename="note.txt",
@@ -188,12 +196,15 @@ def test_preview_api_download_saves_to_downloads_folder(
 
     result = created[0].kwargs["js_api"].download_preview_file(TOKEN_A)
 
-    target = tmp_path / "Downloads" / "note.txt"
+    target = downloads / "note.txt"
     assert result["success"] is True
     assert result["path"] == str(target)
     assert result["filename"] == "note.txt"
     assert target.read_bytes() == b"preview-bytes"
     assert created[0].evaluated_js == ['window.showDownloadSuccess("note.txt");']
+    assert created[0].confirmations == [
+        ("Confirm download", "Save note.txt to Paracci Downloads?")
+    ]
 
 
 def test_preview_api_download_uses_collision_safe_downloads_filename(
@@ -216,10 +227,59 @@ def test_preview_api_download_uses_collision_safe_downloads_filename(
 
     result = created[0].kwargs["js_api"].download_preview_file(TOKEN_A)
 
-    target = downloads / "note (1).txt"
+    target = downloads / "note_1.txt"
     assert result["success"] is True
     assert target.read_bytes() == b"preview-bytes"
-    assert created[0].evaluated_js == ['window.showDownloadSuccess("note (1).txt");']
+    assert created[0].evaluated_js == ['window.showDownloadSuccess("note_1.txt");']
+
+
+def test_preview_api_download_declines_without_writing(
+    reset_preview_window_state,
+    tmp_path,
+    monkeypatch,
+):
+    created, store = reset_preview_window_state
+    run.open_preview_window(TOKEN_A, "note.txt", "text/plain", 12)
+    created[0].confirmation_result = False
+    from core.config import ParacciConfig
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    monkeypatch.setattr(ParacciConfig, "__init__", lambda self: setattr(self, "full_downloads_path", str(downloads)))
+    store.entries[TOKEN_A] = SimpleNamespace(
+        file_bytes=b"preview-bytes",
+        filename="note.txt",
+        allow_download=True,
+    )
+
+    result = created[0].kwargs["js_api"].download_preview_file(TOKEN_A)
+
+    assert result == {"success": False, "cancelled": True}
+    assert list(downloads.iterdir()) == []
+
+
+def test_preview_api_download_rejects_filename_outside_strict_native_policy(
+    reset_preview_window_state,
+    tmp_path,
+    monkeypatch,
+):
+    created, store = reset_preview_window_state
+    run.open_preview_window(TOKEN_A, "quarterly report.txt", "text/plain", 12)
+    from core.config import ParacciConfig
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    monkeypatch.setattr(ParacciConfig, "__init__", lambda self: setattr(self, "full_downloads_path", str(downloads)))
+    store.entries[TOKEN_A] = SimpleNamespace(
+        file_bytes=b"preview-bytes",
+        filename="quarterly report.txt",
+        allow_download=True,
+    )
+
+    result = created[0].kwargs["js_api"].download_preview_file(TOKEN_A)
+
+    assert result["success"] is False
+    assert result["error"] == "Invalid download filename."
+    assert created[0].confirmations == []
+    assert list(downloads.iterdir()) == []
 
 
 def test_preview_api_download_rejects_non_downloadable_entry(reset_preview_window_state, tmp_path):

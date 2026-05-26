@@ -12,6 +12,10 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(PACKAGE_ROOT))
 
 import run
+from core.preview_store import NativeSaveGrantStore
+
+
+LOOPBACK_TOKEN = "native-loopback-token"
 
 
 class RecordingEventHook:
@@ -28,12 +32,22 @@ class FakeMainWindow:
         self.events = SimpleNamespace(loaded=loaded)
         self.destroyed = False
         self.scripts = []
+        self.dialog_path = None
+        self.confirmation_result = True
+        self.confirmations = []
 
     def destroy(self):
         self.destroyed = True
 
     def evaluate_js(self, script):
         self.scripts.append(script)
+
+    def create_file_dialog(self, *args, **kwargs):
+        return self.dialog_path
+
+    def create_confirmation_dialog(self, title, message):
+        self.confirmations.append((title, message))
+        return self.confirmation_result
 
 
 def test_navigation_guard_install_success_records_loaded_handler(monkeypatch):
@@ -307,32 +321,157 @@ def test_vendored_dompurify_does_not_request_missing_source_map():
     assert "sourceMappingURL=purify.min.js.map" not in purify_js
 
 
-def test_save_file_silent_strips_path_traversal_filename(tmp_path, monkeypatch):
+def _authorized_save_api(tmp_path, monkeypatch, confirmation=True):
     from core.config import ParacciConfig
 
     downloads = tmp_path / "Downloads"
     downloads.mkdir()
     monkeypatch.setattr(ParacciConfig, "__init__", lambda self: setattr(self, "full_downloads_path", str(downloads)))
-    content_b64 = base64.b64encode(b"payload").decode("ascii")
+    grants = NativeSaveGrantStore()
+    monkeypatch.setattr(run, "native_save_grants", grants)
+    window = FakeMainWindow(RecordingEventHook())
+    window.confirmation_result = confirmation
+    api = run.ProApi(loopback_token=LOOPBACK_TOKEN).bind_window(window)
+    return api, window, grants, downloads
 
-    saved_path = run.ProApi().save_file_silent(content_b64, "../../../evil.exe")
 
-    target = downloads / "evil.exe"
+@pytest.mark.parametrize("candidate", ["", "wrong-token"])
+def test_save_file_silent_rejects_unauthenticated_call(tmp_path, monkeypatch, candidate):
+    api, _window, grants, downloads = _authorized_save_api(tmp_path, monkeypatch)
+    grant = grants.issue(b"payload", "payload.bin")
+
+    with pytest.raises(PermissionError, match="authorization failed"):
+        api.save_file_silent(grant, candidate)
+
+    assert list(downloads.iterdir()) == []
+
+
+def test_save_file_silent_rejects_arbitrary_page_payload_without_grant(tmp_path, monkeypatch):
+    api, _window, _grants, downloads = _authorized_save_api(tmp_path, monkeypatch)
+
+    with pytest.raises(PermissionError, match="grant is invalid"):
+        api.save_file_silent(base64.b64encode(b"payload").decode("ascii"), LOOPBACK_TOKEN)
+
+    assert list(downloads.iterdir()) == []
+
+
+def test_save_file_silent_writes_confirmed_authenticated_grant(tmp_path, monkeypatch):
+    api, window, grants, downloads = _authorized_save_api(tmp_path, monkeypatch)
+    grant = grants.issue(b"payload", "payload.bin")
+
+    saved_path = api.save_file_silent(grant, LOOPBACK_TOKEN)
+
+    target = downloads / "payload.bin"
     assert saved_path == str(target)
     assert target.read_bytes() == b"payload"
-    assert not (tmp_path / "evil.exe").exists()
+    assert window.confirmations == [
+        ("Confirm download", "Save payload.bin to Paracci Downloads?")
+    ]
+    assert grants.consume(grant) is None
 
 
-def test_save_file_silent_uses_attachment_fallback_for_empty_filename(tmp_path, monkeypatch):
+def test_save_file_silent_declined_confirmation_consumes_grant(tmp_path, monkeypatch):
+    api, _window, grants, downloads = _authorized_save_api(tmp_path, monkeypatch, confirmation=False)
+    grant = grants.issue(b"payload", "payload.bin")
+
+    assert api.save_file_silent(grant, LOOPBACK_TOKEN) is None
+    assert grants.consume(grant) is None
+    assert list(downloads.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "../evil.exe",
+        "C:\\evil.exe",
+        "bad\x00name.txt",
+        "quarterly report.pdf",
+        "a" * 181,
+        "report.",
+        "CON.txt",
+    ],
+)
+def test_native_download_writer_rejects_unsafe_filename(tmp_path, monkeypatch, filename):
     from core.config import ParacciConfig
 
     downloads = tmp_path / "Downloads"
     downloads.mkdir()
     monkeypatch.setattr(ParacciConfig, "__init__", lambda self: setattr(self, "full_downloads_path", str(downloads)))
-    content_b64 = base64.b64encode(b"payload").decode("ascii")
 
-    saved_path = run.ProApi().save_file_silent(content_b64, "...")
+    with pytest.raises(ValueError, match="Invalid download filename"):
+        run._write_native_download(b"payload", filename)
 
-    target = downloads / "attachment"
-    assert saved_path == str(target)
-    assert target.read_bytes() == b"payload"
+    assert list(downloads.iterdir()) == []
+
+
+def test_native_download_writer_does_not_follow_existing_symlink(tmp_path, monkeypatch):
+    from core.config import ParacciConfig
+
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes(b"outside")
+    symlink = downloads / "payload.bin"
+    try:
+        symlink.symlink_to(outside)
+    except OSError:
+        pytest.skip("Symlink creation is not available on this platform.")
+    monkeypatch.setattr(ParacciConfig, "__init__", lambda self: setattr(self, "full_downloads_path", str(downloads)))
+
+    saved_path = run._write_native_download(b"payload", "payload.bin")
+
+    assert saved_path == downloads / "payload_1.bin"
+    assert outside.read_bytes() == b"outside"
+    assert saved_path.read_bytes() == b"payload"
+
+
+def test_save_file_preserves_user_selected_destination_after_authentication(tmp_path, monkeypatch):
+    from core.config import ParacciConfig
+
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    chosen = tmp_path / "chosen-location.paracci"
+    monkeypatch.setattr(ParacciConfig, "__init__", lambda self: setattr(self, "full_downloads_path", str(downloads)))
+    window = FakeMainWindow(RecordingEventHook())
+    window.dialog_path = str(chosen)
+    api = run.ProApi(loopback_token=LOOPBACK_TOKEN).bind_window(window)
+
+    result = api.save_file(
+        base64.b64encode(b"payload").decode("ascii"),
+        "message.paracci",
+        LOOPBACK_TOKEN,
+    )
+
+    assert result == str(chosen)
+    assert chosen.read_bytes() == b"payload"
+
+
+@pytest.mark.parametrize("content_b64", ["%%%bad-base64%%%", base64.b64encode(b"payload").decode("ascii")])
+def test_save_file_rejects_invalid_or_oversized_payload_before_dialog(
+    tmp_path,
+    monkeypatch,
+    content_b64,
+):
+    from core.config import ParacciConfig
+
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    monkeypatch.setattr(ParacciConfig, "__init__", lambda self: setattr(self, "full_downloads_path", str(downloads)))
+    if content_b64 != "%%%bad-base64%%%":
+        monkeypatch.setattr(run, "MAX_NATIVE_SAVE_BYTES", 2)
+    window = FakeMainWindow(RecordingEventHook())
+    window.dialog_path = str(tmp_path / "should-not-exist.paracci")
+    api = run.ProApi(loopback_token=LOOPBACK_TOKEN).bind_window(window)
+
+    with pytest.raises(ValueError):
+        api.save_file(content_b64, "message.paracci", LOOPBACK_TOKEN)
+
+    assert not Path(window.dialog_path).exists()
+
+
+def test_session_native_download_uses_grant_instead_of_page_base64():
+    session_js = (PACKAGE_ROOT / "app" / "static" / "js" / "session.js").read_text(encoding="utf-8")
+
+    assert "'X-Paracci-Native-Save': '1'" in session_js
+    assert "save_file_silent(grant.native_save_token, loopbackToken)" in session_js
+    assert "save_file_silent(b64" not in session_js
