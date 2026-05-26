@@ -12,6 +12,8 @@ from __future__ import annotations
 import sys
 import os
 import argparse
+import base64
+import binascii
 import logging
 import secrets
 import json
@@ -26,7 +28,8 @@ sys.path.insert(0, str(Path(__file__).parent / "paracci"))
 # core.shields import
 from core.shields import shield
 from core.burn import secure_delete
-from core.preview_store import preview_store
+from core.package import MAX_ATTACHMENT_FILENAME_LENGTH, validate_native_download_filename
+from core.preview_store import MAX_NATIVE_SAVE_BYTES, native_save_grants, preview_store
 from desktop.file_activation import (
     FileActivationBroker,
     LaunchFileCandidate,
@@ -311,19 +314,70 @@ def close_preview_window(token: str) -> bool:
         _end_preview_close_guard()
 
 
-def _preview_download_destination(downloads_dir: Path, filename: str) -> Path:
-    downloads_dir.mkdir(parents=True, exist_ok=True)
-    dest = downloads_dir / filename
-    if not dest.exists():
-        return dest
+def _is_link_or_junction(path: Path) -> bool:
+    """Return whether a filesystem path is a symlink or Windows junction."""
+    if path.is_symlink():
+        return True
+    is_junction = getattr(path, "is_junction", None)
+    return bool(is_junction and is_junction())
 
-    stem = dest.stem
-    suffix = dest.suffix
-    counter = 1
-    while dest.exists():
-        dest = downloads_dir / f"{stem} ({counter}){suffix}"
-        counter += 1
-    return dest
+
+def _native_downloads_root() -> Path:
+    """Return a canonical, non-linked Downloads directory owned by Paracci."""
+    from core.config import ParacciConfig
+
+    configured = Path(ParacciConfig().full_downloads_path)
+    if _is_link_or_junction(configured):
+        raise ValueError("Downloads directory is unavailable.")
+    try:
+        resolved = configured.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("Downloads directory is unavailable.") from exc
+    if not resolved.is_dir():
+        raise ValueError("Downloads directory is unavailable.")
+    return resolved
+
+
+def _collision_filename(filename: str, counter: int) -> str:
+    if counter == 0:
+        return filename
+    suffix = Path(filename).suffix
+    stem = filename[:-len(suffix)] if suffix else filename
+    marker = f"_{counter}"
+    stem_limit = MAX_ATTACHMENT_FILENAME_LENGTH - len(marker) - len(suffix)
+    if stem_limit < 1:
+        raise ValueError("Invalid download filename.")
+    return validate_native_download_filename(f"{stem[:stem_limit]}{marker}{suffix}")
+
+
+def _write_native_download(file_bytes: bytes, filename: str) -> Path:
+    """Atomically create a validated file under the managed Downloads root."""
+    if not isinstance(file_bytes, bytes) or len(file_bytes) > MAX_NATIVE_SAVE_BYTES:
+        raise ValueError("Native download exceeds the size limit.")
+    validated_filename = validate_native_download_filename(filename)
+    downloads_root = _native_downloads_root()
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+
+    for counter in range(10000):
+        candidate = downloads_root / _collision_filename(validated_filename, counter)
+        candidate.relative_to(downloads_root)
+        try:
+            descriptor = os.open(candidate, flags, 0o600)
+        except FileExistsError:
+            continue
+        except OSError as exc:
+            raise ValueError("Native download path is unavailable.") from exc
+        try:
+            with os.fdopen(descriptor, "wb") as output:
+                output.write(file_bytes)
+        except Exception:
+            try:
+                candidate.unlink()
+            except OSError:
+                pass
+            raise
+        return candidate
+    raise ValueError("Native download destination is unavailable.")
 
 
 def download_preview_file(token: str) -> dict:
@@ -340,14 +394,13 @@ def download_preview_file(token: str) -> dict:
         return {"success": False, "error": "Preview window unavailable."}
 
     try:
-        from core.package import sanitize_attachment_filename
-        from core.config import ParacciConfig
-
-        filename = sanitize_attachment_filename(entry.filename or "attachment.bin")
-        cfg = ParacciConfig()
-        downloads_dir = Path(cfg.full_downloads_path)
-        out_path = _preview_download_destination(downloads_dir, filename)
-        out_path.write_bytes(entry.file_bytes)
+        filename = validate_native_download_filename(entry.filename or "attachment.bin")
+        if not preview_win.create_confirmation_dialog(
+            "Confirm download",
+            f"Save {filename} to Paracci Downloads?",
+        ):
+            return {"success": False, "cancelled": True}
+        out_path = _write_native_download(entry.file_bytes, filename)
         preview_win.evaluate_js(
             f"window.showDownloadSuccess({json.dumps(out_path.name)});"
         )
@@ -357,18 +410,25 @@ def download_preview_file(token: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
-def _safe_native_download_filename(filename) -> str:
-    from core.package import sanitize_attachment_filename
-
-    leaf = Path(str(filename or "").replace("\\", "/")).name
-    return sanitize_attachment_filename(leaf, fallback="attachment")
+def _decode_native_base64(content_b64: str) -> bytes:
+    max_encoded_length = 4 * ((MAX_NATIVE_SAVE_BYTES + 2) // 3)
+    if not isinstance(content_b64, str) or len(content_b64) > max_encoded_length:
+        raise ValueError("Native download exceeds the size limit.")
+    try:
+        file_data = base64.b64decode(content_b64, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise ValueError("Native download payload is invalid.") from exc
+    if len(file_data) > MAX_NATIVE_SAVE_BYTES:
+        raise ValueError("Native download exceeds the size limit.")
+    return file_data
 
 
 class ProApi:
     """Privileged API exposed only to the trusted main pywebview window."""
 
-    def __init__(self, update_manager=None):
+    def __init__(self, loopback_token=None, update_manager=None):
         self._window = None
+        self._loopback_token = str(loopback_token) if loopback_token else None
         self._update_manager = update_manager
         self.installer_to_launch: Path | None = None
 
@@ -380,6 +440,14 @@ class ProApi:
         if self._window is None:
             raise RuntimeError("ProApi window is not bound.")
         return self._window
+
+    def _require_native_write_token(self, candidate):
+        if not (
+            candidate
+            and self._loopback_token
+            and secrets.compare_digest(str(candidate), self._loopback_token)
+        ):
+            raise PermissionError("Native save authorization failed.")
 
     def close(self):
         window = self._require_window()
@@ -420,19 +488,21 @@ class ProApi:
             print(f"  [!] Attachment staging error: {e}")
             return {"success": False, "error": str(e)}
 
-    def save_file(self, content_b64, filename):
-        import base64
+    def save_file(self, content_b64, filename, loopback_token):
         from core.config import ParacciConfig
 
+        self._require_native_write_token(loopback_token)
+        safe_filename = validate_native_download_filename(filename)
+        file_data = _decode_native_base64(content_b64)
         window = self._require_window()
         cfg = ParacciConfig()
 
-        print(f"  [>] save_file requested: {filename}")
+        print(f"  [>] save_file requested: {safe_filename}")
 
         path = window.create_file_dialog(
             webview.FileDialog.SAVE,
             directory=cfg.full_downloads_path,
-            save_filename=filename,
+            save_filename=safe_filename,
             file_types=('Paracci Message (*.paracci)', 'All Files (*.*)')
         )
 
@@ -441,7 +511,6 @@ class ProApi:
                 path = path[0]
 
             try:
-                file_data = base64.b64decode(content_b64)
                 with open(path, "wb") as f:
                     f.write(file_data)
                 print(f"  [+] Saved to: {path}")
@@ -450,23 +519,24 @@ class ProApi:
                 print(f"  [!] Save error: {e}")
         return None
 
-    def save_file_silent(self, content_b64, filename):
-        """Saves directly to the downloads folder without asking the user."""
-        import base64
-        from core.config import ParacciConfig
-
-        cfg = ParacciConfig()
-        safe_filename = _safe_native_download_filename(filename)
-        path = Path(cfg.full_downloads_path) / safe_filename
-        try:
-            file_data = base64.b64decode(content_b64)
-            with open(path, "wb") as f:
-                f.write(file_data)
-            print(f"  [+] Silent Save: {path}")
-            return str(path)
-        except Exception as e:
-            print(f"  [!] Silent save error: {e}")
-        return None
+    def save_file_silent(self, native_save_token, loopback_token):
+        """Save a one-shot server-authorized download after native confirmation."""
+        self._require_native_write_token(loopback_token)
+        grant = native_save_grants.consume(str(native_save_token or ""))
+        if grant is None:
+            raise PermissionError("Native save grant is invalid or expired.")
+        filename = validate_native_download_filename(grant.filename)
+        if len(grant.file_bytes) > MAX_NATIVE_SAVE_BYTES:
+            raise ValueError("Native download exceeds the size limit.")
+        window = self._require_window()
+        if not window.create_confirmation_dialog(
+            "Confirm download",
+            f"Save {filename} to Paracci Downloads?",
+        ):
+            return None
+        path = _write_native_download(grant.file_bytes, filename)
+        print(f"  [+] Confirmed Save: {path}")
+        return str(path)
 
     def open_file_location(self, path):
         """Opens the folder containing the file in Windows Explorer."""
@@ -795,7 +865,7 @@ if __name__ == "__main__":
         server_thread.start()
 
         # Main Window (WebView)
-        pro_api = ProApi(update_manager=update_manager)
+        pro_api = ProApi(loopback_token=loopback_token, update_manager=update_manager)
         window = webview.create_window(
             title="Paracci Secure Messaging",
             url=bootstrap_url,

@@ -41,6 +41,7 @@ from core.package import (
     create_package,
     extract_package,
     sanitize_attachment_filename,
+    validate_native_download_filename,
 )
 from core.crypto import wipe
 from core.sanitizer import (
@@ -76,7 +77,7 @@ from core.evolution import (
     session_expires_at,
     validate_session_ttl,
 )
-from core.preview_store import PreviewEntry, preview_store
+from core.preview_store import PreviewEntry, native_save_grants, preview_store
 from .build_info import APP_VERSION
 from .i18n_manager import i18n
 
@@ -126,6 +127,7 @@ INLINE_PREVIEW_IMAGE_EXTENSIONS = {
 }
 
 SENSITIVE_CACHE_CLEAR_LIMIT = 100
+NATIVE_SAVE_REQUEST_HEADER = "X-Paracci-Native-Save"
 
 
 class NativeAttachmentStagingError(Exception):
@@ -215,6 +217,27 @@ def _mark_sensitive_no_store(response):
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     return response
+
+
+def _native_save_response(file_bytes: bytes, filename: str):
+    """Issue a one-shot native save grant when the desktop client requests one."""
+    if request.headers.get(NATIVE_SAVE_REQUEST_HEADER) != "1":
+        return None
+    if ag_app.no_gui_mode:
+        return _mark_sensitive_no_store(
+            jsonify({"success": False, "error": "Native save is unavailable."})
+        ), 409
+    try:
+        validated_filename = validate_native_download_filename(filename)
+        native_save_token = native_save_grants.issue(file_bytes, validated_filename)
+    except ValueError as exc:
+        return _mark_sensitive_no_store(
+            jsonify({"success": False, "error": str(exc)})
+        ), 400
+    return _mark_sensitive_no_store(jsonify({
+        "native_save_token": native_save_token,
+        "filename": validated_filename,
+    }))
 
 
 @bp.after_app_request
@@ -1951,11 +1974,15 @@ def session_seal(sid: str):
         )
         updated = meta._replace(tx_count=meta.tx_count + 1, send_seed=sealed.next_seed)
         _save_session(updated)
+        filename = f"msg_step_{sealed.next_step - 1:06d}_{sealed.msg_id.hex()[:12]}.paracci"
+        native_response = _native_save_response(sealed.file_bytes, filename)
+        if native_response is not None:
+            return native_response
         return send_file(
             io.BytesIO(sealed.file_bytes),
             mimetype="application/octet-stream",
             as_attachment=True,
-            download_name=f"msg_step_{sealed.next_step - 1:06d}_{sealed.msg_id.hex()[:12]}.paracci",
+            download_name=filename,
         )
     except (MemoryError, KeyboardInterrupt, SystemExit):
         raise
@@ -2225,6 +2252,9 @@ def session_export(sid: str):
         flash(_('session.export_forbidden'), "error")
         return redirect(url_for("main.session_detail", sid=sid))
 
+    native_response = _native_save_response(file_bytes, filename)
+    if native_response is not None:
+        return native_response
     return send_file(
         io.BytesIO(file_bytes),
         mimetype="application/octet-stream",
@@ -2483,11 +2513,15 @@ def preview_download(pid: str):
     if not _can_send_original_attachment(file_data):
         abort(403)
 
+    filename = sanitize_attachment_filename(file_data["filename"])
+    native_response = _native_save_response(file_data["content"], filename)
+    if native_response is not None:
+        return native_response
     response = send_file(
         io.BytesIO(file_data["content"]),
         mimetype=file_data["mime"],
         as_attachment=True,
-        download_name=sanitize_attachment_filename(file_data["filename"])
+        download_name=filename
     )
     return _mark_sensitive_no_store(response)
 

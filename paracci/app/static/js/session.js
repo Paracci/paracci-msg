@@ -413,7 +413,13 @@ function setupForms() {
         btn.textContent = window.PARACCI_I18N?.processing || 'Processing...';
 
         try {
-            const response = await fetch(this.action, { method: 'POST', body: new FormData(this) });
+            const nativeApi = window.pywebview?.api;
+            const requestNativeSave = typeof nativeApi?.save_file_silent === 'function';
+            const response = await fetch(this.action, {
+                method: 'POST',
+                headers: requestNativeSave ? { 'X-Paracci-Native-Save': '1' } : undefined,
+                body: new FormData(this)
+            });
             if (response.redirected) {
                 if (!window.ParacciSecurity?.navigateAuthorized) {
                     throw new Error(window.PARACCI_I18N?.server_error || 'Secure navigation is unavailable.');
@@ -423,34 +429,30 @@ function setupForms() {
             }
             if (!response.ok) throw new Error(window.PARACCI_I18N?.server_error || 'Server error');
 
-            const blob = await response.blob();
-            const cd = response.headers.get('Content-Disposition');
-            let filename = 'message.paracci';
-            if (cd?.includes('filename=')) {
-                filename = cd.split('filename=')[1].replace(/"/g, '');
-            }
-
-            if (window.pywebview?.api?.save_file_silent) {
-                const reader = new FileReader();
-                reader.onloadend = async () => {
-                    let b64 = "";
-                    try {
-                        b64 = String(reader.result || '').split(',')[1] || '';
-                        const savedPath = await window.pywebview.api.save_file_silent(b64, filename);
-                        if (savedPath) {
-                            if (window.showDownloadNotification) window.showDownloadNotification(filename, savedPath);
-                            this.reset();
-                            if (window.clearStagedAttachments) window.clearStagedAttachments();
-                            document.getElementById('allow_download').checked = false;
-                            updateAttachmentBadge();
-                        }
-                    } finally {
-                        b64 = "";
+            if (requestNativeSave) {
+                const grant = await response.json();
+                if (!grant?.native_save_token) {
+                    throw new Error(window.PARACCI_I18N?.download_failed || 'Download failed');
+                }
+                const loopbackToken = window.ParacciSecurity?.getLoopbackToken?.() || '';
+                const savedPath = await nativeApi.save_file_silent(grant.native_save_token, loopbackToken);
+                if (savedPath) {
+                    if (window.showDownloadNotification) {
+                        window.showDownloadNotification(grant.filename || 'message.paracci', savedPath);
                     }
-                };
-                reader.readAsDataURL(blob);
+                    this.reset();
+                    if (window.clearStagedAttachments) window.clearStagedAttachments();
+                    document.getElementById('allow_download').checked = false;
+                    updateAttachmentBadge();
+                }
             } else {
                 // Browser download fallback
+                const blob = await response.blob();
+                const cd = response.headers.get('Content-Disposition');
+                let filename = 'message.paracci';
+                if (cd?.includes('filename=')) {
+                    filename = cd.split('filename=')[1].replace(/"/g, '');
+                }
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
@@ -880,28 +882,40 @@ async function handleSecureCopy() {
 
 async function handleManualDownload(url, filename) {
     try {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(window.PARACCI_I18N?.download_failed || 'Download failed');
-        const blob = await response.blob();
-
         const api = window.pywebview?.api;
+        const requestNativeSave = typeof api?.save_file_silent === 'function';
+        const response = await fetch(url, {
+            headers: requestNativeSave ? { 'X-Paracci-Native-Save': '1' } : undefined
+        });
+        if (!response.ok) throw new Error(window.PARACCI_I18N?.download_failed || 'Download failed');
+
+        if (requestNativeSave) {
+            const grant = await response.json();
+            if (!grant?.native_save_token) {
+                throw new Error(window.PARACCI_I18N?.download_failed || 'Download failed');
+            }
+            const loopbackToken = window.ParacciSecurity?.getLoopbackToken?.() || '';
+            const savedPath = await api.save_file_silent(grant.native_save_token, loopbackToken);
+            if (savedPath && window.showDownloadNotification) {
+                window.showDownloadNotification(grant.filename || filename, savedPath);
+            }
+            return;
+        }
+
+        const blob = await response.blob();
         if (api) {
             const reader = new FileReader();
             reader.onloadend = async () => {
                 let b64 = "";
                 try {
                     b64 = String(reader.result || '').split(',')[1] || '';
-                    let savedPath = null;
-
-                    // Always use silent background download if supported, notifying the user afterwards
-                    if (api.save_file_silent) {
-                        savedPath = await api.save_file_silent(b64, filename);
-                        if (savedPath && window.showDownloadNotification) {
-                            window.showDownloadNotification(filename, savedPath);
-                        }
-                    } else if (api.save_file) {
-                        savedPath = await api.save_file(b64, filename);
+                    if (api.save_file) {
+                        const loopbackToken = window.ParacciSecurity?.getLoopbackToken?.() || '';
+                        await api.save_file(b64, filename, loopbackToken);
                     }
+                } catch (err) {
+                    console.error('Download save error:', err);
+                    showNotification(err?.message || window.PARACCI_I18N?.download_failed || 'Download failed', 'error');
                 } finally {
                     b64 = "";
                 }
@@ -918,6 +932,7 @@ async function handleManualDownload(url, filename) {
         }
     } catch (err) {
         console.error('Download error:', err);
+        showNotification(err?.message || window.PARACCI_I18N?.download_failed || 'Download failed', 'error');
     }
 }
 
