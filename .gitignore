@@ -35,6 +35,8 @@ Thumbs.db
 # --- Development / Scratch ---
 paracci/scratch/
 *.log
+paracci_startup_error.log
+paracci_startup_success.tmp
 
 # --- Local IDE ---
 .vscode/
