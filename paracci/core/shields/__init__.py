@@ -1,3 +1,4 @@
+import atexit
 import platform
 import logging
 import os
@@ -48,3 +49,4 @@ def get_shield():
 
 # Global Shield instance for the application
 shield = get_shield()
+atexit.register(shield.clear_owned_clipboard)

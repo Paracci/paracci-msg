@@ -2,8 +2,8 @@ import os
 import ctypes
 import ctypes.wintypes
 import logging
-import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from .base import BaseShield
 
@@ -16,6 +16,12 @@ CF_UNICODETEXT = 13
 GHND = 0x0042  # GMEM_MOVEABLE | GMEM_ZEROINIT
 CLIPBOARD_HISTORY_EXCLUSION_FORMAT = "ExcludeClipboardContentFromMonitorProcessing"
 FSCTL_FILE_LEVEL_TRIM = 0x00098208
+
+
+@dataclass(frozen=True)
+class _WindowsClipboardOwner:
+    text: str
+    sequence_number: int
 
 
 class FILE_LEVEL_TRIM_RANGE(ctypes.Structure):
@@ -75,6 +81,14 @@ class WindowsShield(BaseShield):
             # HANDLE SetClipboardData(UINT uFormat, HANDLE hMem)
             self._user32.SetClipboardData.argtypes = [ctypes.wintypes.UINT, ctypes.wintypes.HANDLE]
             self._user32.SetClipboardData.restype = ctypes.wintypes.HANDLE
+
+            # HANDLE GetClipboardData(UINT uFormat)
+            self._user32.GetClipboardData.argtypes = [ctypes.wintypes.UINT]
+            self._user32.GetClipboardData.restype = ctypes.wintypes.HANDLE
+
+            # DWORD GetClipboardSequenceNumber()
+            self._user32.GetClipboardSequenceNumber.argtypes = []
+            self._user32.GetClipboardSequenceNumber.restype = ctypes.wintypes.DWORD
 
             # BOOL CloseClipboard()
             self._user32.CloseClipboard.argtypes = []
@@ -310,63 +324,120 @@ class WindowsShield(BaseShield):
             return False
         return True
 
-    def _set_clipboard(self, content: str) -> bool:
-        """Set current clipboard content, excluding sensitive text from Win+V history."""
-        opened = False
+    def _open_clipboard(self) -> bool:
+        """Open the clipboard with bounded retries."""
         for attempt in range(10):
             if self._user32.OpenClipboard(None):
-                opened = True
-                break
+                return True
             logging.warning(f"[WindowsArmor] OpenClipboard attempt {attempt + 1} failed. Retrying...")
             time.sleep(0.1)
+        logging.error("[WindowsArmor] Failed to open clipboard after 10 attempts.")
+        return False
 
-        if not opened:
-            logging.error("[WindowsArmor] Failed to open clipboard after 10 attempts.")
+    def _write_open_clipboard(self, content: str) -> bool:
+        """Write clipboard data while the caller holds the clipboard open."""
+        if not self._user32.EmptyClipboard():
             return False
+
+        if not content:
+            return True
+
+        exclusion_format = self._user32.RegisterClipboardFormatW(CLIPBOARD_HISTORY_EXCLUSION_FORMAT)
+        if not exclusion_format:
+            logging.warning("[WindowsArmor] Clipboard history exclusion format is unavailable; copy rejected.")
+            return False
+
+        # Any payload in this registered format prevents built-in history and cloud sync.
+        if not self._place_clipboard_data(exclusion_format, b"\x00"):
+            logging.warning("[WindowsArmor] Clipboard history exclusion marker failed; copy rejected.")
+            return False
+
+        text_payload = str(content).encode("utf-16le") + b"\x00\x00"
+        return self._place_clipboard_data(CF_UNICODETEXT, text_payload)
+
+    def _get_clipboard_sequence_number(self) -> int:
+        """Read the current Windows clipboard sequence number."""
+        try:
+            return int(self._user32.GetClipboardSequenceNumber())
+        except Exception as exc:
+            logging.error("[WindowsArmor] Clipboard sequence query failed: %s", exc)
+            return 0
+
+    def _read_open_clipboard_text(self) -> str | None:
+        """Read Unicode clipboard text while the caller holds the clipboard open."""
+        data_handle = self._user32.GetClipboardData(CF_UNICODETEXT)
+        if not data_handle:
+            return None
+        pointer = self._kernel32.GlobalLock(data_handle)
+        if not pointer:
+            return None
 
         try:
-            if not self._user32.EmptyClipboard():
-                return False
-
-            if not content:
-                return True
-
-            exclusion_format = self._user32.RegisterClipboardFormatW(CLIPBOARD_HISTORY_EXCLUSION_FORMAT)
-            if not exclusion_format:
-                logging.warning("[WindowsArmor] Clipboard history exclusion format is unavailable; copy rejected.")
-                return False
-
-            # Any payload in this registered format prevents built-in history and cloud sync.
-            if not self._place_clipboard_data(exclusion_format, b"\x00"):
-                logging.warning("[WindowsArmor] Clipboard history exclusion marker failed; copy rejected.")
-                return False
-
-            text_payload = str(content).encode("utf-16le") + b"\x00\x00"
-            if not self._place_clipboard_data(CF_UNICODETEXT, text_payload):
-                return False
-            return True
-        except Exception as e:
-            logging.error(f"[WindowsArmor] Internal clipboard error: {e}")
-            return False
+            return ctypes.wstring_at(pointer)
         finally:
-            self._user32.CloseClipboard()
+            self._kernel32.GlobalUnlock(data_handle)
+
+    def clear_owned_clipboard(self, owner=None) -> bool:
+        """Clear the clipboard only while it still contains tracked Paracci text."""
+        with self._clipboard_lock:
+            active_owner = getattr(self, "_clipboard_owner", None)
+            if active_owner is None or (owner is not None and owner is not active_owner):
+                return True
+            if not self._open_clipboard():
+                return False
+
+            try:
+                if self._get_clipboard_sequence_number() != active_owner.sequence_number:
+                    self._clipboard_owner = None
+                    return True
+                if self._read_open_clipboard_text() != active_owner.text:
+                    self._clipboard_owner = None
+                    return True
+                if not self._user32.EmptyClipboard():
+                    return False
+                self._clipboard_owner = None
+                logging.info("[WindowsArmor] Owned clipboard content cleared.")
+                return True
+            except Exception as exc:
+                logging.error("[WindowsArmor] Owned clipboard clear failed: %s", exc)
+                return False
+            finally:
+                self._user32.CloseClipboard()
 
     def copy_to_clipboard(self, text: str, clear_delay: int = 30) -> bool:
-        """Copies to clipboard and auto-clears after delay; local processes can read it meanwhile."""
-        def _delayed_clear():
-            try:
-                time.sleep(clear_delay)
-                if self._set_clipboard(""):
-                    logging.info(f"[WindowsArmor] Clipboard auto-cleared after {clear_delay}s")
-            except Exception as e:
-                logging.error(f"[WindowsArmor] Error in delayed clear: {e}")
+        """Copy text and clear it later only if it remains Paracci-owned."""
+        if not text:
+            return self.clear_owned_clipboard()
 
-        try:
-            if self._set_clipboard(text):
-                if clear_delay > 0:
-                    threading.Thread(target=_delayed_clear, daemon=True).start()
-                return True
-            return False
-        except Exception as e:
-            logging.error(f"[WindowsArmor] Clipboard error: {e}")
-            return False
+        clipboard_text = str(text)
+        with self._clipboard_lock:
+            if not self._open_clipboard():
+                return False
+            previous_owner = getattr(self, "_clipboard_owner", None)
+            try:
+                if not self._write_open_clipboard(clipboard_text):
+                    if (
+                        previous_owner is not None
+                        and self._get_clipboard_sequence_number() == previous_owner.sequence_number
+                    ):
+                        self._clipboard_owner = previous_owner
+                    else:
+                        self._clipboard_owner = None
+                    return False
+                sequence_number = self._get_clipboard_sequence_number()
+                if not sequence_number:
+                    self._user32.EmptyClipboard()
+                    self._clipboard_owner = None
+                    logging.warning("[WindowsArmor] Clipboard sequence tracking unavailable; copy rejected.")
+                    return False
+                owner = _WindowsClipboardOwner(clipboard_text.split("\x00", 1)[0], sequence_number)
+                self._clipboard_owner = owner
+            except Exception as exc:
+                logging.error("[WindowsArmor] Clipboard error: %s", exc)
+                self._clipboard_owner = None
+                return False
+            finally:
+                self._user32.CloseClipboard()
+
+        self._schedule_owned_clipboard_clear(owner, clear_delay)
+        return True

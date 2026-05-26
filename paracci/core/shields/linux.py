@@ -1,16 +1,25 @@
 import os
 import ctypes
 import logging
-import threading
-import time
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from .base import BaseShield
 
 FALLOC_FL_KEEP_SIZE = 0x01
 FALLOC_FL_PUNCH_HOLE = 0x02
 
+
+@dataclass(frozen=True)
+class _LinuxClipboardOwner:
+    payload: bytes
+    backend: str
+
+
 class LinuxShield(BaseShield):
+    def __init__(self):
+        super().__init__()
+
     def get_os_name(self) -> str:
         """Returns the human-readable OS name."""
         return "Linux"
@@ -98,29 +107,67 @@ class LinuxShield(BaseShield):
             return True
         except: return False
 
-    def copy_to_clipboard(self, text: str, clear_delay: int = 30) -> bool:
-        """Copies to clipboard and auto-clears after delay; local processes can read it meanwhile."""
-        def _set_clipboard(content):
-            """Internal Linux clipboard setter."""
+    def _write_clipboard(self, payload: bytes, backend: str | None = None) -> str | None:
+        """Write clipboard bytes through an available Linux clipboard backend."""
+        backends = (backend,) if backend is not None else ("xclip", "wl-copy")
+        for candidate in backends:
+            command = (
+                ["xclip", "-selection", "clipboard"]
+                if candidate == "xclip"
+                else ["wl-copy"]
+            )
             try:
-                # Try xclip (X11)
-                process = subprocess.Popen(['xclip', '-selection', 'clipboard'], stdin=subprocess.PIPE)
-                process.communicate(input=content.encode('utf-8'))
-            except:
-                try:
-                    # Try wl-copy (Wayland)
-                    process = subprocess.Popen(['wl-copy'], stdin=subprocess.PIPE)
-                    process.communicate(input=content.encode('utf-8'))
-                except: pass
+                subprocess.run(command, input=payload, check=True)
+                return candidate
+            except (OSError, subprocess.SubprocessError):
+                continue
+        logging.warning("[LinuxShield] Clipboard write failed through available backends.")
+        return None
 
-        def _delayed_clear():
-            """Delayed task to clear the clipboard."""
-            time.sleep(clear_delay)
-            _set_clipboard("")
-
+    def _read_clipboard(self, backend: str) -> bytes | None:
+        """Read clipboard bytes through the backend used for the owned write."""
+        command = (
+            ["xclip", "-selection", "clipboard", "-out"]
+            if backend == "xclip"
+            else ["wl-paste", "--no-newline"]
+        )
         try:
-            _set_clipboard(text)
-            if clear_delay > 0 and text:
-                threading.Thread(target=_delayed_clear, daemon=True).start()
+            result = subprocess.run(command, capture_output=True, check=True)
+            return result.stdout
+        except (OSError, subprocess.SubprocessError) as exc:
+            logging.warning("[LinuxShield] Clipboard read failed: %s", exc)
+            return None
+
+    def clear_owned_clipboard(self, owner=None) -> bool:
+        """Clear only text still matching the active Paracci clipboard write."""
+        with self._clipboard_lock:
+            active_owner = getattr(self, "_clipboard_owner", None)
+            if active_owner is None or (owner is not None and owner is not active_owner):
+                return True
+            current = self._read_clipboard(active_owner.backend)
+            if current is None:
+                return False
+            if current != active_owner.payload:
+                self._clipboard_owner = None
+                return True
+            if self._write_clipboard(b"", active_owner.backend) is None:
+                return False
+            self._clipboard_owner = None
+            logging.info("[LinuxShield] Owned clipboard content cleared.")
             return True
-        except: return False
+
+    def copy_to_clipboard(self, text: str, clear_delay: int = 30) -> bool:
+        """Copy text and clear it later only if it remains Paracci-owned."""
+        if not text:
+            return self.clear_owned_clipboard()
+
+        payload = str(text).encode("utf-8")
+        with self._clipboard_lock:
+            backend = self._write_clipboard(payload)
+            if backend is None:
+                return False
+            owner = _LinuxClipboardOwner(payload, backend)
+            self._clipboard_owner = owner
+
+        self._schedule_owned_clipboard_clear(owner, clear_delay)
+        return True
