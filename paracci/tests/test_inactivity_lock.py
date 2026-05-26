@@ -190,3 +190,22 @@ def test_locked_device_redirects_to_unlock(tmp_path, monkeypatch):
     response = client.get("/session/new", base_url=ORIGIN, headers=auth_headers(client))
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/unlock")
+
+
+def test_lock_device_clears_clipboard(tmp_path, monkeypatch):
+    """Verify that lock_device() clears the clipboard via shield."""
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+
+    from core.shields import shield
+    called_clear = False
+
+    def mock_clear():
+        nonlocal called_clear
+        called_clear = True
+        return True
+
+    monkeypatch.setattr(shield, "clear_owned_clipboard", mock_clear)
+
+    ag_app.lock_device()
+
+    assert called_clear is True
