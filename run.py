@@ -683,6 +683,8 @@ def _shutdown_desktop_runtime(
     installer_path: Path | None,
 ) -> None:
     """Close background resources, then hand a verified installer to the OS."""
+    import app as ag_app
+    ag_app.lock_device()
     _close_all_preview_windows()
     if update_manager is not None:
         update_manager.close(preserve_handoff=installer_path is not None)
@@ -823,6 +825,12 @@ if __name__ == "__main__":
             sys.exit(0)
 
     app = ag_app.create_app(loopback_auth_token=loopback_token)
+
+    from core.config import ParacciConfig
+    _timeout_minutes = ParacciConfig().get("inactivity_timeout_minutes")
+    _timeout_seconds = max(0, int(_timeout_minutes or 0)) * 60
+    ag_app.init_inactivity_timer(_timeout_seconds)
+
     update_manager = None
     if not args.no_gui:
         from desktop.updater import UpdateManager
@@ -849,6 +857,8 @@ if __name__ == "__main__":
     print(f"  DATA_DIR: {data_dir}")
     
     if args.no_gui:
+        import atexit
+        atexit.register(ag_app.lock_device)
         print("  Mode: Server Only")
         print("  Authenticated entrypoint:")
         print(f"  {bootstrap_url}", flush=True)
