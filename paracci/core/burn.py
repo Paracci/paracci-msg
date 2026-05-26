@@ -72,6 +72,7 @@ PROTECTED_VALUE_PREFIX = b"paracci.burndb.field.v1:"
 PROTECTED_VALUE_AAD_PREFIX = b"paracci.burndb.field.v1\x00"
 PROTECTED_VALUE_TAG_LEN = 16
 STORAGE_MIGRATION_KEY = "protected_fields_v1"
+STORAGE_MIGRATION_V2_KEY = "protected_fields_v2"
 STORAGE_MIGRATION_PENDING = b"pending_scrub"
 STORAGE_MIGRATION_COMPLETE = b"complete"
 BOOTSTRAP_DEVICE_META_KEYS = frozenset(
@@ -182,25 +183,25 @@ class BurnDB:
     def _init_db(self):
         """Creates the database tables (burned_messages, sessions, device_meta)."""
         conn = self._connect()
-        conn.executescript(f"""
+        conn.executescript("""
             CREATE TABLE IF NOT EXISTS burned_messages (
                 fingerprint     BLOB PRIMARY KEY,   -- SHA3-256(msg_id)
-                status          TEXT NOT NULL CHECK(status IN {BURN_STATUSES!r}),
-                reserved_at     INTEGER NOT NULL,   -- Unix timestamp
-                burned_at       INTEGER,            -- Unix timestamp
-                failed_at       INTEGER,            -- Unix timestamp
+                status          BLOB NOT NULL,
+                reserved_at     BLOB NOT NULL,      -- Unix timestamp
+                burned_at       BLOB,               -- Unix timestamp
+                failed_at       BLOB,               -- Unix timestamp
                 session_id      BLOB,               -- Which session it belongs to
-                failure_reason  TEXT,
-                direction       INTEGER             -- 1=X→Y, 2=Y→X
+                failure_reason  BLOB,
+                direction       BLOB                -- 1=X→Y, 2=Y→X
             );
 
             CREATE TABLE IF NOT EXISTS sessions (
                 session_id      BLOB PRIMARY KEY,   -- 16 bytes
-                label           TEXT NOT NULL,
-                state           TEXT NOT NULL,
+                label           BLOB NOT NULL,
+                state           BLOB NOT NULL,
                 encrypted_meta  BLOB NOT NULL,      -- serialize_session_meta output
-                created_at      INTEGER NOT NULL,
-                updated_at      INTEGER NOT NULL
+                created_at      BLOB NOT NULL,
+                updated_at      BLOB NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS device_meta (
@@ -220,7 +221,6 @@ class BurnDB:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(burned_messages)")}
         if "status" not in columns:
             self._migrate_burned_messages(conn)
-        self._cleanup_stale_opening(conn)
         conn.commit()
         conn.close()
 
@@ -315,32 +315,32 @@ class BurnDB:
         except UnicodeDecodeError as exc:
             raise DeviceError("Invalid protected metadata.") from exc
 
-    def _migration_state(self, conn: sqlite3.Connection) -> bytes | None:
+    def _migration_state(self, conn: sqlite3.Connection, key: str = STORAGE_MIGRATION_KEY) -> bytes | None:
         row = conn.execute(
             "SELECT value FROM burn_internal_meta WHERE key=?",
-            (STORAGE_MIGRATION_KEY,),
+            (key,),
         ).fetchone()
         if row is None:
             return None
         state = self._decrypt_protected_value(
             "burn_internal_meta",
             "value",
-            STORAGE_MIGRATION_KEY,
+            key,
             row[0],
         )
         if state not in {STORAGE_MIGRATION_PENDING, STORAGE_MIGRATION_COMPLETE}:
             raise DeviceError("Invalid protected metadata migration state.")
         return state
 
-    def _write_migration_state(self, conn: sqlite3.Connection, state: bytes) -> None:
+    def _write_migration_state(self, conn: sqlite3.Connection, state: bytes, key: str = STORAGE_MIGRATION_KEY) -> None:
         conn.execute(
             "INSERT OR REPLACE INTO burn_internal_meta (key, value) VALUES (?, ?)",
             (
-                STORAGE_MIGRATION_KEY,
+                key,
                 self._encrypt_protected_value(
                     "burn_internal_meta",
                     "value",
-                    STORAGE_MIGRATION_KEY,
+                    key,
                     state,
                 ),
             ),
@@ -349,9 +349,12 @@ class BurnDB:
     def _migrate_protected_fields(self) -> None:
         """Encrypt existing plaintext cells atomically, then scrub SQLite residue."""
         conn = self._connect()
+        state_v1 = None
+        state_v2 = None
         try:
-            state = self._migration_state(conn)
-            if state is None:
+            # --- MIGRATION V1 ---
+            state_v1 = self._migration_state(conn, STORAGE_MIGRATION_KEY)
+            if state_v1 is None:
                 conn.execute("BEGIN IMMEDIATE")
                 try:
                     for session_id, label in conn.execute(
@@ -363,12 +366,7 @@ class BurnDB:
                         conn.execute(
                             "UPDATE sessions SET label=? WHERE session_id=?",
                             (
-                                self._encrypt_protected_value(
-                                    "sessions",
-                                    "label",
-                                    session_id,
-                                    label,
-                                ),
+                                self._encrypt_protected_value("sessions", "label", session_id, label),
                                 session_id,
                             ),
                         )
@@ -378,22 +376,12 @@ class BurnDB:
                         "WHERE failure_reason IS NOT NULL"
                     ).fetchall():
                         if isinstance(reason, bytes) and reason.startswith(PROTECTED_VALUE_PREFIX):
-                            self._decrypt_protected_text(
-                                "burned_messages",
-                                "failure_reason",
-                                fingerprint,
-                                reason,
-                            )
+                            self._decrypt_protected_text("burned_messages", "failure_reason", fingerprint, reason)
                             continue
                         conn.execute(
                             "UPDATE burned_messages SET failure_reason=? WHERE fingerprint=?",
                             (
-                                self._encrypt_protected_value(
-                                    "burned_messages",
-                                    "failure_reason",
-                                    fingerprint,
-                                    reason,
-                                ),
+                                self._encrypt_protected_value("burned_messages", "failure_reason", fingerprint, reason),
                                 fingerprint,
                             ),
                         )
@@ -409,26 +397,116 @@ class BurnDB:
                         conn.execute(
                             "UPDATE device_meta SET value=? WHERE key=?",
                             (
-                                self._encrypt_protected_value(
-                                    "device_meta",
-                                    "value",
-                                    key,
-                                    value,
-                                ),
+                                self._encrypt_protected_value("device_meta", "value", key, value),
                                 key,
                             ),
                         )
 
-                    self._write_migration_state(conn, STORAGE_MIGRATION_PENDING)
+                    self._write_migration_state(conn, STORAGE_MIGRATION_PENDING, STORAGE_MIGRATION_KEY)
                     conn.commit()
                 except Exception:
                     conn.rollback()
                     raise
-                state = STORAGE_MIGRATION_PENDING
+                state_v1 = STORAGE_MIGRATION_PENDING
+
+            # --- MIGRATION V2 (Plaintext Metadata Columns Encryption) ---
+            state_v2 = self._migration_state(conn, STORAGE_MIGRATION_V2_KEY)
+            if state_v2 is None:
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    # 1. sessions table (state, created_at, updated_at)
+                    for session_id, state, created_at, updated_at in conn.execute(
+                        "SELECT session_id, state, created_at, updated_at FROM sessions"
+                    ).fetchall():
+                        if not (isinstance(state, bytes) and state.startswith(PROTECTED_VALUE_PREFIX)):
+                            conn.execute(
+                                "UPDATE sessions SET state=? WHERE session_id=?",
+                                (
+                                    self._encrypt_protected_value("sessions", "state", session_id, state),
+                                    session_id,
+                                ),
+                            )
+                        if not (isinstance(created_at, bytes) and created_at.startswith(PROTECTED_VALUE_PREFIX)):
+                            conn.execute(
+                                "UPDATE sessions SET created_at=? WHERE session_id=?",
+                                (
+                                    self._encrypt_protected_value("sessions", "created_at", session_id, str(created_at)),
+                                    session_id,
+                                ),
+                            )
+                        if not (isinstance(updated_at, bytes) and updated_at.startswith(PROTECTED_VALUE_PREFIX)):
+                            conn.execute(
+                                "UPDATE sessions SET updated_at=? WHERE session_id=?",
+                                (
+                                    self._encrypt_protected_value("sessions", "updated_at", session_id, str(updated_at)),
+                                    session_id,
+                                ),
+                            )
+
+                    # 2. burned_messages table (status, reserved_at, burned_at, failed_at, session_id, direction)
+                    for fingerprint, status, reserved_at, burned_at, failed_at, s_id, direction in conn.execute(
+                        "SELECT fingerprint, status, reserved_at, burned_at, failed_at, session_id, direction FROM burned_messages"
+                    ).fetchall():
+                        if not (isinstance(status, bytes) and status.startswith(PROTECTED_VALUE_PREFIX)):
+                            conn.execute(
+                                "UPDATE burned_messages SET status=? WHERE fingerprint=?",
+                                (
+                                    self._encrypt_protected_value("burned_messages", "status", fingerprint, status),
+                                    fingerprint,
+                                ),
+                            )
+                        if not (isinstance(reserved_at, bytes) and reserved_at.startswith(PROTECTED_VALUE_PREFIX)):
+                            conn.execute(
+                                "UPDATE burned_messages SET reserved_at=? WHERE fingerprint=?",
+                                (
+                                    self._encrypt_protected_value("burned_messages", "reserved_at", fingerprint, str(reserved_at)),
+                                    fingerprint,
+                                ),
+                            )
+                        if burned_at is not None and not (isinstance(burned_at, bytes) and burned_at.startswith(PROTECTED_VALUE_PREFIX)):
+                            conn.execute(
+                                "UPDATE burned_messages SET burned_at=? WHERE fingerprint=?",
+                                (
+                                    self._encrypt_protected_value("burned_messages", "burned_at", fingerprint, str(burned_at)),
+                                    fingerprint,
+                                ),
+                            )
+                        if failed_at is not None and not (isinstance(failed_at, bytes) and failed_at.startswith(PROTECTED_VALUE_PREFIX)):
+                            conn.execute(
+                                "UPDATE burned_messages SET failed_at=? WHERE fingerprint=?",
+                                (
+                                    self._encrypt_protected_value("burned_messages", "failed_at", fingerprint, str(failed_at)),
+                                    fingerprint,
+                                ),
+                            )
+                        if s_id is not None and not (isinstance(s_id, bytes) and s_id.startswith(PROTECTED_VALUE_PREFIX)):
+                            conn.execute(
+                                "UPDATE burned_messages SET session_id=? WHERE fingerprint=?",
+                                (
+                                    self._encrypt_protected_value("burned_messages", "session_id", fingerprint, s_id),
+                                    fingerprint,
+                                ),
+                            )
+                        if direction is not None and not (isinstance(direction, bytes) and direction.startswith(PROTECTED_VALUE_PREFIX)):
+                            conn.execute(
+                                "UPDATE burned_messages SET direction=? WHERE fingerprint=?",
+                                (
+                                    self._encrypt_protected_value("burned_messages", "direction", fingerprint, str(direction)),
+                                    fingerprint,
+                                ),
+                            )
+
+                    self._write_migration_state(conn, STORAGE_MIGRATION_PENDING, STORAGE_MIGRATION_V2_KEY)
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
+                state_v2 = STORAGE_MIGRATION_PENDING
         finally:
             conn.close()
 
-        if state == STORAGE_MIGRATION_PENDING:
+        # Checkpoint and scrub residue for V1
+        if state_v1 == STORAGE_MIGRATION_PENDING:
             scrub_conn = self._connect()
             try:
                 checkpoint = scrub_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
@@ -439,7 +517,7 @@ class BurnDB:
                 if checkpoint and checkpoint[0] != 0:
                     raise DeviceError("Could not scrub protected metadata migration residue.")
                 scrub_conn.execute("BEGIN IMMEDIATE")
-                self._write_migration_state(scrub_conn, STORAGE_MIGRATION_COMPLETE)
+                self._write_migration_state(scrub_conn, STORAGE_MIGRATION_COMPLETE, STORAGE_MIGRATION_KEY)
                 scrub_conn.commit()
             except Exception:
                 if scrub_conn.in_transaction:
@@ -448,19 +526,52 @@ class BurnDB:
             finally:
                 scrub_conn.close()
 
+        # Checkpoint and scrub residue for V2
+        if state_v2 == STORAGE_MIGRATION_PENDING:
+            scrub_conn = self._connect()
+            try:
+                checkpoint = scrub_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                if checkpoint and checkpoint[0] != 0:
+                    raise DeviceError("Could not scrub protected metadata migration residue.")
+                scrub_conn.execute("VACUUM")
+                checkpoint = scrub_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                if checkpoint and checkpoint[0] != 0:
+                    raise DeviceError("Could not scrub protected metadata migration residue.")
+                scrub_conn.execute("BEGIN IMMEDIATE")
+                self._write_migration_state(scrub_conn, STORAGE_MIGRATION_COMPLETE, STORAGE_MIGRATION_V2_KEY)
+                scrub_conn.commit()
+            except Exception:
+                if scrub_conn.in_transaction:
+                    scrub_conn.rollback()
+                raise
+            finally:
+                scrub_conn.close()
+
+        # Clean up stale opening reservations now that the database is unlocked
+        cleanup_conn = self._connect()
+        try:
+            cleanup_conn.execute("BEGIN IMMEDIATE")
+            self._cleanup_stale_opening(cleanup_conn)
+            cleanup_conn.commit()
+        except Exception:
+            if cleanup_conn.in_transaction:
+                cleanup_conn.rollback()
+        finally:
+            cleanup_conn.close()
+
     def _migrate_burned_messages(self, conn: sqlite3.Connection) -> None:
         """Migrates the legacy burn table into the state-machine schema."""
         conn.execute("ALTER TABLE burned_messages RENAME TO burned_messages_legacy")
-        conn.execute(f"""
+        conn.execute("""
             CREATE TABLE burned_messages (
                 fingerprint     BLOB PRIMARY KEY,
-                status          TEXT NOT NULL CHECK(status IN {BURN_STATUSES!r}),
-                reserved_at     INTEGER NOT NULL,
-                burned_at       INTEGER,
-                failed_at       INTEGER,
+                status          BLOB NOT NULL,
+                reserved_at     BLOB NOT NULL,
+                burned_at       BLOB,
+                failed_at       BLOB,
                 session_id      BLOB,
-                direction       INTEGER,
-                failure_reason  TEXT
+                direction       BLOB,
+                failure_reason  BLOB
             )
         """)
         conn.execute(
@@ -478,13 +589,34 @@ class BurnDB:
     def _cleanup_stale_opening(self, conn: sqlite3.Connection) -> None:
         """Deletes abandoned opening reservations left by a prior process."""
         stale_before = int(time.time()) - BURN_OPENING_STALE_SECONDS
-        conn.execute(
-            """
-            DELETE FROM burned_messages
-            WHERE status=? AND reserved_at < ?
-            """,
-            (BURN_STATUS_OPENING, stale_before),
-        )
+        try:
+            rows = conn.execute(
+                "SELECT fingerprint, status, reserved_at FROM burned_messages"
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return
+
+        to_delete = []
+        for fingerprint, enc_status, enc_reserved_at in rows:
+            try:
+                if isinstance(enc_status, bytes) and enc_status.startswith(PROTECTED_VALUE_PREFIX):
+                    status = self._decrypt_protected_text("burned_messages", "status", fingerprint, enc_status)
+                else:
+                    status = enc_status
+
+                if isinstance(enc_reserved_at, bytes) and enc_reserved_at.startswith(PROTECTED_VALUE_PREFIX):
+                    reserved_at_str = self._decrypt_protected_text("burned_messages", "reserved_at", fingerprint, enc_reserved_at)
+                    reserved_at = int(reserved_at_str)
+                else:
+                    reserved_at = int(enc_reserved_at) if enc_reserved_at is not None else 0
+
+                if status == BURN_STATUS_OPENING and reserved_at < stale_before:
+                    to_delete.append(fingerprint)
+            except Exception:
+                continue
+
+        for fingerprint in to_delete:
+            conn.execute("DELETE FROM burned_messages WHERE fingerprint=?", (fingerprint,))
 
     def register_pending_deletion(self, file_path: str | Path) -> None:
         """Saves a file path for secure deletion retry."""
@@ -553,7 +685,12 @@ class BurnDB:
                 "SELECT status FROM burned_messages WHERE fingerprint=?",
                 (fingerprint,)
             ).fetchone()
-            return row[0] if row else None
+            if not row:
+                return None
+            val = row[0]
+            if isinstance(val, bytes) and val.startswith(PROTECTED_VALUE_PREFIX):
+                return self._decrypt_protected_text("burned_messages", "status", fingerprint, val)
+            return val
         finally:
             conn.close()
 
@@ -561,6 +698,14 @@ class BurnDB:
         """Registers the MSG_ID as burned in one terminal transaction."""
         fingerprint = message_id_fingerprint(msg_id)
         now = int(time.time())
+
+        # Encrypt metadata fields using fingerprint as row_identifier
+        enc_status = self._encrypt_protected_value("burned_messages", "status", fingerprint, BURN_STATUS_BURNED)
+        enc_reserved_at = self._encrypt_protected_value("burned_messages", "reserved_at", fingerprint, str(now))
+        enc_burned_at = self._encrypt_protected_value("burned_messages", "burned_at", fingerprint, str(now))
+        enc_session_id = self._encrypt_protected_value("burned_messages", "session_id", fingerprint, session_id)
+        enc_direction = self._encrypt_protected_value("burned_messages", "direction", fingerprint, str(direction))
+
         conn = self._connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
@@ -578,7 +723,7 @@ class BurnDB:
                     direction=excluded.direction,
                     failure_reason=NULL
                 """,
-                (fingerprint, BURN_STATUS_BURNED, now, now, session_id, direction)
+                (fingerprint, enc_status, enc_reserved_at, enc_burned_at, enc_session_id, enc_direction)
             )
             conn.commit()
         except Exception:
@@ -596,6 +741,10 @@ class BurnDB:
             conn.execute("BEGIN IMMEDIATE")
             now = int(time.time())
             stale_before = now - BURN_OPENING_STALE_SECONDS
+
+            enc_opening_status = self._encrypt_protected_value("burned_messages", "status", fingerprint, BURN_STATUS_OPENING)
+            enc_now = self._encrypt_protected_value("burned_messages", "reserved_at", fingerprint, str(now))
+
             try:
                 conn.execute(
                     """
@@ -603,52 +752,64 @@ class BurnDB:
                         (fingerprint, status, reserved_at, burned_at, failed_at, session_id, direction, failure_reason)
                     VALUES (?, ?, ?, NULL, NULL, NULL, NULL, NULL)
                     """,
-                    (fingerprint, BURN_STATUS_OPENING, now),
+                    (fingerprint, enc_opening_status, enc_now),
                 )
             except sqlite3.IntegrityError:
                 row = conn.execute(
                     "SELECT status, reserved_at, failure_reason FROM burned_messages WHERE fingerprint=?",
                     (fingerprint,),
                 ).fetchone()
-                if row and row[0] == BURN_STATUS_FAILED:
-                    if row[2] is not None:
-                        self._decrypt_protected_text(
-                            "burned_messages",
-                            "failure_reason",
-                            fingerprint,
-                            row[2],
+                if row:
+                    enc_status, enc_reserved_at, enc_reason = row
+                    
+                    if isinstance(enc_status, bytes) and enc_status.startswith(PROTECTED_VALUE_PREFIX):
+                        status = self._decrypt_protected_text("burned_messages", "status", fingerprint, enc_status)
+                    else:
+                        status = enc_status
+
+                    if isinstance(enc_reserved_at, bytes) and enc_reserved_at.startswith(PROTECTED_VALUE_PREFIX):
+                        reserved_at = int(self._decrypt_protected_text("burned_messages", "reserved_at", fingerprint, enc_reserved_at))
+                    else:
+                        reserved_at = int(enc_reserved_at) if enc_reserved_at is not None else 0
+
+                    if status == BURN_STATUS_FAILED:
+                        if enc_reason is not None:
+                            self._decrypt_protected_text(
+                                "burned_messages",
+                                "failure_reason",
+                                fingerprint,
+                                enc_reason,
+                            )
+                        updated = conn.execute(
+                            """
+                            UPDATE burned_messages
+                            SET status=?, reserved_at=?, burned_at=NULL, failed_at=NULL,
+                                session_id=NULL, direction=NULL, failure_reason=NULL
+                            WHERE fingerprint=?
+                            """,
+                            (enc_opening_status, enc_now, fingerprint),
                         )
-                    updated = conn.execute(
-                        """
-                        UPDATE burned_messages
-                        SET status=?, reserved_at=?, burned_at=NULL, failed_at=NULL,
-                            session_id=NULL, direction=NULL, failure_reason=NULL
-                        WHERE fingerprint=? AND status=?
-                        """,
-                        (BURN_STATUS_OPENING, now, fingerprint, BURN_STATUS_FAILED),
-                    )
-                    if updated.rowcount != 1:
-                        conn.rollback()
-                        raise AlreadyBurnedError(
-                            "This message is already being opened or has been burned."
+                        if updated.rowcount != 1:
+                            conn.rollback()
+                            raise AlreadyBurnedError(
+                                "This message is already being opened or has been burned."
+                            )
+                    elif status == BURN_STATUS_OPENING and reserved_at < stale_before:
+                        updated = conn.execute(
+                            """
+                            UPDATE burned_messages
+                            SET status=?, reserved_at=?, burned_at=NULL, failed_at=NULL,
+                                session_id=NULL, direction=NULL, failure_reason=NULL
+                            WHERE fingerprint=?
+                            """,
+                            (enc_opening_status, enc_now, fingerprint),
                         )
-                elif row and row[0] == BURN_STATUS_OPENING and row[1] < stale_before:
-                    updated = conn.execute(
-                        """
-                        UPDATE burned_messages
-                        SET status=?, reserved_at=?, burned_at=NULL, failed_at=NULL,
-                            session_id=NULL, direction=NULL, failure_reason=NULL
-                        WHERE fingerprint=? AND status=? AND reserved_at < ?
-                        """,
-                        (
-                            BURN_STATUS_OPENING,
-                            now,
-                            fingerprint,
-                            BURN_STATUS_OPENING,
-                            stale_before,
-                        ),
-                    )
-                    if updated.rowcount != 1:
+                        if updated.rowcount != 1:
+                            conn.rollback()
+                            raise AlreadyBurnedError(
+                                "This message is already being opened or has been burned."
+                            )
+                    else:
                         conn.rollback()
                         raise AlreadyBurnedError(
                             "This message is already being opened or has been burned."
@@ -671,16 +832,44 @@ class BurnDB:
         """Transitions a reserved message from opening to burned."""
         fingerprint = message_id_fingerprint(msg_id)
         now = int(time.time())
+
+        # Encrypt the fields we are setting
+        enc_status_burned = self._encrypt_protected_value("burned_messages", "status", fingerprint, BURN_STATUS_BURNED)
+        enc_burned_at = self._encrypt_protected_value("burned_messages", "burned_at", fingerprint, str(now))
+        enc_session_id = self._encrypt_protected_value("burned_messages", "session_id", fingerprint, session_id)
+        enc_direction = self._encrypt_protected_value("burned_messages", "direction", fingerprint, str(direction))
+
         conn = self._connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
+
+            # Fetch status to check if it's currently opening
+            row = conn.execute(
+                "SELECT status FROM burned_messages WHERE fingerprint=?",
+                (fingerprint,)
+            ).fetchone()
+            if not row:
+                raise AlreadyBurnedError(
+                    "This message was already opened and burned. It cannot be opened again."
+                )
+            enc_status = row[0]
+            if isinstance(enc_status, bytes) and enc_status.startswith(PROTECTED_VALUE_PREFIX):
+                status = self._decrypt_protected_text("burned_messages", "status", fingerprint, enc_status)
+            else:
+                status = enc_status
+
+            if status != BURN_STATUS_OPENING:
+                raise AlreadyBurnedError(
+                    "This message was already opened and burned. It cannot be opened again."
+                )
+
             updated = conn.execute(
                 """
                 UPDATE burned_messages
                 SET status=?, burned_at=?, failed_at=NULL, session_id=?, direction=?, failure_reason=NULL
-                WHERE fingerprint=? AND status=?
+                WHERE fingerprint=?
                 """,
-                (BURN_STATUS_BURNED, now, session_id, direction, fingerprint, BURN_STATUS_OPENING),
+                (enc_status_burned, enc_burned_at, enc_session_id, enc_direction, fingerprint),
             )
             if updated.rowcount != 1:
                 conn.rollback()
@@ -699,6 +888,9 @@ class BurnDB:
         """Transitions a reserved message from opening to failed so it can be retried."""
         fingerprint = message_id_fingerprint(msg_id)
         now = int(time.time())
+
+        enc_status_failed = self._encrypt_protected_value("burned_messages", "status", fingerprint, BURN_STATUS_FAILED)
+        enc_failed_at = self._encrypt_protected_value("burned_messages", "failed_at", fingerprint, str(now))
         failure_reason = self._encrypt_protected_value(
             "burned_messages",
             "failure_reason",
@@ -708,13 +900,29 @@ class BurnDB:
         conn = self._connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
+
+            row = conn.execute(
+                "SELECT status FROM burned_messages WHERE fingerprint=?",
+                (fingerprint,)
+            ).fetchone()
+            if not row:
+                raise DeviceError("Opening reservation not found.")
+            enc_status = row[0]
+            if isinstance(enc_status, bytes) and enc_status.startswith(PROTECTED_VALUE_PREFIX):
+                status = self._decrypt_protected_text("burned_messages", "status", fingerprint, enc_status)
+            else:
+                status = enc_status
+
+            if status != BURN_STATUS_OPENING:
+                raise DeviceError("Cannot mark a non-opening message as failed.")
+
             conn.execute(
                 """
                 UPDATE burned_messages
                 SET status=?, failed_at=?, failure_reason=?
-                WHERE fingerprint=? AND status=?
+                WHERE fingerprint=?
                 """,
-                (BURN_STATUS_FAILED, now, failure_reason, fingerprint, BURN_STATUS_OPENING),
+                (enc_status_failed, enc_failed_at, failure_reason, fingerprint),
             )
             conn.commit()
         except Exception:
@@ -741,8 +949,26 @@ class BurnDB:
             session_id,
             label,
         )
-        conn = self._connect()
+        protected_state = self._encrypt_protected_value(
+            "sessions",
+            "state",
+            session_id,
+            state,
+        )
+        protected_created_at = self._encrypt_protected_value(
+            "sessions",
+            "created_at",
+            session_id,
+            str(created_at),
+        )
         now = int(time.time())
+        protected_updated_at = self._encrypt_protected_value(
+            "sessions",
+            "updated_at",
+            session_id,
+            str(now),
+        )
+        conn = self._connect()
         try:
             conn.execute(
                 """
@@ -754,7 +980,7 @@ class BurnDB:
                     encrypted_meta=excluded.encrypted_meta,
                     updated_at=excluded.updated_at
                 """,
-                (session_id, protected_label, state, encrypted_meta, created_at, now)
+                (session_id, protected_label, protected_state, encrypted_meta, protected_created_at, protected_updated_at)
             )
             conn.commit()
         finally:
@@ -770,12 +996,26 @@ class BurnDB:
             ).fetchone()
             if row is None:
                 return None
-            return (
-                self._decrypt_protected_text("sessions", "label", session_id, row[0]),
-                row[1],
-                row[2],
-                row[3],
-            )
+            
+            enc_label, enc_state, encrypted_meta, enc_created_at = row
+
+            if isinstance(enc_label, bytes) and enc_label.startswith(PROTECTED_VALUE_PREFIX):
+                label = self._decrypt_protected_text("sessions", "label", session_id, enc_label)
+            else:
+                label = enc_label
+
+            if isinstance(enc_state, bytes) and enc_state.startswith(PROTECTED_VALUE_PREFIX):
+                state = self._decrypt_protected_text("sessions", "state", session_id, enc_state)
+            else:
+                state = enc_state
+
+            if isinstance(enc_created_at, bytes) and enc_created_at.startswith(PROTECTED_VALUE_PREFIX):
+                created_at_str = self._decrypt_protected_text("sessions", "created_at", session_id, enc_created_at)
+                created_at = int(created_at_str)
+            else:
+                created_at = int(enc_created_at) if enc_created_at is not None else 0
+
+            return (label, state, encrypted_meta, created_at)
         finally:
             conn.close()
 
@@ -795,30 +1035,68 @@ class BurnDB:
         conn = self._connect()
         try:
             rows = conn.execute(
-                "SELECT session_id, label, state, created_at, updated_at FROM sessions ORDER BY updated_at DESC"
+                "SELECT session_id, label, state, created_at, updated_at FROM sessions"
             ).fetchall()
-            return [
-                {
-                    "session_id": row[0],
-                    "label":      self._decrypt_protected_text(
-                        "sessions", "label", row[0], row[1]
-                    ),
-                    "state":      row[2],
-                    "created_at": row[3],
-                    "updated_at": row[4],
-                }
-                for row in rows
-            ]
+            sessions = []
+            for row in rows:
+                session_id = row[0]
+                enc_label = row[1]
+                enc_state = row[2]
+                enc_created_at = row[3]
+                enc_updated_at = row[4]
+
+                if isinstance(enc_label, bytes) and enc_label.startswith(PROTECTED_VALUE_PREFIX):
+                    label = self._decrypt_protected_text("sessions", "label", session_id, enc_label)
+                else:
+                    label = enc_label
+
+                if isinstance(enc_state, bytes) and enc_state.startswith(PROTECTED_VALUE_PREFIX):
+                    state = self._decrypt_protected_text("sessions", "state", session_id, enc_state)
+                else:
+                    state = enc_state
+
+                if isinstance(enc_created_at, bytes) and enc_created_at.startswith(PROTECTED_VALUE_PREFIX):
+                    created_at = int(self._decrypt_protected_text("sessions", "created_at", session_id, enc_created_at))
+                else:
+                    created_at = int(enc_created_at) if enc_created_at is not None else 0
+
+                if isinstance(enc_updated_at, bytes) and enc_updated_at.startswith(PROTECTED_VALUE_PREFIX):
+                    updated_at = int(self._decrypt_protected_text("sessions", "updated_at", session_id, enc_updated_at))
+                else:
+                    updated_at = int(enc_updated_at) if enc_updated_at is not None else 0
+
+                sessions.append({
+                    "session_id": session_id,
+                    "label": label,
+                    "state": state,
+                    "created_at": created_at,
+                    "updated_at": updated_at,
+                })
+            sessions.sort(key=lambda s: s["updated_at"], reverse=True)
+            return sessions
         finally:
             conn.close()
 
     def update_session_state(self, session_id: bytes, state: str, encrypted_meta: bytes):
         """Updates session state."""
+        protected_state = self._encrypt_protected_value(
+            "sessions",
+            "state",
+            session_id,
+            state,
+        )
+        now = int(time.time())
+        protected_updated_at = self._encrypt_protected_value(
+            "sessions",
+            "updated_at",
+            session_id,
+            str(now),
+        )
         conn = self._connect()
         try:
             conn.execute(
                 "UPDATE sessions SET state=?, encrypted_meta=?, updated_at=? WHERE session_id=?",
-                (state, encrypted_meta, int(time.time()), session_id)
+                (protected_state, encrypted_meta, protected_updated_at, session_id)
             )
             conn.commit()
         finally:

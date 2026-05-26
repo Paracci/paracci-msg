@@ -22,9 +22,11 @@ from core.crypto import new_message_id
 
 
 def test_single_use_reservation_is_atomic(tmp_path):
+    import os
+    device_key = os.urandom(32)
     db_path = tmp_path / "sessions.db"
-    db_a = BurnDB(db_path)
-    db_b = BurnDB(db_path)
+    db_a = BurnDB(db_path, device_key=device_key)
+    db_b = BurnDB(db_path, device_key=device_key)
     guard_a = BurnGuard(db_a)
     guard_b = BurnGuard(db_b)
     msg_id = new_message_id()
@@ -64,9 +66,11 @@ def test_single_use_reservation_is_atomic(tmp_path):
 
 
 def test_stale_opening_reservation_is_reclaimed_on_retry(tmp_path, monkeypatch):
+    import os
+    device_key = os.urandom(32)
     now = [1_700_000_000]
     monkeypatch.setattr(burn_module.time, "time", lambda: now[0])
-    db = BurnDB(tmp_path / "sessions.db")
+    db = BurnDB(tmp_path / "sessions.db", device_key=device_key)
     msg_id = new_message_id()
 
     assert db.reserve_open(msg_id) is True
@@ -81,39 +85,45 @@ def test_stale_opening_reservation_is_reclaimed_on_retry(tmp_path, monkeypatch):
 def test_fresh_opening_reservation_survives_initialization_and_is_rejected(
     tmp_path, monkeypatch
 ):
+    import os
+    device_key = os.urandom(32)
     now = [1_700_000_000]
     monkeypatch.setattr(burn_module.time, "time", lambda: now[0])
     db_path = tmp_path / "sessions.db"
-    db = BurnDB(db_path)
+    db = BurnDB(db_path, device_key=device_key)
     msg_id = new_message_id()
 
     assert db.reserve_open(msg_id) is True
     now[0] += BURN_OPENING_STALE_SECONDS - 1
 
-    restarted = BurnDB(db_path)
+    restarted = BurnDB(db_path, device_key=device_key)
     assert restarted.get_burn_status(msg_id) == BURN_STATUS_OPENING
     with pytest.raises(AlreadyBurnedError):
         restarted.reserve_open(msg_id)
 
 
 def test_startup_sweep_removes_stale_opening_reservation(tmp_path, monkeypatch):
+    import os
+    device_key = os.urandom(32)
     now = [1_700_000_000]
     monkeypatch.setattr(burn_module.time, "time", lambda: now[0])
     db_path = tmp_path / "sessions.db"
-    db = BurnDB(db_path)
+    db = BurnDB(db_path, device_key=device_key)
     msg_id = new_message_id()
 
     assert db.reserve_open(msg_id) is True
     now[0] += BURN_OPENING_STALE_SECONDS + 1
 
-    restarted = BurnDB(db_path)
+    restarted = BurnDB(db_path, device_key=device_key)
     assert restarted.get_burn_status(msg_id) is None
     assert restarted.reserve_open(msg_id) is True
     assert restarted.get_burn_status(msg_id) == BURN_STATUS_OPENING
 
 
 def test_post_open_burn_calls_secure_delete_and_reports_success(tmp_path, monkeypatch):
-    db = BurnDB(tmp_path / "sessions.db")
+    import os
+    device_key = os.urandom(32)
+    db = BurnDB(tmp_path / "sessions.db", device_key=device_key)
     guard = BurnGuard(db)
     msg_id = new_message_id()
     session_id = new_message_id()
@@ -135,7 +145,9 @@ def test_post_open_burn_calls_secure_delete_and_reports_success(tmp_path, monkey
 def test_post_open_burn_logs_failed_secure_delete_without_unburning(
     tmp_path, monkeypatch, caplog
 ):
-    db = BurnDB(tmp_path / "sessions.db")
+    import os
+    device_key = os.urandom(32)
+    db = BurnDB(tmp_path / "sessions.db", device_key=device_key)
     guard = BurnGuard(db)
     msg_id = new_message_id()
     session_id = new_message_id()
@@ -157,7 +169,9 @@ def test_post_open_burn_logs_failed_secure_delete_without_unburning(
 
 
 def test_force_burn_raises_when_secure_delete_fails(tmp_path, monkeypatch, caplog):
-    db = BurnDB(tmp_path / "sessions.db")
+    import os
+    device_key = os.urandom(32)
+    db = BurnDB(tmp_path / "sessions.db", device_key=device_key)
     guard = BurnGuard(db)
     msg_id = new_message_id()
     session_id = new_message_id()
@@ -177,7 +191,9 @@ def test_force_burn_raises_when_secure_delete_fails(tmp_path, monkeypatch, caplo
 
 
 def test_secure_delete_failure_registers_retry_and_cleans_up(tmp_path, monkeypatch, caplog):
-    db = BurnDB(tmp_path / "sessions.db")
+    import os
+    device_key = os.urandom(32)
+    db = BurnDB(tmp_path / "sessions.db", device_key=device_key)
     guard = BurnGuard(db)
     msg_id = new_message_id()
     session_id = new_message_id()
