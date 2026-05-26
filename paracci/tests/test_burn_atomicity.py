@@ -310,3 +310,36 @@ def test_startup_and_lock_integration(tmp_path, monkeypatch):
     conn = services.device.db._connect()
     assert len(conn.execute("SELECT file_path FROM pending_deletions").fetchall()) == 0
     conn.close()
+
+
+def test_burn_db_connection_caching_and_threading(tmp_path):
+    from threading import Thread
+    from queue import Queue
+
+    db = BurnDB(tmp_path / "sessions.db")
+
+    conn1 = db._connect()
+    conn2 = db._connect()
+
+    assert conn1._conn is conn2._conn
+
+    q = Queue()
+    def check_thread():
+        try:
+            conn_t = db._connect()
+            q.put(conn_t._conn)
+        except Exception as exc:
+            q.put(exc)
+
+    t = Thread(target=check_thread)
+    t.start()
+    t.join()
+
+    conn_thread = q.get()
+    assert not isinstance(conn_thread, Exception)
+    assert conn_thread is not conn1._conn
+
+    db.close()
+    conn3 = db._connect()
+    assert conn3._conn is not conn1._conn
+

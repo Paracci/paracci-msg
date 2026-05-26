@@ -120,6 +120,29 @@ def _serialized_unlock_attempt():
         yield
 
 
+class _ConnectionProxy:
+    """A proxy that delegates database operations but ignores close()."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        object.__setattr__(self, "_conn", conn)
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def __setattr__(self, name, value):
+        setattr(self._conn, name, value)
+
+    def close(self):
+        pass
+
+    def __enter__(self):
+        self._conn.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return self._conn.__exit__(exc_type, exc_val, exc_tb)
+
+
 # ---------------------------------------------------------------------------
 # Database Setup
 # ---------------------------------------------------------------------------
@@ -141,7 +164,7 @@ class BurnDB:
     ):
         """Initializes storage in locked bootstrap mode or keyed protected mode."""
         self.db_path = str(db_path)
-        self._conn: sqlite3.Connection | None = None
+        self._local = threading.local()
         self._device_key: bytearray | None = None
         if device_key is not None:
             if len(device_key) != KEY_LEN:
@@ -166,19 +189,33 @@ class BurnDB:
 
     def release_device_key(self) -> None:
         """Best-effort zeroing for the protected-field key owned by this object."""
+        self.close()
         if self._device_key is not None:
             wipe(self._device_key)
             self._device_key = None
 
+    def close(self) -> None:
+        """Closes the cached database connection for the current thread."""
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            self._local.conn = None
+
     def _connect(self) -> sqlite3.Connection:
-        """Connects to the SQLite database in WAL mode with optimized settings."""
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA foreign_keys=ON")
-        conn.execute("PRAGMA secure_delete=ON")
-        # Minimize cache on memory
-        conn.execute("PRAGMA cache_size=64")
-        return conn
+        """Connects to the SQLite database in WAL mode with optimized settings, reusing per-thread connections."""
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute("PRAGMA secure_delete=ON")
+            # Minimize cache on memory
+            conn.execute("PRAGMA cache_size=64")
+            self._local.conn = conn
+        return _ConnectionProxy(conn)
 
     def _init_db(self):
         """Creates the database tables (burned_messages, sessions, device_meta)."""
