@@ -784,9 +784,10 @@ if __name__ == "__main__":
     cleaner_thread = threading.Thread(target=cleanup_loop, daemon=True)
     cleaner_thread.start()
 
+    user_data_dir = None
     # Automatically set DATA_DIR if a user profile is selected
     if args.user:
-        os.environ['DATA_DIR'] = f"data_{args.user}"
+        user_data_dir = f"data_{args.user}"
         # Default ports for X and Y (if not specified)
         if not args.port:
             args.port = 5000 if args.user == 'x' else 5001
@@ -800,11 +801,7 @@ if __name__ == "__main__":
         webview_token if not args.no_gui else None
     ) or secrets.token_urlsafe(32)
 
-    os.environ["PARACCI_LOOPBACK_HOST"] = loopback_host
-    os.environ["PARACCI_LOOPBACK_PORT"] = str(port)
-    os.environ["PARACCI_NO_GUI"] = "1" if args.no_gui else "0"
-
-    # App initialization (must be imported after DATA_DIR and loopback security are set)
+    # App initialization
     import app as ag_app
 
     activation_state = {
@@ -834,7 +831,13 @@ if __name__ == "__main__":
         if forwarded:
             sys.exit(0)
 
-    app = ag_app.create_app(loopback_auth_token=loopback_token)
+    app = ag_app.create_app(
+        loopback_auth_token=loopback_token,
+        data_dir=user_data_dir,
+        loopback_host=loopback_host,
+        loopback_port=port,
+        no_gui_mode=args.no_gui,
+    )
 
     from core.config import ParacciConfig
     _timeout_minutes = ParacciConfig().get("inactivity_timeout_minutes")

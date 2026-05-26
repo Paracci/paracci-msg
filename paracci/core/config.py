@@ -21,10 +21,18 @@ class ParacciConfig:
         "inactivity_timeout_minutes": 15  # Minutes of inactivity before auto-lock; 0 = disabled
     }
 
-    def __init__(self):
+    def __init__(self, data_dir=None):
         """Initializes the config manager and loads settings."""
         from pathlib import Path
-        self.data_dir = os.environ.get('DATA_DIR', 'data')
+        if data_dir is not None:
+            self.data_dir = str(data_dir)
+        else:
+            import sys
+            app_mod = sys.modules.get('paracci.app') or sys.modules.get('app')
+            if app_mod and getattr(app_mod, 'DATA_DIR', None) is not None:
+                self.data_dir = str(app_mod.DATA_DIR)
+            else:
+                self.data_dir = os.environ.get('DATA_DIR', 'data')
         self.config_path = os.path.join(self.data_dir, 'config.json')
         self.settings = self.DEFAULT_CONFIG.copy()
         self.load()
