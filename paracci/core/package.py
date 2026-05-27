@@ -401,39 +401,44 @@ def extract_package(
                     att_token = secrets.token_hex(16)
                     dest_path = temp_dir / f"extracted_{att_token}.bin"
                     
-                    file_size = _extract_zip_entry_limited_to_file(
-                        zf,
-                        info,
-                        MAX_PACKAGE_ATTACHMENT_BYTES,
-                        dest_path,
-                        "Package attachment",
-                    )
-                    total_attachment_bytes += file_size
-                    if total_attachment_bytes > MAX_PACKAGE_TOTAL_ATTACHMENT_BYTES:
-                        try:
-                            os.remove(dest_path)
-                        except OSError:
-                            pass
-                        raise PackageLimitError("Package attachments are too large to open safely.")
+                    try:
+                        file_size = _extract_zip_entry_limited_to_file(
+                            zf,
+                            info,
+                            MAX_PACKAGE_ATTACHMENT_BYTES,
+                            dest_path,
+                            "Package attachment",
+                        )
+                        total_attachment_bytes += file_size
+                        if total_attachment_bytes > MAX_PACKAGE_TOTAL_ATTACHMENT_BYTES:
+                            raise PackageLimitError("Package attachments are too large to open safely.")
 
-                    filename = sanitize_attachment_filename(item.get("original_name"))
-                    attachments.append(Attachment(
-                        filename=filename,
-                        content_path=str(dest_path),
-                        mime_type=_guess_mime(filename)
-                    ))
-    except PackageLimitError:
-        raise
-    except (zipfile.BadZipFile, RuntimeError, OSError, EOFError, zlib.error, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                        filename = sanitize_attachment_filename(item.get("original_name"))
+                        attachments.append(Attachment(
+                            filename=filename,
+                            content_path=str(dest_path),
+                            mime_type=_guess_mime(filename)
+                        ))
+                    except Exception:
+                        if dest_path.exists():
+                            try:
+                                os.remove(dest_path)
+                            except OSError:
+                                pass
+                        raise
+    except Exception as exc:
         # Cleanup any temporary files created in this partial run
         for att in attachments:
-            try:
-                os.remove(att.content_path)
-            except OSError:
-                pass
-        raise PackageLimitError("Package is malformed and cannot be opened safely.") from exc
-                    
-    return Package(text=text, attachments=attachments, allow_download=allow_download)
+            if hasattr(att, "content_path") and att.content_path:
+                try:
+                    os.remove(att.content_path)
+                except OSError:
+                    pass
+        if isinstance(exc, PackageLimitError):
+            raise
+        if isinstance(exc, (zipfile.BadZipFile, RuntimeError, OSError, EOFError, zlib.error, UnicodeDecodeError, json.JSONDecodeError)):
+            raise PackageLimitError("Package is malformed and cannot be opened safely.") from exc
+        raise
                     
     return Package(text=text, attachments=attachments, allow_download=allow_download)
 

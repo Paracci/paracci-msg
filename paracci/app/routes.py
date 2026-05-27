@@ -529,27 +529,28 @@ def stage_native_attachment_paths(paths: Sequence[str | Path]) -> list[dict]:
             token = secrets.token_hex(16)
             temp_file_path = temp_dir / f"staged_web_{token}.bin"
             
+            written_size = 0
             try:
                 with open(native_path, "rb") as src, open(temp_file_path, "wb") as dest:
                     while True:
                         chunk = src.read(64 * 1024)
                         if not chunk:
                             break
+                        written_size += len(chunk)
+                        if total_size + written_size > MAX_ATTACHMENT_SIZE:
+                            raise NativeAttachmentStagingError(
+                                f"Total file size exceeds the {MAX_ATTACHMENT_SIZE // (1024*1024)}MB limit."
+                            )
                         dest.write(chunk)
-            except OSError as exc:
-                raise NativeAttachmentStagingError("Could not read attachment.") from exc
+            except Exception:
+                if temp_file_path.exists():
+                    try:
+                        os.remove(temp_file_path)
+                    except OSError:
+                        pass
+                raise
                 
-            file_size = os.path.getsize(temp_file_path)
-            total_size += file_size
-            if total_size > MAX_ATTACHMENT_SIZE:
-                try:
-                    os.remove(temp_file_path)
-                except OSError:
-                    pass
-                raise NativeAttachmentStagingError(
-                    f"Total file size exceeds the {MAX_ATTACHMENT_SIZE // (1024*1024)}MB limit."
-                )
-                
+            file_size = written_size
             safe_fname = sanitize_attachment_filename(Path(native_path).name)
             try:
                 ext = safe_fname.split('.')[-1].lower()
@@ -559,13 +560,17 @@ def stage_native_attachment_paths(paths: Sequence[str | Path]) -> list[dict]:
                     sanitized = sanitize_image(image_bytes, safe_fname)
                     temp_file_path.write_bytes(sanitized)
                     file_size = len(sanitized)
-            except SanitizationError as exc:
-                try:
-                    os.remove(temp_file_path)
-                except OSError:
-                    pass
-                raise NativeAttachmentStagingError(SanitizationError.user_message) from exc
+            except Exception as exc:
+                if temp_file_path.exists():
+                    try:
+                        os.remove(temp_file_path)
+                    except OSError:
+                        pass
+                if isinstance(exc, SanitizationError):
+                    raise NativeAttachmentStagingError(SanitizationError.user_message) from exc
+                raise
                 
+            total_size += file_size
             attachment_id = _add_to_staged_attachment_cache(safe_fname, temp_file_path)
             staged_ids.append(attachment_id)
             staged_items.append({
@@ -2029,96 +2034,92 @@ def _gather_attachments(upload_files, staged_ids=None):
     temp_dir = Path(os.environ.get("DATA_DIR", "data")) / "temp"
     temp_dir.mkdir(parents=True, exist_ok=True)
         
-    for f in upload_files:
-        safe_fname = sanitize_attachment_filename(f.filename)
-        token = secrets.token_hex(16)
-        temp_path = temp_dir / f"upload_{token}.bin"
-        
-        try:
-            with open(temp_path, "wb") as dest:
-                while True:
-                    chunk = f.stream.read(64 * 1024)
-                    if not chunk:
-                        break
-                    dest.write(chunk)
-        except OSError as exc:
-            for name, path in files:
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
-            return None, "Failed to write uploaded attachment to disk."
+    try:
+        for f in upload_files:
+            safe_fname = sanitize_attachment_filename(f.filename)
+            token = secrets.token_hex(16)
+            temp_path = temp_dir / f"upload_{token}.bin"
             
-        file_size = os.path.getsize(temp_path)
-        total_size += file_size
-        if total_size > MAX_ATTACHMENT_SIZE:
+            written_size = 0
             try:
-                os.remove(temp_path)
-            except OSError:
-                pass
-            for name, path in files:
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
-            return None, f"Total file size exceeds the {MAX_ATTACHMENT_SIZE // (1024*1024)}MB limit."
-            
-        try:
-            ext = safe_fname.split('.')[-1].lower()
-            if ext in ['jpg', 'jpeg', 'png', 'webp']:
-                with open(temp_path, "rb") as reader:
-                    img_bytes = reader.read()
-                sanitized = sanitize_image(img_bytes, safe_fname)
-                temp_path.write_bytes(sanitized)
-        except SanitizationError:
+                with open(temp_path, "wb") as dest:
+                    while True:
+                        chunk = f.stream.read(64 * 1024)
+                        if not chunk:
+                            break
+                        written_size += len(chunk)
+                        if total_size + written_size > MAX_ATTACHMENT_SIZE:
+                            raise ValueError(
+                                f"Total file size exceeds the {MAX_ATTACHMENT_SIZE // (1024*1024)}MB limit."
+                            )
+                        dest.write(chunk)
+            except Exception:
+                if temp_path.exists():
+                    try:
+                        os.remove(temp_path)
+                    except OSError:
+                        pass
+                raise
+                
             try:
-                os.remove(temp_path)
-            except OSError:
-                pass
-            for name, path in files:
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
-            return None, _(SanitizationError.i18n_key)
-            
-        files.append((safe_fname, temp_path))
+                ext = safe_fname.split('.')[-1].lower()
+                if ext in ['jpg', 'jpeg', 'png', 'webp']:
+                    with open(temp_path, "rb") as reader:
+                        img_bytes = reader.read()
+                    sanitized = sanitize_image(img_bytes, safe_fname)
+                    temp_path.write_bytes(sanitized)
+                    written_size = len(sanitized)
+            except Exception as exc:
+                if temp_path.exists():
+                    try:
+                        os.remove(temp_path)
+                    except OSError:
+                        pass
+                if isinstance(exc, SanitizationError):
+                    raise
+                raise
+                
+            total_size += written_size
+            files.append((safe_fname, temp_path))
 
-    for attachment_id in staged_id_list:
-        staged = STAGED_ATTACHMENT_CACHE.pop(attachment_id, None)
-        if not staged or staged["expires"] < time.time():
-            for name, path in files:
+        for attachment_id in staged_id_list:
+            staged = STAGED_ATTACHMENT_CACHE.pop(attachment_id, None)
+            if not staged or staged["expires"] < time.time():
+                raise ValueError("A staged attachment expired. Please attach it again.")
+                
+            content_path = _resolve_content_path(staged)
+            if not content_path or not os.path.exists(content_path):
+                if content_path:
+                    try:
+                        os.remove(content_path)
+                    except OSError:
+                        pass
+                raise ValueError("A staged attachment could not be read.")
+                
+            file_size = os.path.getsize(content_path)
+            if total_size + file_size > MAX_ATTACHMENT_SIZE:
+                try:
+                    os.remove(content_path)
+                except OSError:
+                    pass
+                raise ValueError(
+                    f"Total file size exceeds the {MAX_ATTACHMENT_SIZE // (1024*1024)}MB limit."
+                )
+                
+            total_size += file_size
+            files.append((staged["filename"], content_path))
+            _drop_cached_entry(staged, ("content",))
+
+    except Exception as exc:
+        for name, path in files:
+            if isinstance(path, (str, Path)) and os.path.exists(path):
                 try:
                     os.remove(path)
                 except OSError:
                     pass
-            return None, "A staged attachment expired. Please attach it again."
-            
-        content_path = _resolve_content_path(staged)
-        if not content_path or not os.path.exists(content_path):
-            for name, path in files:
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
-            return None, "A staged attachment could not be read."
-            
-        file_size = os.path.getsize(content_path)
-        total_size += file_size
-        if total_size > MAX_ATTACHMENT_SIZE:
-            try:
-                os.remove(content_path)
-            except OSError:
-                pass
-            for name, path in files:
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
-            return None, f"Total file size exceeds the {MAX_ATTACHMENT_SIZE // (1024*1024)}MB limit."
-            
-        files.append((staged["filename"], content_path))
-        _drop_cached_entry(staged, ("content",))
+        if isinstance(exc, SanitizationError):
+            return None, _(SanitizationError.i18n_key)
+        return None, str(exc) if isinstance(exc, ValueError) else "Failed to process attachment."
 
     return files, None
 

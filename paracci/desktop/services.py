@@ -879,73 +879,68 @@ class MessageService:
         temp_dir = Path(os.environ.get("DATA_DIR", "data")) / "temp"
         temp_dir.mkdir(parents=True, exist_ok=True)
         
-        for path in paths:
-            if not path:
-                continue
-            p = Path(path)
-            if not p.is_file():
-                for name, tf in files:
-                    try:
-                        os.remove(tf)
-                    except OSError:
-                        pass
-                raise MessageServiceError(f"Attachment not found: {p}")
+        try:
+            for path in paths:
+                if not path:
+                    continue
+                p = Path(path)
+                if not p.is_file():
+                    raise MessageServiceError(f"Attachment not found: {p}")
+                    
+                token = secrets.token_hex(16)
+                temp_file_path = temp_dir / f"staged_desk_{token}.bin"
                 
-            token = secrets.token_hex(16)
-            temp_file_path = temp_dir / f"staged_desk_{token}.bin"
-            
-            try:
-                with open(p, "rb") as src, open(temp_file_path, "wb") as dest:
-                    while True:
-                        chunk = src.read(64 * 1024)
-                        if not chunk:
-                            break
-                        dest.write(chunk)
-            except OSError as exc:
-                for name, tf in files:
-                    try:
-                        os.remove(tf)
-                    except OSError:
-                        pass
-                raise MessageServiceError("Could not read attachment.") from exc
-                
-            file_size = os.path.getsize(temp_file_path)
-            total_size += file_size
-            if total_size > MAX_ATTACHMENT_SIZE:
+                written_size = 0
                 try:
-                    os.remove(temp_file_path)
-                except OSError:
-                    pass
-                for name, tf in files:
-                    try:
-                        os.remove(tf)
-                    except OSError:
-                        pass
-                raise MessageServiceError(
-                    f"Total attachment size exceeds {MAX_ATTACHMENT_SIZE // (1024 * 1024)}MB."
-                )
-                
-            try:
-                ext = p.name.split('.')[-1].lower()
-                if ext in ['jpg', 'jpeg', 'png', 'webp']:
-                    with open(temp_file_path, "rb") as f:
-                        image_bytes = f.read()
-                    sanitized = sanitize_image(image_bytes, p.name)
-                    temp_file_path.write_bytes(sanitized)
-            except SanitizationError as exc:
+                    with open(p, "rb") as src, open(temp_file_path, "wb") as dest:
+                        while True:
+                            chunk = src.read(64 * 1024)
+                            if not chunk:
+                                break
+                            written_size += len(chunk)
+                            if total_size + written_size > MAX_ATTACHMENT_SIZE:
+                                raise MessageServiceError(
+                                    f"Total attachment size exceeds {MAX_ATTACHMENT_SIZE // (1024 * 1024)}MB."
+                                )
+                            dest.write(chunk)
+                except Exception:
+                    if temp_file_path.exists():
+                        try:
+                            os.remove(temp_file_path)
+                        except OSError:
+                            pass
+                    raise
+                    
+                file_size = written_size
                 try:
-                    os.remove(temp_file_path)
-                except OSError:
-                    pass
-                for name, tf in files:
+                    ext = p.name.split('.')[-1].lower()
+                    if ext in ['jpg', 'jpeg', 'png', 'webp']:
+                        with open(temp_file_path, "rb") as f:
+                            image_bytes = f.read()
+                        sanitized = sanitize_image(image_bytes, p.name)
+                        temp_file_path.write_bytes(sanitized)
+                        file_size = len(sanitized)
+                except Exception as exc:
+                    if temp_file_path.exists():
+                        try:
+                            os.remove(temp_file_path)
+                        except OSError:
+                            pass
+                    if isinstance(exc, SanitizationError):
+                        raise MessageServiceError(SanitizationError.user_message) from exc
+                    raise
+                    
+                total_size += file_size
+                files.append((p.name, temp_file_path))
+            return files
+        except Exception:
+            for name, tf in files:
+                if isinstance(tf, (str, Path)) and os.path.exists(tf):
                     try:
                         os.remove(tf)
                     except OSError:
                         pass
-                raise MessageServiceError(SanitizationError.user_message) from exc
-                
-            files.append((p.name, temp_file_path))
-        return files
+            raise
 
 
 class I18nService:

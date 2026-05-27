@@ -224,3 +224,52 @@ def test_extract_package_still_skips_unsafe_attachment_paths():
 
     assert package.text == "hello"
     assert package.attachments == []
+
+
+def test_extract_package_cleans_up_temp_files_on_error(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    temp_dir = tmp_path / "temp"
+    
+    monkeypatch.setattr(package_module, "MAX_PACKAGE_ATTACHMENT_BYTES", 5)
+    
+    blob = _zip_bytes([
+        ("message.md", b"hello"),
+        ("attachments/0_safe.txt", b"safe"),
+        ("attachments/1_unsafe.txt", b"unsafe"),
+        ("metadata.json", _metadata([
+            {"original_name": "safe.txt", "internal_path": "attachments/0_safe.txt", "size": 4},
+            {"original_name": "unsafe.txt", "internal_path": "attachments/1_unsafe.txt", "size": 6},
+        ])),
+    ], compression=zipfile.ZIP_STORED)
+    
+    assert not list(temp_dir.glob("extracted_*.bin"))
+    
+    with pytest.raises(PackageLimitError):
+        extract_package(blob)
+        
+    assert not list(temp_dir.glob("extracted_*.bin"))
+
+
+def test_extract_package_cleans_up_temp_files_on_total_limit_error(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    temp_dir = tmp_path / "temp"
+    
+    monkeypatch.setattr(package_module, "MAX_PACKAGE_ATTACHMENT_BYTES", 10)
+    monkeypatch.setattr(package_module, "MAX_PACKAGE_TOTAL_ATTACHMENT_BYTES", 5)
+    
+    blob = _zip_bytes([
+        ("message.md", b"hello"),
+        ("attachments/0_a.txt", b"aaaa"),
+        ("attachments/1_b.txt", b"bbbb"),
+        ("metadata.json", _metadata([
+            {"original_name": "a.txt", "internal_path": "attachments/0_a.txt", "size": 4},
+            {"original_name": "b.txt", "internal_path": "attachments/1_b.txt", "size": 4},
+        ])),
+    ], compression=zipfile.ZIP_STORED)
+    
+    assert not list(temp_dir.glob("extracted_*.bin"))
+    
+    with pytest.raises(PackageLimitError):
+        extract_package(blob)
+        
+    assert not list(temp_dir.glob("extracted_*.bin"))
