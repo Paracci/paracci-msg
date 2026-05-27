@@ -444,7 +444,7 @@ def derive_session_keys(
 # ChaCha20-Poly1305 Encryption / Decryption
 # ---------------------------------------------------------------------------
 
-def encrypt(key: bytes | bytearray, plaintext: bytes, aad: bytes = b"") -> EncryptedBlob:
+def encrypt(key: bytes | bytearray, plaintext: bytes | bytearray, aad: bytes = b"") -> EncryptedBlob:
     """
     Authenticated encryption with ChaCha20-Poly1305.
 

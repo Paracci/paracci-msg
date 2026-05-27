@@ -779,10 +779,10 @@ def _pack_secret_field(buf: bytearray, value: bytes | bytearray | None) -> None:
         if n >= 0xFFFF:
             raise SessionError("Secret field too large to serialize.")
         buf += n.to_bytes(2, "big")
-        buf += bytes(value)
+        buf += value
 
 
-def _unpack_secret_field(blob: bytes | bytearray, offset: int) -> tuple:
+def _unpack_secret_field(blob: bytes | bytearray | memoryview, offset: int) -> tuple:
     """Read one length-prefixed field from *blob* at *offset*.
 
     Returns ``(bytearray | None, new_offset)``.  The returned bytearray
@@ -791,7 +791,8 @@ def _unpack_secret_field(blob: bytes | bytearray, offset: int) -> tuple:
     length = int.from_bytes(blob[offset: offset + 2], "big")
     if length == 0xFFFF:
         return None, offset + 2
-    return bytearray(blob[offset + 2: offset + 2 + length]), offset + 2 + length
+    val_view = memoryview(blob)[offset + 2: offset + 2 + length]
+    return bytearray(val_view), offset + 2 + length
 
 
 def serialize_session_meta(meta: SessionMeta, device_key: bytes) -> bytes:
@@ -869,7 +870,7 @@ def serialize_session_meta(meta: SessionMeta, device_key: bytes) -> bytes:
 
     # --- 4. Encrypt then wipe all sensitive buffers ---
     try:
-        blob = encrypt(device_key, bytes(envelope), aad=_SESSION_V3_AAD)
+        blob = encrypt(device_key, envelope, aad=_SESSION_V3_AAD)
         return blob.nonce + blob.ciphertext
     finally:
         wipe(secret_buf)
@@ -881,11 +882,12 @@ def _deserialize_v3(raw: bytes | bytearray) -> "SessionMeta":
     # --- 1. Parse envelope ---
     if len(raw) < 9:  # 1 version + 4 secret_len + 4 json_len minimum
         raise SessionError("Session data is too short.")
-    secret_len = int.from_bytes(raw[1:5], "big")
-    secret_blob = raw[5: 5 + secret_len]
+    raw_mv = memoryview(raw)
+    secret_len = int.from_bytes(raw_mv[1:5], "big")
+    secret_blob = raw_mv[5: 5 + secret_len]
     json_offset = 5 + secret_len
-    json_len = int.from_bytes(raw[json_offset: json_offset + 4], "big")
-    json_bytes = raw[json_offset + 4: json_offset + 4 + json_len]
+    json_len = int.from_bytes(raw_mv[json_offset: json_offset + 4], "big")
+    json_bytes = raw_mv[json_offset + 4: json_offset + 4 + json_len]
 
     # --- 2. Unpack secret fields (fixed canonical order — must match serialize) ---
     pos = 0
@@ -903,7 +905,7 @@ def _deserialize_v3(raw: bytes | bytearray) -> "SessionMeta":
     ml_kem_secret_key, pos = _unpack_secret_field(secret_blob, pos)
 
     # --- 3. Parse public JSON ---
-    data = json.loads(json_bytes.decode("utf-8"))
+    data = json.loads(bytes(json_bytes).decode("utf-8"))
 
     # --- 4. Reconstruct DerivedKeys if present ---
     keys = None
@@ -946,8 +948,8 @@ def _deserialize_v3(raw: bytes | bytearray) -> "SessionMeta":
         bond_nonce=bond_nonce,
         tx_count=data.get("tx_count", 0),
         rx_count=data.get("rx_count", 0),
-        my_qseed=bytes(my_qseed_ba) if my_qseed_ba is not None else None,
-        peer_qseed=bytes(peer_qseed_ba) if peer_qseed_ba is not None else None,
+        my_qseed=my_qseed_ba,
+        peer_qseed=peer_qseed_ba,
         peer_username=data.get("peer_username"),
         color=data.get("color") or SESSION_COLORS[int(data["session_id"], 16) % len(SESSION_COLORS)],
         evo_config=deserialize_evo_config(bytes.fromhex(data["evo_config"])),
