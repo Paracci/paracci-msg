@@ -26,3 +26,6 @@ Pillow>=10.3.0
 
 # Dependency version parsing
 packaging>=24.0
+
+# Database migrations
+yoyo-migrations>=8.2.0

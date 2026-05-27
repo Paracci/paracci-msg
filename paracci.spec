@@ -149,6 +149,7 @@ datas = [
     (str(ROOT / "paracci" / "app" / "static"),    "paracci/app/static"),
     (str(ROOT / "paracci" / "app" / "i18n"),      "paracci/app/i18n"),
     (str(ROOT / "paracci" / "app" / "reports"),   "paracci/app/reports"),
+    (str(ROOT / "paracci" / "core" / "migrations"), "paracci/core/migrations"),
     (str(ROOT / "paracci_icon.ico"),             "."),
 ]
 
@@ -176,6 +177,12 @@ hiddenimports += tmp_ret[2]
 
 # ── argon2 (cffi extension — must be explicitly collected) ────────────────────
 tmp_ret = collect_all("argon2")
+datas    += tmp_ret[0]
+binaries += tmp_ret[1]
+hiddenimports += tmp_ret[2]
+
+# ── yoyo (database migrations) ────────────────────────────────────────────────
+tmp_ret = collect_all("yoyo")
 datas    += tmp_ret[0]
 binaries += tmp_ret[1]
 hiddenimports += tmp_ret[2]
