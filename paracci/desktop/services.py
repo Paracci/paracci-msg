@@ -30,6 +30,8 @@ from core.burn import (
     DeviceError,
     TTLExpiredError,
     is_device_initialized,
+    _secure_dir_permissions,
+    _secure_file_permissions,
 )
 from core.config import ParacciConfig
 from core.crypto import EncryptedBlob, decrypt, encrypt, wipe
@@ -171,6 +173,7 @@ class AttachmentPayload:
         elif content is not None:
             temp_dir = Path(os.environ.get("DATA_DIR", "data")) / "temp"
             temp_dir.mkdir(parents=True, exist_ok=True)
+            _secure_dir_permissions(temp_dir)
             token = secrets.token_hex(16)
             temp_file_path = temp_dir / f"test_payload_{token}.bin"
             try:
@@ -245,6 +248,7 @@ def configure_data_dir(explicit: str | None = None, user_profile: str | None = N
         _copy_legacy_data_if_needed(data_dir)
 
     data_dir.mkdir(parents=True, exist_ok=True)
+    _secure_dir_permissions(data_dir)
     os.environ["DATA_DIR"] = str(data_dir)
     return data_dir
 
@@ -724,6 +728,7 @@ class MessageService:
         # Write ZIP directly to disk to minimize memory usage
         temp_dir = Path(os.environ.get("DATA_DIR", "data")) / "temp"
         temp_dir.mkdir(parents=True, exist_ok=True)
+        _secure_dir_permissions(temp_dir)
         token = secrets.token_hex(16)
         temp_zip_path = temp_dir / f"package_{token}.zip"
         
@@ -826,6 +831,7 @@ class MessageService:
         # Decrypt payload directly to a temp file
         temp_dir = Path(os.environ.get("DATA_DIR", "data")) / "temp"
         temp_dir.mkdir(parents=True, exist_ok=True)
+        _secure_dir_permissions(temp_dir)
         token = secrets.token_hex(16)
         temp_zip_path = temp_dir / f"decrypted_{token}.zip"
         
@@ -878,6 +884,7 @@ class MessageService:
         total_size = 0
         temp_dir = Path(os.environ.get("DATA_DIR", "data")) / "temp"
         temp_dir.mkdir(parents=True, exist_ok=True)
+        _secure_dir_permissions(temp_dir)
         
         try:
             for path in paths:

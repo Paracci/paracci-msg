@@ -11,7 +11,7 @@ import logging
 from pathlib import Path
 from flask import Flask
 from .i18n_manager import i18n
-from core.burn import BurnDB
+from core.burn import BurnDB, _secure_dir_permissions, _secure_file_permissions
 from core.crypto import wipe
 
 logger = logging.getLogger(__name__)
@@ -67,6 +67,7 @@ else:
 os.environ["DATA_DIR"] = str(DATA_DIR)
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+_secure_dir_permissions(DATA_DIR)
 
 # Global shared objects (imported in routes.py)
 db = None
@@ -220,6 +221,7 @@ def create_app(
         DATA_DIR = Path(data_dir).absolute()
         os.environ["DATA_DIR"] = str(DATA_DIR)
         DATA_DIR.mkdir(parents=True, exist_ok=True)
+        _secure_dir_permissions(DATA_DIR)
 
     if loopback_host is not None:
         globals()["loopback_host"] = loopback_host
@@ -280,7 +282,15 @@ def create_app(
         app.secret_key = secret_path.read_bytes()
     else:
         sk = os.urandom(32)
-        secret_path.write_bytes(sk)
+        _old_mask = None
+        if sys.platform != "win32":
+            _old_mask = os.umask(0o177)
+        try:
+            secret_path.write_bytes(sk)
+        finally:
+            if _old_mask is not None:
+                os.umask(_old_mask)
+        _secure_file_permissions(secret_path)
         app.secret_key = sk
 
     # Database (Device key will remain None until PIN is entered)

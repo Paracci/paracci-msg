@@ -16,6 +16,7 @@ import subprocess
 import sys
 import hashlib
 import json
+import getpass
 import logging
 import math
 import re
@@ -146,6 +147,105 @@ class _ConnectionProxy:
 
 
 # ---------------------------------------------------------------------------
+# Directory and File Permission Security Helpers
+# ---------------------------------------------------------------------------
+
+def _secure_dir_permissions(dir_path: str | Path) -> None:
+    """Restrict directory permissions to owner only.
+
+    POSIX: sets mode 0o700 (rwx------).
+    Windows: disables inheritance and grants Full Control to the owner via icacls.
+    """
+    path = Path(dir_path).resolve()
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        if sys.platform == "win32":
+            username = os.environ.get("USERNAME")
+            if not username:
+                try:
+                    import getpass
+                    username = getpass.getuser()
+                except Exception:
+                    pass
+            if not username:
+                logger.warning(
+                    "Could not restrict directory permissions on %s: USERNAME is empty.",
+                    path,
+                )
+                return
+            result = subprocess.run(
+                [
+                    "icacls",
+                    str(path),
+                    "/inheritance:r",
+                    "/grant:r",
+                    f"{username}:(OI)(CI)F",
+                ],
+                check=False,
+                capture_output=True,
+            )
+            if result.returncode != 0:
+                logger.warning(
+                    "icacls could not restrict permissions on directory %s (rc=%d): %s",
+                    path,
+                    result.returncode,
+                    result.stderr.decode(errors="replace").strip(),
+                )
+        else:
+            os.chmod(path, 0o700)
+    except Exception as exc:
+        logger.warning("Could not restrict directory permissions on %s: %s", path, exc)
+
+
+def _secure_file_permissions(file_path: str | Path) -> None:
+    """Restrict file permissions to owner only.
+
+    POSIX: sets mode 0o600 (rw-------).
+    Windows: disables inheritance and grants Full Control to the owner via icacls.
+    """
+    path = Path(file_path).resolve()
+    try:
+        if not path.exists():
+            return
+        if sys.platform == "win32":
+            username = os.environ.get("USERNAME")
+            if not username:
+                try:
+                    import getpass
+                    username = getpass.getuser()
+                except Exception:
+                    pass
+            if not username:
+                logger.warning(
+                    "Could not restrict file permissions on %s: USERNAME is empty.",
+                    path,
+                )
+                return
+            result = subprocess.run(
+                [
+                    "icacls",
+                    str(path),
+                    "/inheritance:r",
+                    "/grant:r",
+                    f"{username}:F",
+                ],
+                check=False,
+                capture_output=True,
+            )
+            if result.returncode != 0:
+                logger.warning(
+                    "icacls could not restrict permissions on file %s (rc=%d): %s",
+                    path,
+                    result.returncode,
+                    result.stderr.decode(errors="replace").strip(),
+                )
+        else:
+            os.chmod(path, 0o600)
+    except Exception as exc:
+        logger.warning("Could not restrict file permissions on %s: %s", path, exc)
+
+
+# ---------------------------------------------------------------------------
 # Database Setup
 # ---------------------------------------------------------------------------
 
@@ -221,58 +321,21 @@ class BurnDB:
 
     @staticmethod
     def _secure_db_permissions(db_path: str) -> None:
-        """Restrict the database file and WAL sidecar permissions to the owner only.
-
-        POSIX: sets mode 0o600 (rw-------) on the main file and any existing
-        sidecar files (-wal, -shm).
-        Windows: removes inherited ACEs and grants Full Control exclusively to
-        the current user via ``icacls``.
-
-        Failures are logged as warnings rather than exceptions so that an
-        unusual mount-point (e.g. NFS with squash) cannot prevent the
-        application from starting.
-        """
-        try:
-            if sys.platform == "win32":
-                username = os.environ.get("USERNAME", "")
-                if not username:
-                    logger.warning(
-                        "Could not restrict database file permissions: USERNAME env var is empty."
-                    )
-                    return
-                targets = [db_path] + [
-                    db_path + suffix
-                    for suffix in ("-wal", "-shm")
-                    if os.path.exists(db_path + suffix)
-                ]
-                for target in targets:
-                    result = subprocess.run(
-                        [
-                            "icacls", target,
-                            "/inheritance:r",
-                            "/grant:r", f"{username}:F",
-                        ],
-                        check=False,
-                        capture_output=True,
-                    )
-                    if result.returncode != 0:
-                        logger.warning(
-                            "icacls could not restrict permissions on %s (rc=%d): %s",
-                            target,
-                            result.returncode,
-                            result.stderr.decode(errors="replace").strip(),
-                        )
-            else:
-                os.chmod(db_path, 0o600)
-                for suffix in ("-wal", "-shm"):
-                    sidecar = db_path + suffix
-                    if os.path.exists(sidecar):
-                        os.chmod(sidecar, 0o600)
-        except Exception as exc:
-            logger.warning("Could not restrict database file permissions: %s", exc)
+        """Restrict the database file and WAL sidecar permissions to the owner only."""
+        targets = [db_path] + [
+            db_path + suffix
+            for suffix in ("-wal", "-shm")
+            if os.path.exists(db_path + suffix)
+        ]
+        for target in targets:
+            _secure_file_permissions(target)
 
     def _init_db(self):
         """Creates the database tables (burned_messages, sessions, device_meta)."""
+        # Secure the directory containing the database file first so that WAL/SHM
+        # and database files inherit owner-only permissions upon creation.
+        _secure_dir_permissions(Path(self.db_path).parent)
+
         # On POSIX, tighten the umask before the first connect() call so that
         # SQLite creates sessions.db with 0o600 from birth rather than the
         # process-default 0o644.  The umask is restored immediately after the
