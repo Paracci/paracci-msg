@@ -97,6 +97,30 @@ def install_build_deps() -> int:
     return run([sys.executable, "-m", "pip", "install", "--require-hashes", "-r", str(DEV_LOCK)])
 
 
+def build_frontend() -> int:
+    """Install Node dependencies and build frontend assets."""
+    print("\n  [FRONTEND] Building frontend dependencies...")
+    npm_exe = shutil.which("npm")
+    if not npm_exe:
+        print("\n  [ERROR] npm is not found in PATH. Please install Node.js.")
+        return 1
+    
+    lock_file = ROOT / "package-lock.json"
+    npm_cmd = "ci" if lock_file.exists() else "install"
+    
+    rc = subprocess.call([npm_exe, npm_cmd], cwd=str(ROOT), shell=(sys.platform == "win32"))
+    if rc != 0:
+        print(f"\n  [ERROR] npm {npm_cmd} failed with exit code {rc}.")
+        return rc
+        
+    rc = subprocess.call([npm_exe, "run", "build"], cwd=str(ROOT), shell=(sys.platform == "win32"))
+    if rc != 0:
+        print(f"\n  [ERROR] npm run build failed with exit code {rc}.")
+        return rc
+        
+    return 0
+
+
 def find_pyinstaller() -> str:
     """Return the path to the pyinstaller executable."""
     exe = shutil.which("pyinstaller")
@@ -415,6 +439,11 @@ def main() -> int:
         clean_artifacts()
 
     write_version_info(app_version, app_version_parts)
+
+    # Build frontend dependencies
+    rc = build_frontend()
+    if rc != 0:
+        return rc
 
     # Run PyInstaller
     rc = run_pyinstaller()

@@ -36,6 +36,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@3965060612d9729014424727315574cbc28be880  # v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install Node dependencies and build frontend
+        run: |
+          npm ci
+          npm run build
+
       - name: Set up Python 3.12
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:

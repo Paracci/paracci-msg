@@ -65,4 +65,8 @@ benchmark_result.json
 *report.md
 !*armor_report_*
 
-
+# --- Frontend Node dependencies ---
+node_modules/
+paracci/app/static/js/lib/purify.min.js
+paracci/app/static/js/lib/marked.min.js
+paracci/app/static/js/lib/highlight.min.js
