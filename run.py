@@ -350,10 +350,20 @@ def _collision_filename(filename: str, counter: int) -> str:
     return validate_native_download_filename(f"{stem[:stem_limit]}{marker}{suffix}")
 
 
-def _write_native_download(file_bytes: bytes, filename: str) -> Path:
+import shutil
+
+def _write_native_download(filename: str, source_path: Path | None = None, file_bytes: bytes | None = None) -> Path:
     """Atomically create a validated file under the managed Downloads root."""
-    if not isinstance(file_bytes, bytes) or len(file_bytes) > MAX_NATIVE_SAVE_BYTES:
-        raise ValueError("Native download exceeds the size limit.")
+    if source_path is not None:
+        try:
+            if os.path.getsize(source_path) > MAX_NATIVE_SAVE_BYTES:
+                raise ValueError("Native download exceeds the size limit.")
+        except OSError:
+            raise ValueError("Native download size check failed.")
+    else:
+        if not isinstance(file_bytes, bytes) or len(file_bytes) > MAX_NATIVE_SAVE_BYTES:
+            raise ValueError("Native download exceeds the size limit.")
+            
     validated_filename = validate_native_download_filename(filename)
     downloads_root = _native_downloads_root()
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
@@ -369,7 +379,11 @@ def _write_native_download(file_bytes: bytes, filename: str) -> Path:
             raise ValueError("Native download path is unavailable.") from exc
         try:
             with os.fdopen(descriptor, "wb") as output:
-                output.write(file_bytes)
+                if source_path is not None:
+                    with open(source_path, "rb") as f:
+                        shutil.copyfileobj(f, output)
+                else:
+                    output.write(file_bytes)
         except Exception:
             try:
                 candidate.unlink()
@@ -400,7 +414,7 @@ def download_preview_file(token: str) -> dict:
             f"Save {filename} to Paracci Downloads?",
         ):
             return {"success": False, "cancelled": True}
-        out_path = _write_native_download(entry.file_bytes, filename)
+        out_path = _write_native_download(filename, source_path=Path(entry.file_path))
         preview_win.evaluate_js(
             f"window.showDownloadSuccess({json.dumps(out_path.name)});"
         )
@@ -536,17 +550,28 @@ class ProApi:
         if grant is None:
             raise PermissionError("Native save grant is invalid or expired.")
         filename = validate_native_download_filename(grant.filename)
-        if len(grant.file_bytes) > MAX_NATIVE_SAVE_BYTES:
-            raise ValueError("Native download exceeds the size limit.")
+        try:
+            if os.path.getsize(grant.file_path) > MAX_NATIVE_SAVE_BYTES:
+                raise ValueError("Native download exceeds the size limit.")
+        except OSError:
+            pass
+            
         window = self._require_window()
         if not window.create_confirmation_dialog(
             "Confirm download",
             f"Save {filename} to Paracci Downloads?",
         ):
             return None
-        path = _write_native_download(grant.file_bytes, filename)
-        print(f"  [+] Confirmed Save: {path}")
-        return str(path)
+            
+        try:
+            path = _write_native_download(filename, source_path=Path(grant.file_path))
+            print(f"  [+] Confirmed Save: {path}")
+            return str(path)
+        finally:
+            try:
+                secure_delete(grant.file_path)
+            except Exception:
+                pass
 
     def open_file_location(self, path):
         """Opens the folder containing the file in Windows Explorer."""
