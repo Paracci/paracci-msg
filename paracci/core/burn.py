@@ -395,9 +395,13 @@ class BurnDB:
                 conn = sqlite3.connect(self.meta_db_path, check_same_thread=False)
                 conn.execute("PRAGMA journal_mode=WAL")
             else:
-                conn = sqlite3.connect(self.db_path, check_same_thread=False)
-                conn.execute("PRAGMA journal_mode=WAL")
-                conn.execute(f"ATTACH DATABASE '{self.meta_db_path}' AS meta KEY ''")
+                MIGRATION_CONTEXT.device_key = self._device_key
+                try:
+                    conn = sqlite3.connect(self.db_path, check_same_thread=False)
+                    conn.execute("PRAGMA journal_mode=WAL")
+                    conn.execute(f"ATTACH DATABASE '{self.meta_db_path}' AS meta KEY ''")
+                finally:
+                    MIGRATION_CONTEXT.device_key = None
             conn.execute("PRAGMA foreign_keys=ON")
             conn.execute("PRAGMA secure_delete=ON")
             conn.execute("PRAGMA cache_size=64")
@@ -454,12 +458,14 @@ class BurnDB:
                 
             # 3. Run migrations on sessions.db if unlocked
             if self._device_key is not None:
-                conn = sqlite3.connect(self.db_path)
-                conn.execute("PRAGMA journal_mode=WAL")
-                conn.close()
+                self._ensure_sqlcipher_encryption()
                 
                 MIGRATION_CONTEXT.device_key = self._device_key
                 try:
+                    conn = sqlite3.connect(self.db_path)
+                    conn.execute("PRAGMA journal_mode=WAL")
+                    conn.close()
+                    
                     backend_sessions = get_backend(f"sqlite:///{self.db_path}")
                     with backend_sessions.lock():
                         backend_sessions.apply_migrations(backend_sessions.to_apply(migrations))
@@ -611,6 +617,7 @@ class BurnDB:
 
         import sys
         sys._paracci_migration_db = self
+        MIGRATION_CONTEXT.device_key = self._device_key
         try:
             backend = get_backend(f"sqlite:///{self.db_path}")
             migrations_dir = Path(__file__).parent / "migrations" / "encryption"
@@ -635,6 +642,7 @@ class BurnDB:
             if backend.connection:
                 backend.connection.close()
         finally:
+            MIGRATION_CONTEXT.device_key = None
             if hasattr(sys, "_paracci_migration_db"):
                 del sys._paracci_migration_db
 
