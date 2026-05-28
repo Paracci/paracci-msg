@@ -285,7 +285,7 @@ def create_app(
         TRUSTED_HOSTS=[f"{globals()['loopback_host']}:{globals()['loopback_port']}"],
         SESSION_COOKIE_NAME="paracci_session",
         SESSION_COOKIE_HTTPONLY=True,
-        SESSION_COOKIE_SAMESITE="Lax",
+        SESSION_COOKIE_SAMESITE="Strict",
         SESSION_COOKIE_SECURE=False,
         SESSION_REFRESH_EACH_REQUEST=False,
         SESSION_PERMANENT=True,
