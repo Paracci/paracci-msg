@@ -52,19 +52,17 @@ except ImportError:
         try:
             subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
             
-            # Locate python and pip in the new venv
+            # Locate python in the new venv
             if sys.platform == "win32":
                 py_exe = venv_dir / "Scripts" / "python.exe"
-                pip_exe = venv_dir / "Scripts" / "pip.exe"
             else:
                 py_exe = venv_dir / "bin" / "python"
-                pip_exe = venv_dir / "bin" / "pip"
 
-            if py_exe.exists() and pip_exe.exists():
+            if py_exe.exists():
                 print("[*] Installing dependencies into the virtual environment...", flush=True)
                 
-                # Install lock files
-                req_args = [str(pip_exe), "install", "--require-hashes", "-r", str(ROOT_DIR / "requirements.lock")]
+                # Install lock files using python -m pip to prevent lock errors when upgrading pip
+                req_args = [str(py_exe), "-m", "pip", "install", "--require-hashes", "-r", str(ROOT_DIR / "requirements.lock")]
                 if (ROOT_DIR / "requirements-dev.lock").exists():
                     req_args.extend(["-r", str(ROOT_DIR / "requirements-dev.lock")])
                 subprocess.run(req_args, check=True)
@@ -72,7 +70,7 @@ except ImportError:
                 # If on Windows, also install sqlcipher3-wheels to prevent build failures/DatabaseErrors
                 if sys.platform == "win32":
                     print("[*] Installing sqlcipher3-wheels for Windows SQLCipher support...", flush=True)
-                    subprocess.run([str(pip_exe), "install", "sqlcipher3-wheels"], check=True)
+                    subprocess.run([str(py_exe), "-m", "pip", "install", "sqlcipher3-wheels"], check=True)
                 
                 target_python = py_exe
         except Exception as e:
