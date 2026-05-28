@@ -757,7 +757,9 @@ def _validate_request_source():
 
     # 2. Validate Origin
     origin = request.headers.get("Origin")
-    if origin and origin != "null":
+    if origin == "null":
+        return _reject_security("unexpected origin (null)")
+    if origin:
         try:
             parsed = urlparse(origin)
             is_valid = (
@@ -774,6 +776,10 @@ def _validate_request_source():
     referer = request.headers.get("Referer")
     if referer and not _same_origin_url(referer):
         return _reject_security("unexpected referer")
+        
+    # 3.5. Enforce Presence of Source Headers
+    if not origin and not referer and not _is_public_request() and request.endpoint != "main.loopback_bootstrap":
+        return _reject_security("missing source headers")
 
     # 4. Validate Fetch Site
     fetch_site = request.headers.get("Sec-Fetch-Site", "").lower()

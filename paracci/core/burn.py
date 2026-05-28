@@ -1279,8 +1279,7 @@ class BurnDB:
                         raise ValueError("Tampering detected (HMAC mismatch).")
                     parsed = json.loads(payload.decode("utf-8"))
                 else:
-                    # Legacy plaintext JSON migration path
-                    parsed = json.loads(raw.decode("utf-8"))
+                    raise ValueError("Tampering detected (missing signature prefix).")
 
                 state["failed_attempts"] = max(0, int(parsed.get("failed_attempts", 0)))
                 state["locked_until"] = max(0, int(parsed.get("locked_until", 0)))
