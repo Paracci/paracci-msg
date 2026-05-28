@@ -349,10 +349,14 @@ def _clear_preview_cache(ids=None):
 
 
 def _cleanup_preview_cache():
-    """Cleans expired preview files from memory."""
     now = time.time()
-    expired = [k for k, v in PREVIEW_CACHE.items() if v["expires"] < now]
+    try:
+        items = list(PREVIEW_CACHE.items())
+    except RuntimeError:
+        return []
+    expired = [k for k, v in items if v["expires"] < now]
     return _clear_preview_cache(expired)
+
 
 def _add_to_preview_cache(filename, content_path, mime, allow_download, ttl=600):
     """Adds a file temporarily to the preview cache."""
@@ -430,9 +434,12 @@ def _clear_staged_attachment_cache(ids=None):
 
 
 def _cleanup_staged_attachment_cache():
-    """Cleans expired native staged attachments from memory."""
     now = time.time()
-    expired = [k for k, v in STAGED_ATTACHMENT_CACHE.items() if v["expires"] < now]
+    try:
+        items = list(STAGED_ATTACHMENT_CACHE.items())
+    except RuntimeError:
+        return []
+    expired = [k for k, v in items if v["expires"] < now]
     return _clear_staged_attachment_cache(expired)
 
 
@@ -453,6 +460,21 @@ def _add_to_staged_attachment_cache(filename, content_path, ttl=600):
         "expires": time.time() + ttl,
     }
     return attachment_id
+
+
+# --- Background Temp File Sweeper ---
+def _temp_file_sweeper():
+    while True:
+        time.sleep(60)
+        try:
+            _cleanup_preview_cache()
+            _cleanup_staged_attachment_cache()
+        except Exception as e:
+            logger.error("Error in background temp file sweeper: %s", e)
+
+import threading
+_sweeper_thread = threading.Thread(target=_temp_file_sweeper, daemon=True)
+_sweeper_thread.start()
 
 
 def _cleanup_native_file_ref_cache():
@@ -1042,6 +1064,7 @@ def unlock():
                     keyed_db = ag_app.db.with_device_key(device_key)
                 except Exception:
                     wipe(device_key)
+                    device_key = None
                     raise
                 _activate_keyed_db(keyed_db)
                 ag_app.device_key = device_key # Set globally since it's initial setup
@@ -2226,6 +2249,8 @@ def _prepare_open_response(meta, opened, sid, is_ajax, secure_delete_warning=Non
     finally:
         if temp_zip_path.exists():
             secure_delete(temp_zip_path)
+        from core.crypto import wipe
+        wipe(opened.payload)
 
     effective_allow_download = (
         opened.allow_download
@@ -2688,14 +2713,9 @@ def preview(pid: str):
         return _mark_sensitive_no_store(response)
 
     if request.args.get("variant") == "preview":
-        try:
-            with open(content_path, "rb") as f:
-                img_bytes = f.read()
-        except OSError:
-            abort(404)
         preview_data = build_no_download_image_preview(
-            img_bytes,
-            file_data.get("mime", ""),
+            mime_type=file_data.get("mime", ""),
+            image_path=content_path,
         )
         if not preview_data:
             abort(415)
@@ -2729,7 +2749,7 @@ def preview_content(preview_token: str):
         if download_requested:
             abort(403)
 
-        preview_data = build_no_download_image_preview(entry.file_bytes, mime_type)
+        preview_data = build_no_download_image_preview(mime_type=mime_type, image_path=entry.file_path)
         if not preview_data:
             abort(415)
         preview_content, preview_mime = preview_data
@@ -2741,7 +2761,7 @@ def preview_content(preview_token: str):
         return _mark_sensitive_no_store(response)
 
     response = send_file(
-        io.BytesIO(entry.file_bytes),
+        entry.file_path,
         mimetype=mime_type,
         as_attachment=download_requested,
         download_name=(
