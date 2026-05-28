@@ -139,13 +139,7 @@ class PreviewWindowApi:
 def _preview_token_matches(candidate: str | None, expected: str | None) -> bool:
     return bool(candidate and expected and secrets.compare_digest(str(candidate), str(expected)))
 
-def get_free_port():
-    """Requests a free port from the OS."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(('127.0.0.1', 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
+
 
 
 def _file_activation_target(candidate: LaunchFileCandidate | None, db) -> str:
@@ -817,8 +811,34 @@ if __name__ == "__main__":
         if not args.port:
             args.port = 5000 if args.user == 'x' else 5001
 
-    port = args.port if args.port else get_free_port()
+    import werkzeug.serving
+    _original_server_bind = werkzeug.serving.BaseWSGIServer.server_bind
+    def _hardened_server_bind(self):
+        self.allow_reuse_address = False
+        if os.name == 'nt':
+            import socket
+            try:
+                self.socket.setsockopt(socket.SOL_SOCKET, getattr(socket, 'SO_EXCLUSIVEADDRUSE', -5), 1)
+            except Exception:
+                pass
+        _original_server_bind(self)
+    werkzeug.serving.BaseWSGIServer.server_bind = _hardened_server_bind
+
+    class AppProxy:
+        def __init__(self):
+            self.app = None
+        def __call__(self, environ, start_response):
+            if self.app is None:
+                raise RuntimeError("App is not initialized yet")
+            return self.app(environ, start_response)
+    
+    app_proxy = AppProxy()
+    
     loopback_host = "127.0.0.1"
+    desired_port = args.port if args.port else 0
+    server = make_server(loopback_host, desired_port, app_proxy, threaded=True)
+    port = server.socket.getsockname()[1]
+
     _configure_preview_window_context(loopback_host, port)
     webview_token = getattr(webview, "token", None) if not args.no_gui else None
     using_webview_token = bool(webview_token)
@@ -863,6 +883,8 @@ if __name__ == "__main__":
         loopback_port=port,
         no_gui_mode=args.no_gui,
     )
+    
+    app_proxy.app = app
 
     from core.config import ParacciConfig
     _timeout_minutes = ParacciConfig().get("inactivity_timeout_minutes")
@@ -902,12 +924,21 @@ if __name__ == "__main__":
         print(f"  {bootstrap_url}", flush=True)
         print("  Bare loopback URLs reject protected requests without bootstrap auth.")
         print("  Stop with: Ctrl+C\n")
-        app.run(host=loopback_host, port=port, debug=False)
+        server_thread = threading.Thread(target=server.serve_forever)
+        server_thread.daemon = True
+        server_thread.start()
+        try:
+            while True:
+                import time
+                time.sleep(1)
+        except KeyboardInterrupt:
+            pass
+        _shutdown_desktop_runtime(server, server_thread, activation_broker, update_manager, None)
+        sys.exit(0)
     else:
         print("  Mode: Desktop App")
         
         # Retain a stoppable loopback server so installer handoff can be clean.
-        server = make_server(loopback_host, port, app, threaded=True)
         server_thread = threading.Thread(target=server.serve_forever)
         server_thread.daemon = True
         server_thread.start()
