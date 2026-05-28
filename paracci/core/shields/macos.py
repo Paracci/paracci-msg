@@ -112,7 +112,23 @@ class MacOSShield(BaseShield):
         encryption key protection or destruction is the stronger security boundary.
         """
         try:
-            with open(file_path, "r+b") as f:
+            p = Path(file_path)
+            if p.is_symlink():
+                p.unlink()
+                return True
+            if not p.exists(): return True
+
+            flags = os.O_RDWR
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= getattr(os, "O_NOFOLLOW")
+
+            try:
+                fd = os.open(file_path, flags)
+            except OSError:
+                os.remove(file_path)
+                return True
+
+            with os.fdopen(fd, "r+b") as f:
                 size = os.fstat(f.fileno()).st_size
                 f.write(os.urandom(size))
                 f.flush()

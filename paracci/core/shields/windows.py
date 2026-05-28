@@ -281,6 +281,9 @@ class WindowsShield(BaseShield):
         """
         try:
             p = Path(file_path)
+            if p.is_symlink():
+                p.unlink()
+                return True
             if not p.exists(): return True
             with open(file_path, "r+b") as f:
                 size = os.fstat(f.fileno()).st_size
