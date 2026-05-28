@@ -45,8 +45,47 @@ except ImportError:
         if py_exe.exists():
             target_python = py_exe
 
+    # If no virtual environment is found, automatically create one in the workspace
+    if not target_python:
+        print("[*] Virtual environment (.venv) not found. Creating a new virtual environment...", flush=True)
+        import subprocess
+        try:
+            subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
+            
+            # Locate python and pip in the new venv
+            if sys.platform == "win32":
+                py_exe = venv_dir / "Scripts" / "python.exe"
+                pip_exe = venv_dir / "Scripts" / "pip.exe"
+            else:
+                py_exe = venv_dir / "bin" / "python"
+                pip_exe = venv_dir / "bin" / "pip"
+
+            if py_exe.exists() and pip_exe.exists():
+                print("[*] Installing dependencies into the virtual environment...", flush=True)
+                
+                # Install lock files
+                req_args = [str(pip_exe), "install", "--require-hashes", "-r", str(ROOT_DIR / "requirements.lock")]
+                if (ROOT_DIR / "requirements-dev.lock").exists():
+                    req_args.extend(["-r", str(ROOT_DIR / "requirements-dev.lock")])
+                subprocess.run(req_args, check=True)
+
+                # If on Windows, also install sqlcipher3-wheels to prevent build failures/DatabaseErrors
+                if sys.platform == "win32":
+                    print("[*] Installing sqlcipher3-wheels for Windows SQLCipher support...", flush=True)
+                    subprocess.run([str(pip_exe), "install", "sqlcipher3-wheels"], check=True)
+                
+                target_python = py_exe
+        except Exception as e:
+            print(f"[ERROR] Failed to automatically create virtual environment and install dependencies: {e}", file=sys.stderr)
+            print("[ERROR] Please create a virtual environment manually:", file=sys.stderr)
+            if sys.platform == "win32":
+                print("    python -m venv .venv\n    .\\.venv\\Scripts\\activate\n    pip install -r requirements.lock", file=sys.stderr)
+            else:
+                print("    python -m venv .venv\n    source .venv/bin/activate\n    pip install -r requirements.lock", file=sys.stderr)
+            sys.exit(1)
+
     if target_python:
-        print(f"[*] Dependencies missing. Re-running script inside virtual environment: {target_python}")
+        print(f"[*] Re-running script inside virtual environment: {target_python}", flush=True)
         import subprocess
         env = os.environ.copy()
         env["PARACCI_VENV_BOOTSTRAPPED"] = "1"
@@ -56,14 +95,6 @@ except ImportError:
         except Exception as e:
             print(f"[ERROR] Failed to execute script within virtual environment: {e}", file=sys.stderr)
             sys.exit(1)
-    else:
-        print("[ERROR] Dependencies missing (e.g. 'yoyo') and no virtual environment (.venv) was found.", file=sys.stderr)
-        print("[ERROR] Please create a virtual environment and install dependencies before running this tool:", file=sys.stderr)
-        if sys.platform == "win32":
-            print("    python -m venv .venv\n    .\\.venv\\Scripts\\activate\n    pip install -r requirements.lock", file=sys.stderr)
-        else:
-            print("    python -m venv .venv\n    source .venv/bin/activate\n    pip install -r requirements.lock", file=sys.stderr)
-        sys.exit(1)
 
 sys.path.insert(0, str(ROOT_DIR / "paracci"))
 
