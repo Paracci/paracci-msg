@@ -38,5 +38,10 @@ self.addEventListener('fetch', event => {
 
     const headers = new Headers(event.request.headers);
     headers.set('X-Paracci-Token', loopbackToken);
-    event.respondWith(fetch(new Request(event.request, { headers })));
+    
+    const options = { headers };
+    if (event.request.referrer) {
+        options.referrer = event.request.referrer;
+    }
+    event.respondWith(fetch(new Request(event.request, options)));
 });
