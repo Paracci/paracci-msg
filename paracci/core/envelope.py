@@ -90,7 +90,7 @@ class OpenedEnvelope(NamedTuple):
     msg_id: bytes
     session_id: bytes
     direction: int
-    payload: bytes
+    payload: bytearray
     evo_step: int
     expire_at: int
     single_use: bool
@@ -474,14 +474,18 @@ def _decrypt_sync_block(
     except Exception as exc:
         raise EnvelopeError("Sync block decryption failed.") from exc
 
-    sync_data = _parse_sync_payload(sync_raw)
-    bond_nonce = None
-    if "bond_nonce" in sync_data:
-        try:
-            bond_nonce = bytes.fromhex(sync_data["bond_nonce"])
-        except ValueError as exc:
-            raise EnvelopeError("Sync block contains an invalid bond nonce.") from exc
-    return sync_data, bond_nonce
+    try:
+        sync_data = _parse_sync_payload(sync_raw)
+        bond_nonce = None
+        if "bond_nonce" in sync_data:
+            try:
+                bond_nonce = bytes.fromhex(sync_data["bond_nonce"])
+            except ValueError as exc:
+                raise EnvelopeError("Sync block contains an invalid bond nonce.") from exc
+        return sync_data, bond_nonce
+    finally:
+        from .crypto import wipe
+        wipe(sync_raw)
 
 
 def _derive_receive_keys(

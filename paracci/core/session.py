@@ -1045,7 +1045,6 @@ def deserialize_session_meta(encrypted_data: bytes, device_key: bytes) -> Sessio
     nonce = encrypted_data[:NONCE_LEN]
     blob = EncryptedBlob(nonce=nonce, ciphertext=encrypted_data[NONCE_LEN:])
 
-    # --- Try v3 first ---
     # Only catch InvalidTag here (= decryption key mismatch / wrong AAD).
     # ValueError / TypeError raised by _deserialize_v3 (e.g. from a malicious
     # evo_config or structural corruption of a successfully-decrypted envelope)
@@ -1056,20 +1055,30 @@ def deserialize_session_meta(encrypted_data: bytes, device_key: bytes) -> Sessio
     except InvalidTag:
         pass
     else:
-        if raw[:1] == _SESSION_BINARY_VERSION:
-            return _deserialize_v3(raw)
-        raise SessionError("Session data format is unrecognized.")
+        try:
+            if raw[:1] == _SESSION_BINARY_VERSION:
+                return _deserialize_v3(raw)
+            raise SessionError("Session data format is unrecognized.")
+        finally:
+            wipe(raw)
 
     # --- Fall back to legacy JSON paths (v2 then v1) ---
     try:
         raw = decrypt(device_key, blob, aad=b"paracci.db.session.v2")
-        return _deserialize_legacy_json(raw)
     except (InvalidTag, ValueError, TypeError):
         pass
+    else:
+        try:
+            return _deserialize_legacy_json(raw)
+        finally:
+            wipe(raw)
 
     try:
         raw = decrypt(device_key, blob, aad=b"paracci.db.session.v1")
-        return _deserialize_legacy_json(raw)
+        try:
+            return _deserialize_legacy_json(raw)
+        finally:
+            wipe(raw)
     except (InvalidTag, ValueError, TypeError) as exc:
         raise SessionError("Session data could not be decrypted.") from exc
 class SessionFileError(Exception):
