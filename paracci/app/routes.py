@@ -801,7 +801,9 @@ def _validate_request_source():
         
     # 3.5. Enforce Presence of Source Headers
     if not origin and not referer and not _is_public_request() and request.endpoint != "main.loopback_bootstrap":
-        return _reject_security("missing source headers")
+        token = request.headers.get("X-Paracci-Token") or request.form.get("_paracci_token", "")
+        if not _token_matches(token, ag_app.loopback_token):
+            return _reject_security("missing source headers")
 
     # 4. Validate Fetch Site
     fetch_site = request.headers.get("Sec-Fetch-Site", "").lower()
