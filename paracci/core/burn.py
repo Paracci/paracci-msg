@@ -1218,7 +1218,7 @@ class BurnDB:
         try:
             conn.execute("BEGIN IMMEDIATE")
             conn.executemany(
-                "INSERT OR REPLACE INTO {self._meta_prefix}device_meta (key, value) VALUES (?, ?)",
+                f"INSERT OR REPLACE INTO {self._meta_prefix}device_meta (key, value) VALUES (?, ?)",
                 encoded_values,
             )
             conn.commit()
