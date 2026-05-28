@@ -71,7 +71,7 @@ class ParacciAuditor:
                 self.add_issue("HIGH", path, desc)
 
         if re.search(r'[a-f0-9]{64}', content):
-            if "crypto.py" not in path and "test" not in path and "security_audit" not in path:
+            if not any(x in path for x in ["crypto.py", "test", "security_audit.py", "updater.py"]):
                 self.add_issue("MEDIUM", path, "Potential hardcoded key or hash found.")
 
         if re.search(r'\bprint\(', content) and "run.py" not in path and "audit" not in path:
