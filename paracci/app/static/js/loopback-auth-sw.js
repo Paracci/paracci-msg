@@ -39,9 +39,25 @@ self.addEventListener('fetch', event => {
     const headers = new Headers(event.request.headers);
     headers.set('X-Paracci-Token', loopbackToken);
     
-    const options = { headers };
-    if (event.request.referrer) {
-        options.referrer = event.request.referrer;
+    let request;
+    if (event.request.mode === 'navigate') {
+        const options = {
+            method: event.request.method,
+            headers: headers,
+            credentials: event.request.credentials,
+            mode: 'same-origin',
+            redirect: event.request.redirect
+        };
+        if (event.request.referrer) {
+            options.referrer = event.request.referrer;
+        }
+        request = new Request(event.request.url, options);
+    } else {
+        const options = { headers };
+        if (event.request.referrer) {
+            options.referrer = event.request.referrer;
+        }
+        request = new Request(event.request, options);
     }
-    event.respondWith(fetch(new Request(event.request, options)));
+    event.respondWith(fetch(request));
 });
