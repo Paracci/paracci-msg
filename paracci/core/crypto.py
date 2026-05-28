@@ -473,7 +473,7 @@ def decrypt(
     key: bytes | bytearray,
     blob: EncryptedBlob,
     aad: bytes = b"",
-) -> bytes:
+) -> bytearray:
     """
     Decryption with ChaCha20-Poly1305 + Poly1305 verification.
 
@@ -484,7 +484,7 @@ def decrypt(
         raise ValueError(f"Key must be {KEY_LEN} bytes, received: {len(key)}")
 
     chacha = ChaCha20Poly1305(key)
-    return chacha.decrypt(blob.nonce, blob.ciphertext, aad if aad else None)
+    return bytearray(chacha.decrypt(blob.nonce, blob.ciphertext, aad if aad else None))
 
 
 # ---------------------------------------------------------------------------
