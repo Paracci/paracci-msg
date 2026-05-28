@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import List, Dict, Tuple, NamedTuple
 
 from .crypto import random_bytes
+from .burn import secure_delete
 
 FALLBACK_ATTACHMENT_FILENAME = "attachment.bin"
 MAX_ATTACHMENT_FILENAME_LENGTH = 180
@@ -422,8 +423,8 @@ def extract_package(
                     except Exception:
                         if dest_path.exists():
                             try:
-                                os.remove(dest_path)
-                            except OSError:
+                                secure_delete(dest_path)
+                            except Exception:
                                 pass
                         raise
     except Exception as exc:
@@ -431,8 +432,8 @@ def extract_package(
         for att in attachments:
             if hasattr(att, "content_path") and att.content_path:
                 try:
-                    os.remove(att.content_path)
-                except OSError:
+                    secure_delete(att.content_path)
+                except Exception:
                     pass
         if isinstance(exc, PackageLimitError):
             raise

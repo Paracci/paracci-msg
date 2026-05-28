@@ -9,6 +9,7 @@ import time
 from typing import Callable
 
 from .package import validate_native_download_filename
+from .burn import secure_delete
 
 
 MAX_NATIVE_SAVE_BYTES = 64 * 1024 * 1024
@@ -130,7 +131,7 @@ class PreviewStore:
             entry = self._entries.pop(token, None)
         if entry is not None:
             try:
-                os.remove(entry.file_path)
+                secure_delete(entry.file_path)
             except Exception:
                 pass
 
@@ -146,7 +147,17 @@ class PreviewStore:
                 entry = self._entries.pop(token, None)
                 if entry is not None:
                     try:
-                        os.remove(entry.file_path)
+                        secure_delete(entry.file_path)
+                    except Exception:
+                        pass
+
+    def clear(self) -> None:
+        with self._lock:
+            for token, entry in list(self._entries.items()):
+                self._entries.pop(token, None)
+                if entry is not None:
+                    try:
+                        secure_delete(entry.file_path)
                     except Exception:
                         pass
 
@@ -222,7 +233,7 @@ class NativeSaveGrantStore:
         if entry is None or entry.expires_at < now:
             if entry is not None:
                 try:
-                    os.remove(entry.file_path)
+                    secure_delete(entry.file_path)
                 except Exception:
                     pass
             return None
@@ -235,7 +246,7 @@ class NativeSaveGrantStore:
             content = b""
         finally:
             try:
-                os.remove(entry.file_path)
+                secure_delete(entry.file_path)
             except Exception:
                 pass
 
@@ -260,7 +271,17 @@ class NativeSaveGrantStore:
                 entry = self._entries.pop(token, None)
                 if entry is not None:
                     try:
-                        os.remove(entry.file_path)
+                        secure_delete(entry.file_path)
+                    except Exception:
+                        pass
+
+    def clear(self) -> None:
+        with self._lock:
+            for token, entry in list(self._entries.items()):
+                self._entries.pop(token, None)
+                if entry is not None:
+                    try:
+                        secure_delete(entry.file_path)
                     except Exception:
                         pass
 
