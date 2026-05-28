@@ -165,6 +165,7 @@
         }
 
         e.preventDefault();
+        e.stopImmediatePropagation();
         const submitter = e.submitter;
         seedLoopbackWorker().then(ready => {
             if (!ready) {
