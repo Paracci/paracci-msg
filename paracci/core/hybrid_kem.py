@@ -64,7 +64,7 @@ def initiator_kem_setup() -> dict:
         _raise_hybrid_error("Hybrid KEM setup failed.", exc, "hybrid_kem_init_failed")
     return {
         "ml_kem_public_key": public_key,
-        "ml_kem_secret_key": secret_key,
+        "ml_kem_secret_key": bytearray(secret_key),
     }
 
 
