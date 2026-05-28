@@ -26,14 +26,6 @@ class PreviewEntry:
     expires_at: float
 
     @property
-    def file_bytes(self) -> bytes:
-        try:
-            with open(self.file_path, "rb") as f:
-                return f.read()
-        except OSError:
-            return b""
-
-    @property
     def file_size(self) -> int:
         if self.file_path and os.path.exists(self.file_path):
             try:
@@ -50,17 +42,6 @@ class NativeSaveGrant:
     filename: str
     created_at: float
     expires_at: float
-    in_memory_bytes: bytes = None
-
-    @property
-    def file_bytes(self) -> bytes:
-        if self.in_memory_bytes is not None:
-            return self.in_memory_bytes
-        try:
-            with open(self.file_path, "rb") as f:
-                return f.read()
-        except OSError:
-            return b""
 
 
 class PreviewStore:
@@ -238,25 +219,14 @@ class NativeSaveGrantStore:
                     pass
             return None
 
-        # Read into memory for consumption and clean up file
-        try:
-            with open(entry.file_path, "rb") as f:
-                content = f.read()
-        except OSError:
-            content = b""
-        finally:
-            try:
-                secure_delete(entry.file_path)
-            except Exception:
-                pass
-
+        # Return entry without reading file into memory or deleting it.
+        # The consumer is responsible for deleting the file at entry.file_path.
         return NativeSaveGrant(
             token=entry.token,
             file_path=entry.file_path,
             filename=entry.filename,
             created_at=entry.created_at,
             expires_at=entry.expires_at,
-            in_memory_bytes=content,
         )
 
     def cleanup_expired(self) -> None:

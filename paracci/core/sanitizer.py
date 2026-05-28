@@ -1,5 +1,6 @@
 import io
 import logging
+from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageOps, UnidentifiedImageError
 
@@ -56,13 +57,19 @@ def sanitize_image(image_bytes: bytes, filename: str) -> bytes:
         raise SanitizationError(filename) from e
 
 
-def build_no_download_image_preview(image_bytes: bytes, mime_type: str) -> tuple[bytes, str] | None:
+def build_no_download_image_preview(
+    image_bytes: bytes | None = None,
+    mime_type: str = "",
+    *,
+    image_path: str | Path | None = None
+) -> tuple[bytes, str] | None:
     """Build a lossy, marked derivative for a restricted inline image preview."""
     if not str(mime_type or "").lower().startswith("image/"):
         return None
 
     try:
-        with Image.open(io.BytesIO(image_bytes)) as image:
+        image_source = image_path if image_path else io.BytesIO(image_bytes)
+        with Image.open(image_source) as image:
             image = ImageOps.exif_transpose(image)
             image.thumbnail(
                 (NO_DOWNLOAD_PREVIEW_MAX_DIMENSION, NO_DOWNLOAD_PREVIEW_MAX_DIMENSION)
