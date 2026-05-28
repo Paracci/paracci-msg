@@ -941,7 +941,7 @@ if __name__ == "__main__":
         install_macos_file_open_handler(on_external_activation)
         activation_path = str(launch_candidate.path) if launch_candidate is not None else None
         activation_broker, forwarded = FileActivationBroker.claim_or_forward(
-            ag_app.DATA_DIR,
+            user_data_dir or ag_app.DATA_DIR,
             activation_path,
             on_external_activation,
         )
