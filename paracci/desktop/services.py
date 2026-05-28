@@ -32,6 +32,7 @@ from core.burn import (
     is_device_initialized,
     _secure_dir_permissions,
     _secure_file_permissions,
+    secure_delete,
 )
 from core.config import ParacciConfig
 from core.crypto import EncryptedBlob, decrypt, encrypt, wipe
@@ -753,14 +754,14 @@ class MessageService:
         finally:
             if temp_zip_path.exists():
                 try:
-                    os.remove(temp_zip_path)
-                except OSError:
+                    secure_delete(temp_zip_path)
+                except Exception:
                     pass
             for name, temp_file_path in files:
                 if isinstance(temp_file_path, (str, Path)) and os.path.exists(temp_file_path):
                     try:
-                        os.remove(temp_file_path)
-                    except OSError:
+                        secure_delete(temp_file_path)
+                    except Exception:
                         pass
         
         self.sessions.save(meta._replace(tx_count=meta.tx_count + 1, send_seed=sealed.next_seed))
@@ -846,8 +847,8 @@ class MessageService:
         finally:
             if temp_zip_path.exists():
                 try:
-                    os.remove(temp_zip_path)
-                except OSError:
+                    secure_delete(temp_zip_path)
+                except Exception:
                     pass
                     
         effective_allow_download = (
@@ -913,8 +914,8 @@ class MessageService:
                 except Exception:
                     if temp_file_path.exists():
                         try:
-                            os.remove(temp_file_path)
-                        except OSError:
+                            secure_delete(temp_file_path)
+                        except Exception:
                             pass
                     raise
                     
@@ -930,8 +931,8 @@ class MessageService:
                 except Exception as exc:
                     if temp_file_path.exists():
                         try:
-                            os.remove(temp_file_path)
-                        except OSError:
+                            secure_delete(temp_file_path)
+                        except Exception:
                             pass
                     if isinstance(exc, SanitizationError):
                         raise MessageServiceError(SanitizationError.user_message) from exc
@@ -944,8 +945,8 @@ class MessageService:
             for name, tf in files:
                 if isinstance(tf, (str, Path)) and os.path.exists(tf):
                     try:
-                        os.remove(tf)
-                    except OSError:
+                        secure_delete(tf)
+                    except Exception:
                         pass
             raise
 

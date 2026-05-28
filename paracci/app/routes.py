@@ -53,7 +53,8 @@ from core.sanitizer import (
 from core.security_utils import scan_text_for_security
 from core.burn import (
     is_device_initialized, DeviceError,
-    DeviceLockedError, BurnGuard, AlreadyBurnedError, TTLExpiredError
+    DeviceLockedError, BurnGuard, AlreadyBurnedError, TTLExpiredError,
+    secure_delete
 )
 from desktop.device_key_binding import (
     DeviceBindingError,
@@ -341,10 +342,7 @@ def _clear_preview_cache(ids=None):
             continue
         content_path = entry.get("content_path")
         if content_path and os.path.exists(content_path):
-            try:
-                os.remove(content_path)
-            except OSError:
-                pass
+            secure_delete(content_path)
         _drop_cached_entry(entry, ("content", "preview_content"))
         cleared += 1
     return cleared
@@ -425,10 +423,7 @@ def _clear_staged_attachment_cache(ids=None):
             continue
         content_path = entry.get("content_path")
         if content_path and os.path.exists(content_path):
-            try:
-                os.remove(content_path)
-            except OSError:
-                pass
+            secure_delete(content_path)
         _drop_cached_entry(entry, ("content",))
         cleared += 1
     return cleared
@@ -544,10 +539,7 @@ def stage_native_attachment_paths(paths: Sequence[str | Path]) -> list[dict]:
                         dest.write(chunk)
             except Exception:
                 if temp_file_path.exists():
-                    try:
-                        os.remove(temp_file_path)
-                    except OSError:
-                        pass
+                    secure_delete(temp_file_path)
                 raise
                 
             file_size = written_size
@@ -562,10 +554,7 @@ def stage_native_attachment_paths(paths: Sequence[str | Path]) -> list[dict]:
                     file_size = len(sanitized)
             except Exception as exc:
                 if temp_file_path.exists():
-                    try:
-                        os.remove(temp_file_path)
-                    except OSError:
-                        pass
+                    secure_delete(temp_file_path)
                 if isinstance(exc, SanitizationError):
                     raise NativeAttachmentStagingError(SanitizationError.user_message) from exc
                 raise
@@ -2055,10 +2044,7 @@ def _gather_attachments(upload_files, staged_ids=None):
                         dest.write(chunk)
             except Exception:
                 if temp_path.exists():
-                    try:
-                        os.remove(temp_path)
-                    except OSError:
-                        pass
+                    secure_delete(temp_path)
                 raise
                 
             try:
@@ -2071,10 +2057,7 @@ def _gather_attachments(upload_files, staged_ids=None):
                     written_size = len(sanitized)
             except Exception as exc:
                 if temp_path.exists():
-                    try:
-                        os.remove(temp_path)
-                    except OSError:
-                        pass
+                    secure_delete(temp_path)
                 if isinstance(exc, SanitizationError):
                     raise
                 raise
@@ -2090,18 +2073,12 @@ def _gather_attachments(upload_files, staged_ids=None):
             content_path = _resolve_content_path(staged)
             if not content_path or not os.path.exists(content_path):
                 if content_path:
-                    try:
-                        os.remove(content_path)
-                    except OSError:
-                        pass
+                    secure_delete(content_path)
                 raise ValueError("A staged attachment could not be read.")
                 
             file_size = os.path.getsize(content_path)
             if total_size + file_size > MAX_ATTACHMENT_SIZE:
-                try:
-                    os.remove(content_path)
-                except OSError:
-                    pass
+                secure_delete(content_path)
                 raise ValueError(
                     f"Total file size exceeds the {MAX_ATTACHMENT_SIZE // (1024*1024)}MB limit."
                 )
@@ -2113,10 +2090,7 @@ def _gather_attachments(upload_files, staged_ids=None):
     except Exception as exc:
         for name, path in files:
             if isinstance(path, (str, Path)) and os.path.exists(path):
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
+                secure_delete(path)
         if isinstance(exc, SanitizationError):
             return None, _(SanitizationError.i18n_key)
         return None, str(exc) if isinstance(exc, ValueError) else "Failed to process attachment."
@@ -2190,23 +2164,17 @@ def session_seal(sid: str):
         
         native_response = _native_save_response(None, filename, file_path=envelope_path)
         if native_response is not None:
-            try: os.remove(envelope_path)
-            except OSError: pass
+            secure_delete(envelope_path)
             return native_response
             
-        from flask import after_this_request
-        @after_this_request
-        def remove_envelope(response):
-            try: os.remove(envelope_path)
-            except OSError: pass
-            return response
-            
-        return send_file(
+        response = send_file(
             envelope_path,
             mimetype="application/octet-stream",
             as_attachment=True,
             download_name=filename,
         )
+        response.call_on_close(lambda: secure_delete(envelope_path))
+        return response
     except (MemoryError, KeyboardInterrupt, SystemExit):
         raise
     except Exception:
@@ -2215,12 +2183,10 @@ def session_seal(sid: str):
         return redirect(url_for("main.session_detail", sid=sid))
     finally:
         if temp_zip_path.exists():
-            try: os.remove(temp_zip_path)
-            except OSError: pass
+            secure_delete(temp_zip_path)
         for name, path in files:
             if isinstance(path, (str, Path)) and os.path.exists(path):
-                try: os.remove(path)
-                except OSError: pass
+                secure_delete(path)
 
 
 def _prepare_open_response(meta, opened, sid, is_ajax, secure_delete_warning=None):
@@ -2253,8 +2219,7 @@ def _prepare_open_response(meta, opened, sid, is_ajax, secure_delete_warning=Non
         raise
     finally:
         if temp_zip_path.exists():
-            try: os.remove(temp_zip_path)
-            except OSError: pass
+            secure_delete(temp_zip_path)
 
     effective_allow_download = (
         opened.allow_download
@@ -2365,8 +2330,7 @@ def session_open(sid: str):
 
     if raw is None:
         if temp_upload_path and temp_upload_path.exists():
-            try: os.remove(temp_upload_path)
-            except OSError: pass
+            secure_delete(temp_upload_path)
         msg = _('session.invalid_file')
         return jsonify({"success": False, "error": msg}) if is_ajax else (flash(msg, "error") or redirect(url_for("main.session_detail", sid=sid)))
 
@@ -2429,8 +2393,7 @@ def session_open(sid: str):
         return _render_session_error(meta, sid, stable_msg)
     finally:
         if temp_upload_path and temp_upload_path.exists():
-            try: os.remove(temp_upload_path)
-            except OSError: pass
+            secure_delete(temp_upload_path)
 
 
 def _render_session_error(meta, sid, msg):

@@ -201,6 +201,22 @@ def lock_device() -> None:
     except Exception as exc:
         logger.error("Failed to clear clipboard on lock: %s", exc)
 
+    # 7. Clear preview stores and routes caches
+    try:
+        from core.preview_store import preview_store, native_save_grants
+        preview_store.clear()
+        native_save_grants.clear()
+    except Exception as exc:
+        logger.error("Failed to clear preview stores on lock: %s", exc)
+
+    try:
+        from .routes import _clear_preview_cache, _clear_staged_attachment_cache, NATIVE_FILE_REF_CACHE
+        _clear_preview_cache()
+        _clear_staged_attachment_cache()
+        NATIVE_FILE_REF_CACHE.clear()
+    except Exception as exc:
+        logger.error("Failed to clear routes caches on lock: %s", exc)
+
 
 # ---------------------------------------------------------------------------
 # Application factory
