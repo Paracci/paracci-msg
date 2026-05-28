@@ -219,7 +219,10 @@ def ecdh(
         private_key = X25519PrivateKey.from_private_bytes(bytes(private_key_bytes))
         peer_public  = X25519PublicKey.from_public_bytes(bytes(peer_public_key_bytes))
         shared_secret = private_key.exchange(peer_public)
-        return bytearray(shared_secret)
+        result = bytearray(shared_secret)
+        del shared_secret
+        gc.collect()
+        return result
     finally:
         # LIMITATION: X25519PrivateKey is an opaque C object owned by the
         # cryptography library. Python cannot zero its internal key bytes;
@@ -237,7 +240,7 @@ def derive_master_key(passphrase: str, salt: bytes) -> bytearray:
     Derives the device master key from the user passphrase.
     Slows down brute-force attacks against low-entropy device passphrases.
     """
-    return bytearray(hash_secret_raw(
+    raw_secret = hash_secret_raw(
         secret=passphrase.encode("utf-8"),
         salt=salt,
         time_cost=ARGON2_TIME,
@@ -245,7 +248,11 @@ def derive_master_key(passphrase: str, salt: bytes) -> bytearray:
         parallelism=ARGON2_PAR,
         hash_len=32,
         type=LowLevelArgon2Type.ID
-    ))
+    )
+    result = bytearray(raw_secret)
+    del raw_secret
+    gc.collect()
+    return result
 
 
 def get_fingerprint(public_key1: bytes, public_key2: bytes) -> str:
