@@ -63,9 +63,9 @@ HKDF_HASH      = SHA512()          # Use SHA-512 for HKDF (PyCA support)
 KEY_LEN        = 32                # ChaCha20 key length (bytes)
 NONCE_LEN      = 12                # ChaCha20-Poly1305 nonce length (bytes)
 # Argon2id parameters for device passphrase protection only.
-# t=2 (iterations), m=65536 (64MB RAM), p=4 (parallelism)
+# t=2 (iterations), m=524288 (512MB RAM), p=4 (parallelism)
 ARGON2_TIME    = 2
-ARGON2_MEM     = 65536
+ARGON2_MEM     = 524288
 ARGON2_PAR     = 4
 
 # ---------------------------------------------------------------------------

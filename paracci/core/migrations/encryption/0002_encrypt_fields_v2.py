@@ -12,6 +12,12 @@ def encrypt_fields_v2(conn):
     STORAGE_MIGRATION_V2_KEY = burn_module.STORAGE_MIGRATION_V2_KEY
     STORAGE_MIGRATION_COMPLETE = burn_module.STORAGE_MIGRATION_COMPLETE
 
+    
+    try:
+        conn.execute(f"ATTACH DATABASE '{db.meta_db_path}' AS meta KEY ''")
+    except Exception:
+        pass
+
     cursor = conn.cursor()
     # 1. sessions table (state, created_at, updated_at)
     for session_id, state, created_at, updated_at in cursor.execute(

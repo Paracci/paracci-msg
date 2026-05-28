@@ -29,3 +29,6 @@ packaging>=24.0
 
 # Database migrations
 yoyo-migrations>=8.2.0
+
+# SQLCipher for full-database encryption
+sqlcipher3-binary>=0.5.3
