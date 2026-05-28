@@ -175,28 +175,14 @@ def verify_identity_signature(
         return False
 
 
-def wipe(data: bytes | bytearray | list) -> None:
+def wipe(data: bytearray | list) -> None:
     """Best-effort zeroing for mutable sensitive containers owned by Paracci.
 
     Python and native libraries may retain copies outside this buffer.
     This is a best-effort mitigation — Python's memory model does not guarantee
     that wiping a bytearray zeroes every copy the interpreter may have made
     internally.
-
-    Accepts bytes without raising so call sites that pass immutable bytes (e.g.
-    from third-party library return values) do not crash. A debug security event
-    is logged to record the gap, allowing the auditor to identify remaining
-    call sites that should be refactored to use bytearray.
     """
-    if isinstance(data, bytes):
-        # LIMITATION: bytes is immutable — in-place zeroization is not possible.
-        # Log the gap so auditors can identify call sites that need refactoring.
-        _log.security(
-            "wipe() called on immutable bytes — in-place zeroization is not "
-            "possible. Refactor the call site to use bytearray for short-lived "
-            "key material."
-        )
-        return
     if isinstance(data, bytearray):
         for i in range(len(data)):
             data[i] = 0
@@ -204,7 +190,7 @@ def wipe(data: bytes | bytearray | list) -> None:
         for i in range(len(data)):
             data[i] = None
     else:
-        raise TypeError("wipe() requires a bytearray, bytes, or list.")
+        raise TypeError("wipe() requires a bytearray or list. Immutable bytes cannot be wiped in-place.")
     gc.collect()
 
 
