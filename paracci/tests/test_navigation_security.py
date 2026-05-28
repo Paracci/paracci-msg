@@ -399,7 +399,7 @@ def test_native_download_writer_rejects_unsafe_filename(tmp_path, monkeypatch, f
     monkeypatch.setattr(ParacciConfig, "__init__", lambda self: setattr(self, "full_downloads_path", str(downloads)))
 
     with pytest.raises(ValueError, match="Invalid download filename"):
-        run._write_native_download(b"payload", filename)
+        run._write_native_download(filename, file_bytes=b"payload")
 
     assert list(downloads.iterdir()) == []
 
@@ -418,7 +418,7 @@ def test_native_download_writer_does_not_follow_existing_symlink(tmp_path, monke
         pytest.skip("Symlink creation is not available on this platform.")
     monkeypatch.setattr(ParacciConfig, "__init__", lambda self: setattr(self, "full_downloads_path", str(downloads)))
 
-    saved_path = run._write_native_download(b"payload", "payload.bin")
+    saved_path = run._write_native_download("payload.bin", file_bytes=b"payload")
 
     assert saved_path == downloads / "payload_1.bin"
     assert outside.read_bytes() == b"outside"
