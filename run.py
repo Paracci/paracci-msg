@@ -21,6 +21,50 @@ import subprocess
 from pathlib import Path
 from urllib.parse import quote
 
+# Check dependencies and auto-re-execute in virtual environment if available
+try:
+    import yoyo
+except ImportError:
+    ROOT_DIR = Path(__file__).parent
+    if os.environ.get("PARACCI_VENV_BOOTSTRAPPED"):
+        print("[ERROR] Running inside virtual environment but dependencies are still missing.", file=sys.stderr)
+        print("[ERROR] Please install dependencies by running: pip install -r requirements.lock", file=sys.stderr)
+        sys.exit(1)
+
+    # Look for local workspace virtual environment (.venv)
+    venv_dir = ROOT_DIR / ".venv"
+    appdata_local = os.environ.get("LOCALAPPDATA")
+    appdata_venv = Path(appdata_local) / "Paracci" / ".venv" if appdata_local else None
+
+    target_python = None
+    if venv_dir.exists():
+        py_exe = venv_dir / "Scripts" / "python.exe" if sys.platform == "win32" else venv_dir / "bin" / "python"
+        if py_exe.exists():
+            target_python = py_exe
+    elif appdata_venv and appdata_venv.exists():
+        py_exe = appdata_venv / "Scripts" / "python.exe" if sys.platform == "win32" else appdata_venv / "bin" / "python"
+        if py_exe.exists():
+            target_python = py_exe
+
+    if target_python:
+        print(f"[*] Dependencies missing. Re-running script inside virtual environment: {target_python}")
+        env = os.environ.copy()
+        env["PARACCI_VENV_BOOTSTRAPPED"] = "1"
+        try:
+            result = subprocess.run([str(target_python), str(Path(__file__).resolve())] + sys.argv[1:], env=env)
+            sys.exit(result.returncode)
+        except Exception as e:
+            print(f"[ERROR] Failed to execute script within virtual environment: {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        print("[ERROR] Dependencies missing (e.g. 'yoyo') and no virtual environment (.venv) was found.", file=sys.stderr)
+        print("[ERROR] Please create a virtual environment and install dependencies before running this tool:", file=sys.stderr)
+        if sys.platform == "win32":
+            print("    python -m venv .venv\n    .\\.venv\\Scripts\\activate\n    pip install -r requirements.lock", file=sys.stderr)
+        else:
+            print("    python -m venv .venv\n    source .venv/bin/activate\n    pip install -r requirements.lock", file=sys.stderr)
+        sys.exit(1)
+
 # Add paracci/ directory to import path (for core.xxx imports)
 # This makes core/ and app/ folders appear as root.
 sys.path.insert(0, str(Path(__file__).parent / "paracci"))
