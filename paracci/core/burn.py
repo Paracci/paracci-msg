@@ -11,7 +11,6 @@ This module:
 """
 
 import os
-import sqlite3
 import subprocess
 import sys
 import hashlib
@@ -24,6 +23,27 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
+
+MIGRATION_CONTEXT = threading.local()
+MIGRATION_CONTEXT.device_key = None
+MIGRATION_CONTEXT.is_encrypting = False
+
+try:
+    import sqlcipher3.dbapi2 as sqlcipher
+    _original_sqlite3_connect = sqlcipher.connect
+    def _patched_sqlite3_connect(database, **kwargs):
+        conn = _original_sqlite3_connect(database, **kwargs)
+        key = getattr(MIGRATION_CONTEXT, "device_key", None)
+        if key and not getattr(MIGRATION_CONTEXT, "is_encrypting", False):
+            if "sessions.db" in str(database) and not str(database).endswith(".meta"):
+                conn.execute(f"PRAGMA key = \"x'{key.hex()}'\"")
+        return conn
+    sqlcipher.connect = _patched_sqlite3_connect
+    sys.modules["sqlite3"] = sqlcipher
+    import sqlite3
+except ImportError:
+    import sqlite3
+
 from yoyo import read_migrations, get_backend
 from .shields import shield
 from .constants import BURN_OPENING_STALE_SECONDS
@@ -42,8 +62,6 @@ from .crypto import (
 )
 
 logger = logging.getLogger(__name__)
-
-MIGRATION_CONTEXT = threading.local()
 
 BURN_STATUS_OPENING = "opening"
 BURN_STATUS_BURNED = "burned"
@@ -269,6 +287,7 @@ class BurnDB:
     ):
         """Initializes storage in locked bootstrap mode or keyed protected mode."""
         self.db_path = str(db_path)
+        self.meta_db_path = str(db_path) + ".meta"
         self._local = threading.local()
         self._device_key: bytearray | None = None
         if device_key is not None:
@@ -284,13 +303,72 @@ class BurnDB:
                 raise
 
     @property
+    def _meta_prefix(self) -> str:
+        return "meta." if self._device_key else ""
+
+    @property
     def has_device_key(self) -> bool:
         """Return whether protected database values may be opened."""
         return self._device_key is not None
 
     def with_device_key(self, device_key: bytes | bytearray) -> "BurnDB":
         """Open the same database with a lifetime-scoped protected-field key."""
-        return BurnDB(self.db_path, device_key=device_key)
+        db = BurnDB(self.db_path, device_key=device_key)
+        db._ensure_sqlcipher_encryption()
+        return db
+
+    def _ensure_sqlcipher_encryption(self):
+        """Detects if sessions.db is plaintext, and exports it to SQLCipher if so."""
+        is_plaintext = False
+        import sqlite3 as std_sqlite3
+        try:
+            conn = std_sqlite3.connect(self.db_path)
+            conn.execute("SELECT count(*) FROM sqlite_master")
+            is_plaintext = True
+        except std_sqlite3.DatabaseError:
+            pass
+        finally:
+            conn.close()
+            
+        if not is_plaintext:
+            return
+
+        logger.info("Migrating sessions.db to SQLCipher...")
+        temp_db_path = self.db_path + ".enc"
+        if os.path.exists(temp_db_path):
+            os.remove(temp_db_path)
+            
+        # Perform sqlcipher export using the patched sqlite3 with is_encrypting = True
+        MIGRATION_CONTEXT.is_encrypting = True
+        try:
+            import sqlite3
+            conn = sqlite3.connect(self.db_path)
+            try:
+                conn.execute(f"ATTACH DATABASE '{temp_db_path}' AS encrypted KEY \"x'{self._device_key.hex()}'\"")
+                conn.execute("SELECT sqlcipher_export('encrypted')")
+                conn.execute("DETACH DATABASE encrypted")
+            except sqlite3.OperationalError as exc:
+                if "no such function: sqlcipher_export" in str(exc):
+                    logger.error("SQLCipher not installed; cannot encrypt database. Falling back to plaintext.")
+                    conn.close()
+                    if os.path.exists(temp_db_path):
+                        os.remove(temp_db_path)
+                    return
+                raise
+            conn.close()
+            
+            # Strip device_meta tables from the new encrypted DB
+            conn_enc = sqlite3.connect(temp_db_path)
+            conn_enc.execute(f"PRAGMA key = \"x'{self._device_key.hex()}'\"")
+            conn_enc.execute("DROP TABLE IF EXISTS device_meta")
+            conn_enc.execute("DROP TABLE IF EXISTS burn_internal_meta")
+            conn_enc.execute("VACUUM")
+            conn_enc.close()
+            
+            import shutil
+            shutil.move(temp_db_path, self.db_path)
+        finally:
+            MIGRATION_CONTEXT.is_encrypting = False
 
     def release_device_key(self) -> None:
         """Best-effort zeroing for the protected-field key owned by this object."""
@@ -313,11 +391,15 @@ class BurnDB:
         """Connects to the SQLite database in WAL mode with optimized settings, reusing per-thread connections."""
         conn = getattr(self._local, "conn", None)
         if conn is None:
-            conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            conn.execute("PRAGMA journal_mode=WAL")
+            if self._device_key is None:
+                conn = sqlite3.connect(self.meta_db_path, check_same_thread=False)
+                conn.execute("PRAGMA journal_mode=WAL")
+            else:
+                conn = sqlite3.connect(self.db_path, check_same_thread=False)
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute(f"ATTACH DATABASE '{self.meta_db_path}' AS meta KEY ''")
             conn.execute("PRAGMA foreign_keys=ON")
             conn.execute("PRAGMA secure_delete=ON")
-            # Minimize cache on memory
             conn.execute("PRAGMA cache_size=64")
             self._local.conn = conn
         return _ConnectionProxy(conn)
@@ -335,67 +417,62 @@ class BurnDB:
 
     def _init_db(self):
         """Creates the database tables via yoyo structural migrations."""
-        # Secure the directory containing the database file first so that WAL/SHM
-        # and database files inherit owner-only permissions upon creation.
         _secure_dir_permissions(Path(self.db_path).parent)
-
-        # Fast path check: if the database is already fully up-to-date, avoid running yoyo migrations
-        schema_up_to_date = False
-        if os.path.exists(self.db_path):
-            conn = None
-            try:
-                conn = sqlite3.connect(self.db_path)
-                cursor = conn.cursor()
-                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'")
-                if cursor.fetchone() is not None:
-                    cursor.execute("PRAGMA table_info(burned_messages)")
-                    columns = {row[1] for row in cursor.fetchall()}
-                    if "status" in columns:
-                        schema_up_to_date = True
-            except Exception:
-                pass
-            finally:
-                if conn:
-                    conn.close()
-
-        if schema_up_to_date:
-            # Enforce permissions on existing file
-            self._secure_db_permissions(self.db_path)
-            return
-
-        # Ensure database is in WAL mode upon creation/migration
-        conn = None
-        try:
-            conn = sqlite3.connect(self.db_path)
-            conn.execute("PRAGMA journal_mode=WAL")
-        except Exception:
-            pass
-        finally:
-            if conn:
-                conn.close()
-
-        # On POSIX, tighten the umask before the first connect() call so that
-        # SQLite creates sessions.db with 0o600 from birth rather than the
-        # process-default 0o644.  The umask is restored immediately after the
-        # connection (and therefore the file) has been established.
+        
+        v1_migration_needed = os.path.exists(self.db_path) and not os.path.exists(self.meta_db_path)
+        
         _old_mask = None
         if sys.platform != "win32":
             _old_mask = os.umask(0o177)
+            
         try:
-            backend = get_backend(f"sqlite:///{self.db_path}")
+            import sqlite3
             migrations_dir = Path(__file__).parent / "migrations" / "schema"
             migrations = read_migrations(str(migrations_dir))
-            with backend.lock():
-                backend.apply_migrations(backend.to_apply(migrations))
-            if backend.connection:
-                backend.connection.close()
+            
+            # 1. Run migrations on meta.db
+            conn = sqlite3.connect(self.meta_db_path)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.close()
+            backend_meta = get_backend(f"sqlite:///{self.meta_db_path}")
+            with backend_meta.lock():
+                backend_meta.apply_migrations(backend_meta.to_apply(migrations))
+            if backend_meta.connection:
+                backend_meta.connection.close()
+                
+            # 2. Extract V1 metadata if needed
+            if v1_migration_needed:
+                conn = sqlite3.connect(self.meta_db_path)
+                conn.execute(f"ATTACH DATABASE '{self.db_path}' AS old KEY ''")
+                try:
+                    conn.execute("INSERT OR IGNORE INTO device_meta SELECT * FROM old.device_meta")
+                    conn.execute("INSERT OR IGNORE INTO burn_internal_meta SELECT * FROM old.burn_internal_meta")
+                    conn.commit()
+                except sqlite3.OperationalError:
+                    pass
+                conn.close()
+                
+            # 3. Run migrations on sessions.db if unlocked
+            if self._device_key is not None:
+                conn = sqlite3.connect(self.db_path)
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.close()
+                
+                MIGRATION_CONTEXT.device_key = self._device_key
+                try:
+                    backend_sessions = get_backend(f"sqlite:///{self.db_path}")
+                    with backend_sessions.lock():
+                        backend_sessions.apply_migrations(backend_sessions.to_apply(migrations))
+                    if backend_sessions.connection:
+                        backend_sessions.connection.close()
+                finally:
+                    MIGRATION_CONTEXT.device_key = None
         finally:
             if _old_mask is not None:
                 os.umask(_old_mask)
 
-        # Belt-and-suspenders: enforce owner-only permissions regardless of
-        # whether the file already existed before this process started.
         self._secure_db_permissions(self.db_path)
+        self._secure_db_permissions(self.meta_db_path)
 
     def _require_device_key(self) -> bytearray:
         if self._device_key is None:
@@ -489,8 +566,7 @@ class BurnDB:
             raise DeviceError("Invalid protected metadata.") from exc
 
     def _migration_state(self, conn: sqlite3.Connection, key: str = STORAGE_MIGRATION_KEY) -> bytes | None:
-        row = conn.execute(
-            "SELECT value FROM burn_internal_meta WHERE key=?",
+        row = conn.execute(f"SELECT value FROM {self._meta_prefix}burn_internal_meta WHERE key=?",
             (key,),
         ).fetchone()
         if row is None:
@@ -506,8 +582,7 @@ class BurnDB:
         return state
 
     def _write_migration_state(self, conn: sqlite3.Connection, state: bytes, key: str = STORAGE_MIGRATION_KEY) -> None:
-        conn.execute(
-            "INSERT OR REPLACE INTO burn_internal_meta (key, value) VALUES (?, ?)",
+        conn.execute(f"INSERT OR REPLACE INTO {self._meta_prefix}burn_internal_meta (key, value) VALUES (?, ?)",
             (
                 key,
                 self._encrypt_protected_value(
@@ -526,8 +601,7 @@ class BurnDB:
         conn = self._connect()
         try:
             for key in (STORAGE_MIGRATION_KEY, STORAGE_MIGRATION_V2_KEY):
-                row = conn.execute(
-                    "SELECT value FROM burn_internal_meta WHERE key=?",
+                row = conn.execute(f"SELECT value FROM {self._meta_prefix}burn_internal_meta WHERE key=?",
                     (key,),
                 ).fetchone()
                 if row is not None:
@@ -1100,8 +1174,7 @@ class BurnDB:
             self._require_device_key()
         conn = self._connect()
         try:
-            row = conn.execute(
-                "SELECT value FROM device_meta WHERE key=?", (key,)
+            row = conn.execute(f"SELECT value FROM {self._meta_prefix}device_meta WHERE key=?", (key,)
             ).fetchone()
             if row is None:
                 return None
@@ -1118,8 +1191,7 @@ class BurnDB:
             encoded = self._encrypt_protected_value("device_meta", "value", key, encoded)
         conn = self._connect()
         try:
-            conn.execute(
-                "INSERT OR REPLACE INTO device_meta (key, value) VALUES (?, ?)",
+            conn.execute(f"INSERT OR REPLACE INTO {self._meta_prefix}device_meta (key, value) VALUES (?, ?)",
                 (key, encoded)
             )
             conn.commit()
@@ -1138,7 +1210,7 @@ class BurnDB:
         try:
             conn.execute("BEGIN IMMEDIATE")
             conn.executemany(
-                "INSERT OR REPLACE INTO device_meta (key, value) VALUES (?, ?)",
+                "INSERT OR REPLACE INTO {self._meta_prefix}device_meta (key, value) VALUES (?, ?)",
                 encoded_values,
             )
             conn.commit()
@@ -1155,7 +1227,7 @@ class BurnDB:
             self._require_device_key()
         conn = self._connect()
         try:
-            conn.execute("DELETE FROM device_meta WHERE key=?", (key,))
+            conn.execute(f"DELETE FROM {self._meta_prefix}device_meta WHERE key=?", (key,))
             conn.commit()
         finally:
             conn.close()
@@ -1209,8 +1281,7 @@ class BurnDB:
         return b"hmac:" + sig + raw_json
 
     def _write_unlock_rate_limit(self, conn: sqlite3.Connection, state: dict) -> None:
-        conn.execute(
-            "INSERT OR REPLACE INTO device_meta (key, value) VALUES (?, ?)",
+        conn.execute(f"INSERT OR REPLACE INTO {self._meta_prefix}device_meta (key, value) VALUES (?, ?)",
             (UNLOCK_RATE_LIMIT_KEY, self._encode_unlock_rate_limit(state)),
         )
 
@@ -1219,16 +1290,14 @@ class BurnDB:
         conn: sqlite3.Connection,
         now: int,
     ) -> tuple[dict, bool]:
-        row = conn.execute(
-            "SELECT value FROM device_meta WHERE key=?",
+        row = conn.execute(f"SELECT value FROM {self._meta_prefix}device_meta WHERE key=?",
             (UNLOCK_RATE_LIMIT_KEY,),
         ).fetchone()
         raw = row[0] if row is not None else None
         unlock_ever_succeeded = False
         has_sessions = False
         if row is None:
-            unlock_ever_succeeded = conn.execute(
-                "SELECT 1 FROM device_meta WHERE key=? LIMIT 1",
+            unlock_ever_succeeded = conn.execute(f"SELECT 1 FROM {self._meta_prefix}device_meta WHERE key=? LIMIT 1",
                 (UNLOCK_EVER_SUCCEEDED_KEY,),
             ).fetchone() is not None
             has_sessions = (
@@ -1366,8 +1435,7 @@ class BurnDB:
                 conn,
                 {"failed_attempts": 0, "locked_until": 0, "last_failed_at": 0},
             )
-            conn.execute(
-                "INSERT OR IGNORE INTO device_meta (key, value) VALUES (?, ?)",
+            conn.execute(f"INSERT OR IGNORE INTO {self._meta_prefix}device_meta (key, value) VALUES (?, ?)",
                 (UNLOCK_EVER_SUCCEEDED_KEY, UNLOCK_EVER_SUCCEEDED_VALUE),
             )
             conn.commit()

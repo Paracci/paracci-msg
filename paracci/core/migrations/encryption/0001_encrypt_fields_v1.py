@@ -13,6 +13,12 @@ def encrypt_fields_v1(conn):
     STORAGE_MIGRATION_KEY = burn_module.STORAGE_MIGRATION_KEY
     STORAGE_MIGRATION_COMPLETE = burn_module.STORAGE_MIGRATION_COMPLETE
 
+    
+    try:
+        conn.execute(f"ATTACH DATABASE '{db.meta_db_path}' AS meta KEY ''")
+    except Exception:
+        pass
+
     cursor = conn.cursor()
     # 1. sessions table (label)
     for session_id, label in cursor.execute(
@@ -42,7 +48,7 @@ def encrypt_fields_v1(conn):
 
     # 3. device_meta table
     for key, value in cursor.execute(
-        "SELECT key, value FROM device_meta"
+        f"SELECT key, value FROM {db._meta_prefix}device_meta"
     ).fetchall():
         if key in BOOTSTRAP_DEVICE_META_KEYS:
             continue
@@ -51,7 +57,7 @@ def encrypt_fields_v1(conn):
             continue
         encrypted_value = db._encrypt_protected_value("device_meta", "value", key, value)
         cursor.execute(
-            "UPDATE device_meta SET value=? WHERE key=?",
+            f"UPDATE {db._meta_prefix}device_meta SET value=? WHERE key=?",
             (encrypted_value, key),
         )
 
