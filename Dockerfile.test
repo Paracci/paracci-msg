@@ -1,0 +1,88 @@
+# GitHub Actions'ta kullanılan Ubuntu 22.04 tabanlı temiz ortam
+FROM ubuntu:22.04
+
+# Etkileşimli apt-get sorularını engellemek için
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Temel build araçları, deadsnakes PPA ve sistem bağımlılıklarının yüklenmesi
+RUN apt-get update -qq && apt-get install -y \
+    software-properties-common \
+    curl \
+    git \
+    cmake \
+    ninja-build \
+    gcc \
+    g++ \
+    libssl-dev \
+    pkg-config \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update -qq \
+    && apt-get install -y \
+        python3.12 \
+        python3.12-dev \
+        python3.12-venv \
+        # Pywebview ve GObject/GTK için gerekli sistem kütüphaneleri
+        gir1.2-gtk-3.0 \
+        gir1.2-webkit2-4.0 \
+        libwebkit2gtk-4.0-37 \
+        libgirepository1.0-dev \
+        libcairo2-dev \
+        libglib2.0-dev \
+        libegl1 \
+        libxcb-cursor0 \
+        libxcb-xinerama0 \
+        libxcb-icccm4 \
+        libxcb-image0 \
+        libxcb-keysyms1 \
+        libxcb-render-util0 \
+        libxcb-shape0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# python ve python3 komutlarını python3.12'ye yönlendirme
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1 \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
+
+# pip'in python3.12 için kurulması
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python
+
+# Node.js 22 sürümünün yüklenmesi (Frontend derlemek ve JS testleri için)
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# liboqs C kütüphanesinin (0.15.0) GitHub workflow ile birebir aynı şekilde derlenmesi
+ENV OQS_INSTALL_PREFIX=/opt/oqs
+RUN git clone --branch 0.15.0 --depth 1 https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs \
+    && cmake -S /tmp/liboqs -B /tmp/liboqs/build \
+        -DBUILD_SHARED_LIBS=ON \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DOQS_BUILD_ONLY_LIB=ON \
+        -DOQS_DIST_BUILD=ON \
+        -DCMAKE_INSTALL_PREFIX="$OQS_INSTALL_PREFIX" \
+    && cmake --build /tmp/liboqs/build --parallel $(nproc) \
+    && cmake --build /tmp/liboqs/build --target install \
+    && rm -rf /tmp/liboqs
+
+# Çevre değişkenlerinin tanımlanması (liboqs-python'un kütüphaneyi bulabilmesi için)
+ENV OQS_INSTALL_PATH=$OQS_INSTALL_PREFIX
+ENV LIBOQS_LIB_DIR=$OQS_INSTALL_PREFIX/lib
+ENV LD_LIBRARY_PATH=$OQS_INSTALL_PREFIX/lib
+
+# GUI testlerinin headless (ekran kartı/arayüz olmadan) çalışabilmesi için
+ENV QT_QPA_PLATFORM=offscreen
+
+WORKDIR /workspace
+
+# Hızlı çalışma için bağımlılık dosyalarını kopyalayıp önbellekliyoruz
+COPY package.json package-lock.json requirements.lock requirements-dev.lock ./
+
+RUN npm ci
+
+RUN python -m pip install --upgrade pip --break-system-packages \
+    && python -m pip install --ignore-installed --break-system-packages --require-hashes -r requirements.lock \
+    && python -m pip install --ignore-installed --break-system-packages --require-hashes -r requirements-dev.lock
+
+
+# Çalıştırılacak varsayılan komut (Derleme + Pytest + JS Testleri)
+CMD ["sh", "-c", "npm run build && python -m pytest paracci/tests -q && node --test paracci/tests/test_session_clipboard.mjs"]
+
