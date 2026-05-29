@@ -780,8 +780,11 @@ def _validate_request_source():
     # 2. Validate Origin
     origin = request.headers.get("Origin")
     if origin == "null":
-        return _reject_security("unexpected origin (null)")
-    if origin:
+        # WebView2 POST navigations may send Origin: null. Allow it only if the loopback token is valid.
+        token = request.headers.get("X-Paracci-Token") or request.form.get("_paracci_token", "")
+        if not _token_matches(token, ag_app.loopback_token):
+            return _reject_security("unexpected origin (null)")
+    elif origin:
         try:
             parsed = urlparse(origin)
             is_valid = (
@@ -800,10 +803,17 @@ def _validate_request_source():
         return _reject_security("unexpected referer")
         
     # 3.5. Enforce Presence of Source Headers
-    if not origin and not referer and not _is_public_request() and request.endpoint != "main.loopback_bootstrap":
+    if (
+        not origin 
+        and not referer 
+        and not _is_public_request() 
+        and request.endpoint != "main.loopback_bootstrap"
+        and not _preview_store_request_token()
+    ):
         token = request.headers.get("X-Paracci-Token") or request.form.get("_paracci_token", "")
         if not _token_matches(token, ag_app.loopback_token):
             return _reject_security("missing source headers")
+
 
     # 4. Validate Fetch Site
     fetch_site = request.headers.get("Sec-Fetch-Site", "").lower()
