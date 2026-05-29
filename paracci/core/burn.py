@@ -1468,7 +1468,7 @@ class BurnDB:
     def _decode_legacy_2fa_secret(self, value) -> str | None:
         if isinstance(value, str):
             candidate = value.strip()
-        elif isinstance(value, bytes):
+        elif isinstance(value, (bytes, bytearray)):
             try:
                 candidate = value.decode("ascii").strip()
             except UnicodeDecodeError:
@@ -1479,9 +1479,11 @@ class BurnDB:
             return candidate
         return None
 
+
     def _encrypted_2fa_secret_blob(self, value) -> EncryptedBlob:
-        if not isinstance(value, bytes):
+        if not isinstance(value, (bytes, bytearray)):
             raise DeviceError("Invalid 2FA secret metadata.")
+        value = bytes(value)
         nonce = value[:TWO_FA_SECRET_NONCE_LEN]
         ciphertext = value[TWO_FA_SECRET_NONCE_LEN:]
         if (
@@ -1491,6 +1493,7 @@ class BurnDB:
         ):
             raise DeviceError("Invalid 2FA secret metadata.")
         return EncryptedBlob(nonce=nonce, ciphertext=ciphertext)
+
 
     def get_2fa_secret(self, device_key: bytes | bytearray) -> str | None:
         """Returns the decrypted 2FA secret key, migrating legacy plaintext storage."""

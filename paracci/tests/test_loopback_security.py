@@ -513,9 +513,10 @@ def test_settings_2fa_confirm_stores_encrypted_secret(tmp_path, monkeypatch):
     stored = ag_app.db.get_device_meta("2fa_secret")
     assert response.status_code == 302
     assert ag_app.db.is_2fa_enabled() is True
-    assert isinstance(stored, bytes)
+    assert isinstance(stored, (bytes, bytearray))
     assert secret.encode("ascii") not in stored
     assert ag_app.db.get_2fa_secret(ag_app.device_key) == secret
+
 
 
 def test_unexpected_host_is_rejected(tmp_path, monkeypatch):

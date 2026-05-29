@@ -25,7 +25,7 @@ def test_set_2fa_secret_encrypts_metadata(tmp_path):
     db.set_2fa_secret(TOTP_SECRET, device_key)
 
     stored = db.get_device_meta("2fa_secret")
-    assert isinstance(stored, bytes)
+    assert isinstance(stored, (bytes, bytearray))
     assert TOTP_SECRET.encode("ascii") not in stored
     assert db.get_2fa_secret(device_key) == TOTP_SECRET
 
@@ -33,7 +33,7 @@ def test_set_2fa_secret_encrypts_metadata(tmp_path):
 def test_legacy_plaintext_2fa_secret_is_migrated(tmp_path):
     db = BurnDB(tmp_path / "sessions.db")
     device_key = init_device(db, PASS_PHRASE)
-    with sqlite3.connect(db.db_path) as conn:
+    with sqlite3.connect(db.meta_db_path) as conn:
         conn.execute(
             "INSERT INTO device_meta (key, value) VALUES (?, ?)",
             ("2fa_secret", TOTP_SECRET),
@@ -43,7 +43,7 @@ def test_legacy_plaintext_2fa_secret_is_migrated(tmp_path):
     assert db.get_2fa_secret(device_key) == TOTP_SECRET
 
     migrated = db.get_device_meta("2fa_secret")
-    assert isinstance(migrated, bytes)
+    assert isinstance(migrated, (bytes, bytearray))
     assert TOTP_SECRET.encode("ascii") not in migrated
 
 

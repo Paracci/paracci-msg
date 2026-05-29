@@ -43,6 +43,16 @@ class NativeSaveGrant:
     created_at: float
     expires_at: float
 
+    @property
+    def file_bytes(self) -> bytes:
+        if self.file_path and os.path.exists(self.file_path):
+            try:
+                return Path(self.file_path).read_bytes()
+            except OSError:
+                return b""
+        return b""
+
+
 
 class PreviewStore:
     """Thread-safe, in-memory store for short-lived preview tokens."""

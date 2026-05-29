@@ -89,6 +89,8 @@ except ImportError:
         try:
             result = subprocess.run([str(target_python), str(Path(__file__).resolve())] + sys.argv[1:], env=env)
             sys.exit(result.returncode)
+        except KeyboardInterrupt:
+            sys.exit(130)
         except Exception as e:
             print(f"[ERROR] Failed to execute script within virtual environment: {e}", file=sys.stderr)
             sys.exit(1)
