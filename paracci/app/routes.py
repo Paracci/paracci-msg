@@ -709,6 +709,7 @@ def _reject_security(reason: str):
             "missing api bearer token",
             "missing unsafe-method bearer token",
             "missing protected bearer token",
+            "missing source headers",
         }:
             return jsonify({"success": False, "error": "Unauthorized."}), 401
         return jsonify({"success": False, "error": "Forbidden."}), 403

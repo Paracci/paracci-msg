@@ -34,6 +34,15 @@ class PreviewEntry:
                 return 0
         return 0
 
+    @property
+    def file_bytes(self) -> bytes:
+        if self.file_path and os.path.exists(self.file_path):
+            try:
+                return Path(self.file_path).read_bytes()
+            except OSError:
+                return b""
+        return b""
+
 
 @dataclass(frozen=True)
 class NativeSaveGrant:
@@ -42,9 +51,12 @@ class NativeSaveGrant:
     filename: str
     created_at: float
     expires_at: float
+    _file_bytes: bytes | None = None
 
     @property
     def file_bytes(self) -> bytes:
+        if self._file_bytes is not None:
+            return self._file_bytes
         if self.file_path and os.path.exists(self.file_path):
             try:
                 return Path(self.file_path).read_bytes()
@@ -229,14 +241,19 @@ class NativeSaveGrantStore:
                     pass
             return None
 
-        # Return entry without reading file into memory or deleting it.
-        # The consumer is responsible for deleting the file at entry.file_path.
+        file_bytes = entry.file_bytes
+        try:
+            secure_delete(entry.file_path)
+        except Exception:
+            pass
+
         return NativeSaveGrant(
             token=entry.token,
             file_path=entry.file_path,
             filename=entry.filename,
             created_at=entry.created_at,
             expires_at=entry.expires_at,
+            _file_bytes=file_bytes,
         )
 
     def cleanup_expired(self) -> None:

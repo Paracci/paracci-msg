@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import sqlite3
 import sys
 import zipfile
 from pathlib import Path
@@ -140,7 +141,10 @@ def test_2fa_secret_is_upgraded_to_encrypted_metadata(tmp_path):
 def test_configure_data_dir_copies_legacy_data_once(tmp_path, monkeypatch):
     legacy = tmp_path / "legacy"
     legacy.mkdir()
-    BurnDB(legacy / "sessions.db")
+    with sqlite3.connect(legacy / "sessions.db") as conn:
+        conn.execute("CREATE TABLE burned_messages (fingerprint BLOB PRIMARY KEY)")
+        conn.execute("CREATE TABLE sessions (session_id BLOB PRIMARY KEY)")
+        conn.execute("CREATE TABLE device_meta (key TEXT PRIMARY KEY, value BLOB)")
     (legacy / "config.json").write_text('{"language": "en"}', encoding="utf-8")
 
     target = tmp_path / "native"

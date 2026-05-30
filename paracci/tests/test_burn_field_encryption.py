@@ -1,4 +1,3 @@
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -7,6 +6,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core import burn as burn_module
+import sqlite3
 from core.burn import (
     BURN_STATUS_FAILED,
     PROTECTED_VALUE_PREFIX,
@@ -20,14 +20,69 @@ from core.burn import (
 from core.crypto import message_id_fingerprint, new_message_id, random_bytes
 
 
-def _raw_row(db_path, query, params=()):
+def _raw_row(db_path, query, params=(), key=None):
+    if key is not None:
+        burn_module.MIGRATION_CONTEXT.device_key = key
+        burn_module.MIGRATION_CONTEXT.db_path = db_path
+    try:
+        with sqlite3.connect(db_path) as conn:
+            return conn.execute(query, params).fetchone()
+    finally:
+        if key is not None:
+            burn_module.MIGRATION_CONTEXT.device_key = None
+            burn_module.MIGRATION_CONTEXT.db_path = None
+
+
+def _init_legacy_plaintext_db(db_path):
     with sqlite3.connect(db_path) as conn:
-        return conn.execute(query, params).fetchone()
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sessions (
+                session_id      BLOB PRIMARY KEY,
+                label           BLOB NOT NULL,
+                state           BLOB NOT NULL,
+                encrypted_meta  BLOB NOT NULL,
+                created_at      BLOB NOT NULL,
+                updated_at      BLOB NOT NULL
+            );
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS burned_messages (
+                fingerprint     BLOB PRIMARY KEY,
+                status          BLOB NOT NULL,
+                reserved_at     BLOB NOT NULL,
+                burned_at       BLOB,
+                failed_at       BLOB,
+                session_id      BLOB,
+                direction       BLOB,
+                failure_reason  BLOB
+            );
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS device_meta (
+                key             TEXT PRIMARY KEY,
+                value           BLOB NOT NULL
+            );
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS burn_internal_meta (
+                key             TEXT PRIMARY KEY,
+                value           BLOB NOT NULL
+            );
+            """
+        )
 
 
 def test_protected_fields_round_trip_without_plaintext_in_raw_storage(tmp_path):
     db_path = tmp_path / "sessions.db"
-    db = BurnDB(db_path, device_key=random_bytes(32))
+    device_key = random_bytes(32)
+    db = BurnDB(db_path, device_key=device_key)
     session_id = new_message_id()
     msg_id = new_message_id()
     label = "Alice Confidential"
@@ -43,15 +98,16 @@ def test_protected_fields_round_trip_without_plaintext_in_raw_storage(tmp_path):
     assert db.get_device_meta("private_note") == device_value
 
     raw_label = _raw_row(
-        db_path, "SELECT label FROM sessions WHERE session_id=?", (session_id,)
+        db_path, "SELECT label FROM sessions WHERE session_id=?", (session_id,), key=device_key
     )[0]
     raw_reason = _raw_row(
         db_path,
         "SELECT failure_reason FROM burned_messages WHERE fingerprint=?",
         (message_id_fingerprint(msg_id),),
+        key=device_key
     )[0]
     raw_device = _raw_row(
-        db_path, "SELECT value FROM device_meta WHERE key='private_note'"
+        str(db_path) + ".meta", "SELECT value FROM device_meta WHERE key='private_note'"
     )[0]
 
     for value, plaintext in (
@@ -66,7 +122,8 @@ def test_protected_fields_round_trip_without_plaintext_in_raw_storage(tmp_path):
 
 def test_equal_labels_use_distinct_ciphertext_and_are_row_bound(tmp_path):
     db_path = tmp_path / "sessions.db"
-    db = BurnDB(db_path, device_key=random_bytes(32))
+    device_key = random_bytes(32)
+    db = BurnDB(db_path, device_key=device_key)
     first_id = new_message_id()
     second_id = new_message_id()
 
@@ -74,18 +131,24 @@ def test_equal_labels_use_distinct_ciphertext_and_are_row_bound(tmp_path):
     db.save_session(second_id, "Same Label", "active", b"two", 1)
 
     first_value = _raw_row(
-        db_path, "SELECT label FROM sessions WHERE session_id=?", (first_id,)
+        db_path, "SELECT label FROM sessions WHERE session_id=?", (first_id,), key=device_key
     )[0]
     second_value = _raw_row(
-        db_path, "SELECT label FROM sessions WHERE session_id=?", (second_id,)
+        db_path, "SELECT label FROM sessions WHERE session_id=?", (second_id,), key=device_key
     )[0]
     assert first_value != second_value
 
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            "UPDATE sessions SET label=? WHERE session_id=?",
-            (first_value, second_id),
-        )
+    burn_module.MIGRATION_CONTEXT.device_key = device_key
+    burn_module.MIGRATION_CONTEXT.db_path = db_path
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                "UPDATE sessions SET label=? WHERE session_id=?",
+                (first_value, second_id),
+            )
+    finally:
+        burn_module.MIGRATION_CONTEXT.device_key = None
+        burn_module.MIGRATION_CONTEXT.db_path = None
     with pytest.raises(DeviceError, match="Invalid protected metadata"):
         db.load_session(second_id)
 
@@ -119,7 +182,7 @@ def test_wrong_key_and_locked_access_fail_closed_while_bootstrap_remains_availab
 
 def test_legacy_plaintext_rows_are_migrated_and_scrubbed_on_first_keyed_open(tmp_path):
     db_path = tmp_path / "sessions.db"
-    BurnDB(db_path)
+    _init_legacy_plaintext_db(db_path)
     key = random_bytes(32)
     session_id = new_message_id()
     msg_id = new_message_id()
@@ -171,18 +234,19 @@ def test_legacy_plaintext_rows_are_migrated_and_scrubbed_on_first_keyed_open(tmp
     assert db.get_device_meta(UNLOCK_EVER_SUCCEEDED_KEY) == b"1"
 
     raw_label = _raw_row(
-        db_path, "SELECT label FROM sessions WHERE session_id=?", (session_id,)
+        db_path, "SELECT label FROM sessions WHERE session_id=?", (session_id,), key=key
     )[0]
     raw_reason = _raw_row(
         db_path,
         "SELECT failure_reason FROM burned_messages WHERE fingerprint=?",
         (fingerprint,),
+        key=key
     )[0]
     raw_device = _raw_row(
-        db_path, "SELECT value FROM device_meta WHERE key='private_note'"
+        str(db_path) + ".meta", "SELECT value FROM device_meta WHERE key='private_note'"
     )[0]
     marker = _raw_row(
-        db_path, "SELECT value FROM burn_internal_meta WHERE key=?", (STORAGE_MIGRATION_KEY,)
+        str(db_path) + ".meta", "SELECT value FROM burn_internal_meta WHERE key=?", (STORAGE_MIGRATION_KEY,)
     )[0]
 
     assert label.encode("utf-8") not in raw_label
@@ -208,7 +272,7 @@ def test_legacy_plaintext_rows_are_migrated_and_scrubbed_on_first_keyed_open(tmp
 
 def test_legacy_migration_rolls_back_if_encryption_fails(tmp_path, monkeypatch):
     db_path = tmp_path / "sessions.db"
-    BurnDB(db_path)
+    _init_legacy_plaintext_db(db_path)
     session_id = new_message_id()
     failing_value = b"rollback private metadata"
 
@@ -234,17 +298,19 @@ def test_legacy_migration_rolls_back_if_encryption_fails(tmp_path, monkeypatch):
         return real_encrypt(key, plaintext, aad=aad)
 
     monkeypatch.setattr(burn_module, "encrypt", fail_private_value)
+    device_key = random_bytes(32)
+    monkeypatch.setattr(burn_module, "encrypt", fail_private_value)
     with pytest.raises(RuntimeError, match="forced migration failure"):
-        BurnDB(db_path, device_key=random_bytes(32))
+        BurnDB(db_path, device_key=device_key)
 
     assert _raw_row(
-        db_path, "SELECT label FROM sessions WHERE session_id=?", (session_id,)
+        db_path, "SELECT label FROM sessions WHERE session_id=?", (session_id,), key=device_key
     )[0] == "Rollback Label"
     assert _raw_row(
-        db_path, "SELECT value FROM device_meta WHERE key='private_note'"
+        str(db_path) + ".meta", "SELECT value FROM device_meta WHERE key='private_note'"
     )[0] == failing_value
     assert _raw_row(
-        db_path, "SELECT value FROM burn_internal_meta WHERE key=?", (STORAGE_MIGRATION_KEY,)
+        str(db_path) + ".meta", "SELECT value FROM burn_internal_meta WHERE key=?", (STORAGE_MIGRATION_KEY,)
     ) is None
 
 
@@ -263,15 +329,15 @@ def test_v2_protected_fields_and_migration(tmp_path):
     db.mark_open_burned(msg_id, session_id, 2)
 
     # Check raw DB has encrypted fields
-    raw_state = _raw_row(db_path, "SELECT state FROM sessions WHERE session_id=?", (session_id,))[0]
-    raw_created_at = _raw_row(db_path, "SELECT created_at FROM sessions WHERE session_id=?", (session_id,))[0]
-    raw_updated_at = _raw_row(db_path, "SELECT updated_at FROM sessions WHERE session_id=?", (session_id,))[0]
+    raw_state = _raw_row(db_path, "SELECT state FROM sessions WHERE session_id=?", (session_id,), key=key)[0]
+    raw_created_at = _raw_row(db_path, "SELECT created_at FROM sessions WHERE session_id=?", (session_id,), key=key)[0]
+    raw_updated_at = _raw_row(db_path, "SELECT updated_at FROM sessions WHERE session_id=?", (session_id,), key=key)[0]
 
-    raw_status = _raw_row(db_path, "SELECT status FROM burned_messages WHERE fingerprint=?", (fingerprint,))[0]
-    raw_reserved_at = _raw_row(db_path, "SELECT reserved_at FROM burned_messages WHERE fingerprint=?", (fingerprint,))[0]
-    raw_burned_at = _raw_row(db_path, "SELECT burned_at FROM burned_messages WHERE fingerprint=?", (fingerprint,))[0]
-    raw_session_id = _raw_row(db_path, "SELECT session_id FROM burned_messages WHERE fingerprint=?", (fingerprint,))[0]
-    raw_direction = _raw_row(db_path, "SELECT direction FROM burned_messages WHERE fingerprint=?", (fingerprint,))[0]
+    raw_status = _raw_row(db_path, "SELECT status FROM burned_messages WHERE fingerprint=?", (fingerprint,), key=key)[0]
+    raw_reserved_at = _raw_row(db_path, "SELECT reserved_at FROM burned_messages WHERE fingerprint=?", (fingerprint,), key=key)[0]
+    raw_burned_at = _raw_row(db_path, "SELECT burned_at FROM burned_messages WHERE fingerprint=?", (fingerprint,), key=key)[0]
+    raw_session_id = _raw_row(db_path, "SELECT session_id FROM burned_messages WHERE fingerprint=?", (fingerprint,), key=key)[0]
+    raw_direction = _raw_row(db_path, "SELECT direction FROM burned_messages WHERE fingerprint=?", (fingerprint,), key=key)[0]
 
     for val in (raw_state, raw_created_at, raw_updated_at, raw_status, raw_reserved_at, raw_burned_at, raw_session_id, raw_direction):
         assert isinstance(val, bytes)
@@ -304,7 +370,7 @@ def test_v2_protected_fields_and_migration(tmp_path):
             p.unlink()
 
     # Initialize empty tables
-    BurnDB(db_path)
+    _init_legacy_plaintext_db(db_path)
 
     with sqlite3.connect(db_path) as conn:
         conn.execute(
@@ -334,22 +400,22 @@ def test_v2_protected_fields_and_migration(tmp_path):
     db_migrated = BurnDB(db_path, device_key=key)
 
     # Check that V2 fields are now encrypted in storage
-    raw_state = _raw_row(db_path, "SELECT state FROM sessions WHERE session_id=?", (session_id,))[0]
-    raw_created_at = _raw_row(db_path, "SELECT created_at FROM sessions WHERE session_id=?", (session_id,))[0]
-    raw_updated_at = _raw_row(db_path, "SELECT updated_at FROM sessions WHERE session_id=?", (session_id,))[0]
-    raw_status = _raw_row(db_path, "SELECT status FROM burned_messages WHERE fingerprint=?", (fingerprint,))[0]
-    raw_reserved_at = _raw_row(db_path, "SELECT reserved_at FROM burned_messages WHERE fingerprint=?", (fingerprint,))[0]
-    raw_burned_at = _raw_row(db_path, "SELECT burned_at FROM burned_messages WHERE fingerprint=?", (fingerprint,))[0]
-    raw_failed_at = _raw_row(db_path, "SELECT failed_at FROM burned_messages WHERE fingerprint=?", (fingerprint,))[0]
-    raw_session_id = _raw_row(db_path, "SELECT session_id FROM burned_messages WHERE fingerprint=?", (fingerprint,))[0]
-    raw_direction = _raw_row(db_path, "SELECT direction FROM burned_messages WHERE fingerprint=?", (fingerprint,))[0]
+    raw_state = _raw_row(db_path, "SELECT state FROM sessions WHERE session_id=?", (session_id,), key=key)[0]
+    raw_created_at = _raw_row(db_path, "SELECT created_at FROM sessions WHERE session_id=?", (session_id,), key=key)[0]
+    raw_updated_at = _raw_row(db_path, "SELECT updated_at FROM sessions WHERE session_id=?", (session_id,), key=key)[0]
+    raw_status = _raw_row(db_path, "SELECT status FROM burned_messages WHERE fingerprint=?", (fingerprint,), key=key)[0]
+    raw_reserved_at = _raw_row(db_path, "SELECT reserved_at FROM burned_messages WHERE fingerprint=?", (fingerprint,), key=key)[0]
+    raw_burned_at = _raw_row(db_path, "SELECT burned_at FROM burned_messages WHERE fingerprint=?", (fingerprint,), key=key)[0]
+    raw_failed_at = _raw_row(db_path, "SELECT failed_at FROM burned_messages WHERE fingerprint=?", (fingerprint,), key=key)[0]
+    raw_session_id = _raw_row(db_path, "SELECT session_id FROM burned_messages WHERE fingerprint=?", (fingerprint,), key=key)[0]
+    raw_direction = _raw_row(db_path, "SELECT direction FROM burned_messages WHERE fingerprint=?", (fingerprint,), key=key)[0]
 
     for val in (raw_state, raw_created_at, raw_updated_at, raw_status, raw_reserved_at, raw_burned_at, raw_failed_at, raw_session_id, raw_direction):
         assert isinstance(val, bytes)
         assert val.startswith(PROTECTED_VALUE_PREFIX)
 
     # Verify migration status
-    marker_v2 = _raw_row(db_path, "SELECT value FROM burn_internal_meta WHERE key=?", (STORAGE_MIGRATION_V2_KEY,))[0]
+    marker_v2 = _raw_row(str(db_path) + ".meta", "SELECT value FROM burn_internal_meta WHERE key=?", (STORAGE_MIGRATION_V2_KEY,))[0]
     assert (
         db_migrated._decrypt_protected_value("burn_internal_meta", "value", STORAGE_MIGRATION_V2_KEY, marker_v2)
         == STORAGE_MIGRATION_COMPLETE

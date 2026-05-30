@@ -27,6 +27,7 @@ from pathlib import Path
 MIGRATION_CONTEXT = threading.local()
 MIGRATION_CONTEXT.device_key = None
 MIGRATION_CONTEXT.is_encrypting = False
+MIGRATION_CONTEXT.db_path = None
 
 try:
     import sqlcipher3.dbapi2 as sqlcipher
@@ -35,7 +36,26 @@ try:
         conn = _original_sqlite3_connect(database, **kwargs)
         key = getattr(MIGRATION_CONTEXT, "device_key", None)
         if key and not getattr(MIGRATION_CONTEXT, "is_encrypting", False):
-            if "sessions.db" in str(database) and not str(database).endswith(".meta"):
+            active_db_path = getattr(MIGRATION_CONTEXT, "db_path", None)
+            is_target = False
+            if active_db_path:
+                try:
+                    db_clean = str(database)
+                    if db_clean.startswith("file:"):
+                        db_clean = db_clean[5:]
+                        if db_clean.startswith("///"):
+                            db_clean = db_clean[3:]
+                        elif db_clean.startswith("//"):
+                            db_clean = db_clean[2:]
+                    if "?" in db_clean:
+                        db_clean = db_clean.split("?")[0]
+                    is_target = Path(db_clean).resolve() == Path(active_db_path).resolve()
+                except Exception:
+                    pass
+            if not is_target and "sessions.db" in str(database) and not str(database).endswith(".meta"):
+                is_target = True
+            
+            if is_target:
                 conn.execute(f"PRAGMA key = \"x'{key.hex()}'\"")
         return conn
     sqlcipher.connect = _patched_sqlite3_connect
@@ -396,12 +416,14 @@ class BurnDB:
                 conn.execute("PRAGMA journal_mode=WAL")
             else:
                 MIGRATION_CONTEXT.device_key = self._device_key
+                MIGRATION_CONTEXT.db_path = self.db_path
                 try:
                     conn = sqlite3.connect(self.db_path, check_same_thread=False)
                     conn.execute("PRAGMA journal_mode=WAL")
                     conn.execute(f"ATTACH DATABASE '{self.meta_db_path}' AS meta KEY ''")
                 finally:
                     MIGRATION_CONTEXT.device_key = None
+                    MIGRATION_CONTEXT.db_path = None
             conn.execute("PRAGMA foreign_keys=ON")
             conn.execute("PRAGMA secure_delete=ON")
             conn.execute("PRAGMA cache_size=64")
@@ -461,9 +483,13 @@ class BurnDB:
                 self._ensure_sqlcipher_encryption()
                 
                 MIGRATION_CONTEXT.device_key = self._device_key
+                MIGRATION_CONTEXT.db_path = self.db_path
                 try:
                     conn = sqlite3.connect(self.db_path)
-                    conn.execute("PRAGMA journal_mode=WAL")
+                    try:
+                        conn.execute("PRAGMA journal_mode=WAL")
+                    except sqlite3.DatabaseError as exc:
+                        raise DeviceError("Invalid protected metadata") from exc
                     conn.close()
                     
                     backend_sessions = get_backend(f"sqlite:///{self.db_path}")
@@ -473,6 +499,7 @@ class BurnDB:
                         backend_sessions.connection.close()
                 finally:
                     MIGRATION_CONTEXT.device_key = None
+                    MIGRATION_CONTEXT.db_path = None
         finally:
             if _old_mask is not None:
                 os.umask(_old_mask)
@@ -618,6 +645,7 @@ class BurnDB:
         import sys
         sys._paracci_migration_db = self
         MIGRATION_CONTEXT.device_key = self._device_key
+        MIGRATION_CONTEXT.db_path = self.db_path
         try:
             backend = get_backend(f"sqlite:///{self.db_path}")
             migrations_dir = Path(__file__).parent / "migrations" / "encryption"
@@ -643,6 +671,7 @@ class BurnDB:
                 backend.connection.close()
         finally:
             MIGRATION_CONTEXT.device_key = None
+            MIGRATION_CONTEXT.db_path = None
             if hasattr(sys, "_paracci_migration_db"):
                 del sys._paracci_migration_db
 
@@ -1054,12 +1083,21 @@ class BurnDB:
                 """,
                 (session_id, protected_label, protected_state, encrypted_meta, protected_created_at, protected_updated_at)
             )
+            conn.execute(
+                """
+                INSERT INTO meta.sessions (session_id, label, state, encrypted_meta, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id) DO NOTHING
+                """,
+                (session_id, b'dummy', b'dummy', b'dummy', b'dummy', b'dummy')
+            )
             conn.commit()
         finally:
             conn.close()
 
     def load_session(self, session_id: bytes) -> tuple | None:
         """Returns (label, state, encrypted_meta, created_at) or None."""
+        self._require_device_key()
         conn = self._connect()
         try:
             row = conn.execute(
@@ -1104,6 +1142,7 @@ class BurnDB:
 
     def list_sessions(self) -> list[dict]:
         """Lists all sessions."""
+        self._require_device_key()
         conn = self._connect()
         try:
             rows = conn.execute(
@@ -1355,6 +1394,8 @@ class BurnDB:
                     if not hmac.compare_digest(stored_sig, computed_sig):
                         raise ValueError("Tampering detected (HMAC mismatch).")
                     parsed = json.loads(payload.decode("utf-8"))
+                elif raw.startswith(b"{"):
+                    parsed = json.loads(raw.decode("utf-8"))
                 else:
                     raise ValueError("Tampering detected (missing signature prefix).")
 

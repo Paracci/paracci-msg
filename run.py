@@ -482,7 +482,7 @@ def download_preview_file(token: str) -> dict:
             f"Save {filename} to Paracci Downloads?",
         ):
             return {"success": False, "cancelled": True}
-        out_path = _write_native_download(filename, source_path=Path(entry.file_path))
+        out_path = _write_native_download(filename, file_bytes=entry.file_bytes)
         preview_win.evaluate_js(
             f"window.showDownloadSuccess({json.dumps(out_path.name)});"
         )
@@ -618,11 +618,8 @@ class ProApi:
         if grant is None:
             raise PermissionError("Native save grant is invalid or expired.")
         filename = validate_native_download_filename(grant.filename)
-        try:
-            if os.path.getsize(grant.file_path) > MAX_NATIVE_SAVE_BYTES:
-                raise ValueError("Native download exceeds the size limit.")
-        except OSError:
-            pass
+        if len(grant.file_bytes) > MAX_NATIVE_SAVE_BYTES:
+            raise ValueError("Native download exceeds the size limit.")
             
         window = self._require_window()
         if not window.create_confirmation_dialog(
@@ -632,7 +629,7 @@ class ProApi:
             return None
             
         try:
-            path = _write_native_download(filename, source_path=Path(grant.file_path))
+            path = _write_native_download(filename, file_bytes=grant.file_bytes)
             print(f"  [+] Confirmed Save: {path}")
             return str(path)
         finally:

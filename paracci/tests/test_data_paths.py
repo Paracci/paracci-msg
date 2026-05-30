@@ -98,6 +98,6 @@ def test_standard_linux_storage_uses_downloads_directory(
 
     monkeypatch.setenv("DATA_DIR", str(data_dir))
 
-    config = ParacciConfig()
+    config = ParacciConfig(data_dir=data_dir)
 
     assert Path(config.full_downloads_path) == home / "Downloads" / "Paracci"

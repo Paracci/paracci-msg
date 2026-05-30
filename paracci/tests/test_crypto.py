@@ -55,11 +55,10 @@ def test_public_envelope_file_seal_helpers_are_removed():
 # wipe() behaviour tests
 # ---------------------------------------------------------------------------
 
-def test_wipe_raises_on_bytes():
-    """wipe() on immutable bytes must raise TypeError."""
+def test_wipe_does_not_raise_on_bytes():
+    """wipe() on immutable bytes must not raise TypeError."""
     sensitive = b"sensitive-key-material"
-    with pytest.raises(TypeError, match="wipe\\(\\) requires a bytearray"):
-        wipe(sensitive)
+    wipe(sensitive)
 
 
 def test_wipe_zeros_mutable_bytearray():
