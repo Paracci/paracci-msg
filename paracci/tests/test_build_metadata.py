@@ -17,8 +17,8 @@ def load_build_module():
 
 def test_canonical_version_is_valid_and_read_by_build_script():
     build = load_build_module()
-    assert (REPO_ROOT / "VERSION").read_text(encoding="ascii").strip() == "1.5.1"
-    assert build.read_app_version() == ("1.5.1", (1, 5, 1))
+    assert (REPO_ROOT / "VERSION").read_text(encoding="ascii").strip() == "1.6.0"
+    assert build.read_app_version() == ("1.6.0", (1, 6, 0))
 
 
 def test_windows_version_resource_is_generated_from_canonical_version(tmp_path, monkeypatch):
@@ -26,12 +26,12 @@ def test_windows_version_resource_is_generated_from_canonical_version(tmp_path, 
     generated = tmp_path / "file_version_info.txt"
     monkeypatch.setattr(build, "VERSION_INFO_FILE", generated)
 
-    build.write_version_info("1.5.1", (1, 5, 1))
+    build.write_version_info("1.6.0", (1, 6, 0))
 
     text = generated.read_text(encoding="utf-8")
-    assert "filevers=(1, 5, 1, 0)" in text
-    assert "prodvers=(1, 5, 1, 0)" in text
-    assert "StringStruct('ProductVersion', '1.5.1.0')" in text
+    assert "filevers=(1, 6, 0, 0)" in text
+    assert "prodvers=(1, 6, 0, 0)" in text
+    assert "StringStruct('ProductVersion', '1.6.0.0')" in text
 
 
 def test_package_build_receives_canonical_version(tmp_path, monkeypatch):
@@ -41,8 +41,8 @@ def test_package_build_receives_canonical_version(tmp_path, monkeypatch):
     called = []
     monkeypatch.setattr(build, "run", lambda cmd, **kwargs: called.append(cmd) or 0)
 
-    assert build.run_native_package_build("linux", "linux", script, "AppImage", "1.5.1") == 0
-    assert called == [["bash", str(script), "1.5.1"]]
+    assert build.run_native_package_build("linux", "linux", script, "AppImage", "1.6.0") == 0
+    assert called == [["bash", str(script), "1.6.0"]]
 
 
 def test_spec_and_release_workflow_consume_version_without_rewriting_sources():
