@@ -37,7 +37,10 @@ if os.environ.get("GITHUB_ACTIONS") == "true":
                 self.store_dict.pop(profile_id, None)
 
         _fake_adapter = FakeKeychainAdapter()
-        keychain_mac._get_adapter = lambda: _fake_adapter
+        def _custom_get_adapter():
+            keychain_mac._ensure_macos("load")
+            return _fake_adapter
+        keychain_mac._get_adapter = _custom_get_adapter
     except Exception:
         pass
 
