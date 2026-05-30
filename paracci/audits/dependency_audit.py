@@ -14,7 +14,7 @@ RUNTIME_LOCK = ROOT / "requirements.lock"
 DEV_LOCK = ROOT / "requirements-dev.lock"
 DOMPURIFY_PATH = ROOT / "paracci" / "app" / "static" / "js" / "lib" / "purify.min.js"
 DOMPURIFY_MIN_VERSION = "3.1.3"
-DOMPURIFY_EXPECTED_VERSION = "3.4.5"
+DOMPURIFY_EXPECTED_VERSION = "3.4.7"
 
 CRITICAL_DEPS = {
     "Flask": "3.1.1",
