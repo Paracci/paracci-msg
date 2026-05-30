@@ -36,6 +36,8 @@ RUN apt-get update -qq && apt-get install -y \
         libxcb-keysyms1 \
         libxcb-render-util0 \
         libxcb-shape0 \
+        sqlcipher \
+        libsqlcipher-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # python ve python3 komutlarını python3.12'ye yönlendirme
@@ -80,7 +82,8 @@ RUN npm ci
 
 RUN python -m pip install --upgrade pip --break-system-packages \
     && python -m pip install --ignore-installed --break-system-packages --require-hashes -r requirements.lock \
-    && python -m pip install --ignore-installed --break-system-packages --require-hashes -r requirements-dev.lock
+    && python -m pip install --ignore-installed --break-system-packages --require-hashes -r requirements-dev.lock \
+    && python -m pip install --break-system-packages sqlcipher3
 
 
 # Çalıştırılacak varsayılan komut (Derleme + Pytest + JS Testleri)

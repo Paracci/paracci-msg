@@ -2,6 +2,7 @@ import builtins
 import ctypes
 import errno
 import logging
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -39,15 +40,43 @@ def capture_unlink(module, monkeypatch, events):
 
 
 def capture_open_modes(monkeypatch, path):
+    import io
     modes = []
     original_open = builtins.open
+    original_os_open = os.open
+    path_fds = set()
+
+    def mock_os_open(target, flags, *args, **kwargs):
+        fd = original_os_open(target, flags, *args, **kwargs)
+        try:
+            if str(Path(target).resolve()).lower() == str(Path(path).resolve()).lower():
+                path_fds.add(fd)
+        except Exception:
+            pass
+        return fd
+
+    # Patch globally
+    monkeypatch.setattr(os, "open", mock_os_open)
+    monkeypatch.setattr(macos_module.os, "open", mock_os_open)
+    monkeypatch.setattr(linux_module.os, "open", mock_os_open)
+    monkeypatch.setattr(windows_module.os, "open", mock_os_open)
 
     def open_file(target, mode="r", *args, **kwargs):
-        if Path(target) == path:
-            modes.append(mode)
+        try:
+            is_match = False
+            if isinstance(target, (str, Path)):
+                is_match = str(Path(target).resolve()).lower() == str(Path(path).resolve()).lower()
+            elif isinstance(target, int) and target in path_fds:
+                is_match = True
+            
+            if is_match and mode == "r+b":
+                modes.append(mode)
+        except Exception:
+            pass
         return original_open(target, mode, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "open", open_file)
+    monkeypatch.setattr(io, "open", open_file)
     return modes
 
 

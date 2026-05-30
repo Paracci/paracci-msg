@@ -183,6 +183,11 @@ def wipe(data: bytearray | list) -> None:
     that wiping a bytearray zeroes every copy the interpreter may have made
     internally.
     """
+    if isinstance(data, (bytes, str)):
+        logger = get_logger("Crypto")
+        logger.security("wipe() was called on immutable bytes or string. Security warning: immutable secrets cannot be zeroed in-place.")
+        return
+
     if isinstance(data, bytearray):
         for i in range(len(data)):
             data[i] = 0

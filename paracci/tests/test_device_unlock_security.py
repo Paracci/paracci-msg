@@ -1,5 +1,4 @@
 import json
-import sqlite3
 import sys
 import threading
 import time
@@ -11,6 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core import burn as burn_module
+import sqlite3
 from core.burn import (
     UNLOCK_EVER_SUCCEEDED_KEY,
     UNLOCK_FAILURE_DELAYS,
@@ -120,7 +120,7 @@ def test_sessions_force_delay_if_both_unlock_policy_rows_are_deleted(tmp_path):
     finally:
         keyed.release_device_key()
 
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(str(db_path) + ".meta") as conn:
         conn.execute(
             "DELETE FROM device_meta WHERE key IN (?, ?)",
             (UNLOCK_RATE_LIMIT_KEY, UNLOCK_EVER_SUCCEEDED_KEY),
@@ -140,13 +140,11 @@ def test_blocked_attempt_repersist_existing_rate_state(tmp_path):
     db.set_device_meta(UNLOCK_EVER_SUCCEEDED_KEY, b"1")
     db.set_device_meta(
         UNLOCK_RATE_LIMIT_KEY,
-        json.dumps(
-            {"failed_attempts": 5, "last_failed_at": 1000, "locked_until": 1300},
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8"),
+        db._encode_unlock_rate_limit(
+            {"failed_attempts": 5, "last_failed_at": 1000, "locked_until": 1300}
+        ),
     )
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(str(db_path) + ".meta") as conn:
         conn.execute("CREATE TABLE unlock_rate_writes (id INTEGER PRIMARY KEY)")
         conn.execute(
             """
@@ -162,7 +160,7 @@ def test_blocked_attempt_repersist_existing_rate_state(tmp_path):
     with pytest.raises(DeviceLockedError):
         db.reserve_unlock_attempt(now=1001)
 
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(str(db_path) + ".meta") as conn:
         writes = conn.execute("SELECT COUNT(*) FROM unlock_rate_writes").fetchone()[0]
     assert writes == 1
     assert _stored_unlock_state(db)["locked_until"] == 1300
@@ -323,7 +321,7 @@ def test_legacy_plaintext_rate_limit_migration(tmp_path):
 
     # Manually write a legacy plaintext JSON record directly to the database
     legacy_json = b'{"failed_attempts":2,"last_failed_at":100,"locked_until":200}'
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(str(db_path) + ".meta") as conn:
         conn.execute(
             "INSERT OR REPLACE INTO device_meta (key, value) VALUES (?, ?)",
             (UNLOCK_RATE_LIMIT_KEY, legacy_json),
@@ -337,7 +335,7 @@ def test_legacy_plaintext_rate_limit_migration(tmp_path):
 
     # Write a new state and verify it gets encrypted/signed securely
     db_reload.record_unlock_failure(now=300)
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(str(db_path) + ".meta") as conn:
         row = conn.execute(
             "SELECT value FROM device_meta WHERE key=?", (UNLOCK_RATE_LIMIT_KEY,)
         ).fetchone()
@@ -354,7 +352,7 @@ def test_rate_limit_tamper_detection(tmp_path):
     db.record_unlock_failure(now=1000)
 
     # Read the valid raw value from the database
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(str(db_path) + ".meta") as conn:
         row = conn.execute(
             "SELECT value FROM device_meta WHERE key=?", (UNLOCK_RATE_LIMIT_KEY,)
         ).fetchone()
@@ -368,7 +366,7 @@ def test_rate_limit_tamper_detection(tmp_path):
         tampered_val = tampered_val[:-2]
     tampered_val = bytes(tampered_val)
 
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(str(db_path) + ".meta") as conn:
         conn.execute(
             "UPDATE device_meta SET value=? WHERE key=?",
             (tampered_val, UNLOCK_RATE_LIMIT_KEY),
@@ -400,7 +398,7 @@ def test_non_windows_hmac_rate_limit_protection(tmp_path, monkeypatch):
         assert (key_path.stat().st_mode & 0o777) == 0o600
 
     # Verify that the value is stored with 'hmac:' prefix
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(str(db_path) + ".meta") as conn:
         row = conn.execute(
             "SELECT value FROM device_meta WHERE key=?", (UNLOCK_RATE_LIMIT_KEY,)
         ).fetchone()
