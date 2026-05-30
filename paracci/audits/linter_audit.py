@@ -44,6 +44,15 @@ class GlobalCollector(ast.NodeVisitor):
         for target in node.targets:
             self._extract_names(target, self.globals)
 
+    def visit_AnnAssign(self, node):
+        """Collects global annotated assignments."""
+        self._extract_names(node.target, self.globals)
+
+    def visit_NamedExpr(self, node):
+        """Collects global names bound via walrus operator."""
+        self._extract_names(node.target, self.globals)
+
+
     def _extract_names(self, node, target_set):
         """Extracts names recursively from an AST node."""
         if isinstance(node, ast.Name):
@@ -133,7 +142,14 @@ class LinterChecker(ast.NodeVisitor):
         for gen in node.generators:
             self._extract_to_scope(gen.target, new_scope)
         self.scopes.append(new_scope)
-        self.generic_visit(node)
+        for gen in node.generators:
+            self.visit(gen)
+        if hasattr(node, "elt"):
+            self.visit(node.elt)
+        if hasattr(node, "key"):
+            self.visit(node.key)
+        if hasattr(node, "value"):
+            self.visit(node.value)
         self.scopes.pop()
 
     def visit_ListComp(self, node): 
@@ -169,6 +185,17 @@ class LinterChecker(ast.NodeVisitor):
         for target in node.targets:
             self._extract_to_scope(target, self._current_scope())
         self.generic_visit(node)
+
+    def visit_AnnAssign(self, node):
+        """Defines target name in an annotated assignment."""
+        self._extract_to_scope(node.target, self._current_scope())
+        self.generic_visit(node)
+
+    def visit_NamedExpr(self, node):
+        """Defines name bound via walrus operator in current scope."""
+        self._extract_to_scope(node.target, self._current_scope())
+        self.generic_visit(node)
+
 
     def visit_ExceptHandler(self, node):
         """Defines the error handler name."""

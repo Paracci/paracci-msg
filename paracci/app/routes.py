@@ -268,34 +268,6 @@ def add_security_headers(response):
     """Add global security headers."""
     return _apply_security_headers(response)
 
-def _drop_cached_entry(entry, byte_keys):
-    """Drop Paracci-owned references to cached plaintext bytes.
-
-    Python cannot guarantee zeroization of immutable bytes; this only shortens
-    the lifetime of references controlled by this process.
-    """
-    if not isinstance(entry, dict):
-        return
-    for key in byte_keys:
-        value = entry.get(key)
-        if isinstance(value, (bytearray, list)):
-            wipe(value)
-        entry[key] = b""
-    entry.clear()
-
-
-def _normalize_cache_ids(raw_ids):
-    """Return bounded string cache IDs, or None to mean all cache entries."""
-    if raw_ids is None:
-        return None
-    if not isinstance(raw_ids, (list, tuple, set)):
-        return []
-    normalized = []
-    for value in raw_ids:
-        if not isinstance(value, str):
-            continue
-    """Add global security headers."""
-    return _apply_security_headers(response)
 
 def _drop_cached_entry(entry, byte_keys):
     """Drop Paracci-owned references to cached plaintext bytes.

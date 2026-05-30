@@ -1,3 +1,4 @@
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -72,7 +73,10 @@ def test_keychain_missing_item_maps_to_missing_code(monkeypatch):
     assert exc.value.code == "missing"
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="real Keychain is macOS-only")
+@pytest.mark.skipif(
+    sys.platform != "darwin" or os.environ.get("GITHUB_ACTIONS") == "true",
+    reason="real Keychain is macOS-only and is skipped in headless CI environments",
+)
 def test_keychain_real_round_trip_on_macos():
     profile_id = f"pytest-{uuid.uuid4().hex}"
     try:
