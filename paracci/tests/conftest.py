@@ -8,7 +8,6 @@ are gracefully skipped instead of crashing the entire suite.
 """
 
 import sys
-import builtins
 from unittest.mock import MagicMock
 
 # Mock pywebview globally during tests to avoid GUI/WindowServer initialization hangs in headless environments (e.g. macOS CI)
@@ -44,22 +43,6 @@ if os.environ.get("GITHUB_ACTIONS") == "true":
     except Exception:
         pass
 
-# Trace imports of test modules to diagnose hangs during pytest collection
-_original_import = builtins.__import__
-def _custom_import(name, *args, **kwargs):
-    interesting = any(k in name for k in ("test", "core", "desktop", "sqlcipher", "oqs", "webview", "paracci"))
-    if interesting:
-        print(f"DEBUG: START Importing module -> {name}", flush=True)
-    try:
-        res = _original_import(name, *args, **kwargs)
-        if interesting:
-            print(f"DEBUG: END Importing module -> {name}", flush=True)
-        return res
-    except Exception as e:
-        if interesting:
-            print(f"DEBUG: ERROR Importing module -> {name}: {e}", flush=True)
-        raise
-builtins.__import__ = _custom_import
 
 import pytest
 
