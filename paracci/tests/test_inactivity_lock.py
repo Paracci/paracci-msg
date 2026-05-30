@@ -117,22 +117,22 @@ def test_authenticated_request_resets_timer(tmp_path, monkeypatch):
     # Disable TESTING mode temporarily so the request reset hook is active
     flask_app.config["TESTING"] = False
 
-    ag_app.inactivity_timer._timeout = 0.15
+    ag_app.inactivity_timer._timeout = 1.0
     ag_app.inactivity_timer.start(flask_testing=False)
 
-    time.sleep(0.08)
+    time.sleep(0.4)
     assert ag_app.device_key is not None
 
     # Authenticated request resets the timer
     response = client.get("/", base_url=ORIGIN, headers=auth_headers(client))
     assert response.status_code != 403
 
-    # Wait another 0.1 seconds (0.18s since start). If not reset, it would have locked by now.
-    time.sleep(0.1)
+    # Wait another 0.8 seconds (1.2s since start). If not reset, it would have locked by now.
+    time.sleep(0.8)
     assert ag_app.device_key is not None
 
-    # Wait another 0.1 seconds (0.28s since start, 0.2s since reset). Now it should lock.
-    time.sleep(0.1)
+    # Wait another 0.4 seconds (1.6s since start, 1.2s since reset). Now it should lock.
+    time.sleep(0.4)
     assert ag_app.device_key is None
 
 
