@@ -7,6 +7,12 @@ liboqs-python / the native liboqs C library.  When liboqs is not installed
 are gracefully skipped instead of crashing the entire suite.
 """
 
+import sys
+from unittest.mock import MagicMock
+
+# Mock pywebview globally during tests to avoid GUI/WindowServer initialization hangs in headless environments (e.g. macOS CI)
+sys.modules["webview"] = MagicMock()
+
 import pytest
 
 try:
