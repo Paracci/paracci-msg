@@ -71,7 +71,7 @@ jobs:
         run: python -m pip install sqlcipher3-wheels
 
       - name: Run tests
-        run: python -m pytest paracci/tests -q
+        run: python -m pytest paracci/tests -v -s
         env:
           QT_QPA_PLATFORM: offscreen
 
