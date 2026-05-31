@@ -582,44 +582,44 @@ jobs:
       #    Verifiable at: https://github.com/<owner>/<repo>/attestations
       - name: Attest Windows installer provenance
         if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/v')
-        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45  # v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2
         with:
           subject-path: builds/windows/Paracci-Setup-v*.exe
 
       - name: Attest Windows portable archive provenance
         if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/v')
-        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45  # v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2
         with:
           subject-path: builds/windows/Paracci-Portable-v*.zip
 
       # macOS temporarily disabled — runner hangs at pytest collection phase
       # - name: Attest macOS build provenance
       #   if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/v')
-      #   uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45  # v2
+      #   uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2
       #   with:
       #     subject-path: builds/macos/Paracci-macOS*
       # 
       # - name: Attest macOS DMG provenance
       #   if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/v')
-      #   uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45  # v2
+      #   uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2
       #   with:
       #     subject-path: builds/macos/Paracci-*-macOS.dmg
 
       - name: Attest Linux portable archive provenance
         if: runner.os == 'Linux' && startsWith(github.ref, 'refs/tags/v')
-        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45  # v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2
         with:
           subject-path: builds/linux/Paracci-Linux.zip
 
       - name: Attest Linux AppImage provenance
         if: runner.os == 'Linux' && startsWith(github.ref, 'refs/tags/v')
-        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45  # v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2
         with:
           subject-path: builds/linux/Paracci-*-x86_64.AppImage
 
       - name: Attest Linux Debian package provenance
         if: runner.os == 'Linux' && startsWith(github.ref, 'refs/tags/v')
-        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45  # v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2
         with:
           subject-path: builds/linux/paracci_*_amd64.deb
 
