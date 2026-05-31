@@ -30,7 +30,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-latest, windows-2025]
+        # macOS temporarily disabled — runner hangs at pytest collection phase
+        # os: [ubuntu-22.04, macos-latest, windows-2025]
+        os: [ubuntu-22.04, windows-2025]
 
     steps:
       - name: Checkout repository
@@ -105,9 +107,10 @@ jobs:
             platform_id: windows
             artifact_name: Paracci-Windows
 
-          - os: macos-latest
-            platform_id: macos
-            artifact_name: Paracci-macOS
+          # macOS temporarily disabled — runner hangs at pytest collection phase
+          # - os: macos-latest
+          #   platform_id: macos
+          #   artifact_name: Paracci-macOS
 
           - os: ubuntu-22.04
             platform_id: linux
@@ -170,10 +173,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --require-hashes -r requirements.lock
 
-      - name: Install PyInstaller (Standard for macOS)
-        if: runner.os == 'macOS'
-        run: |
-          python -m pip install --require-hashes -r requirements-dev.lock
+      # macOS temporarily disabled — runner hangs at pytest collection phase
+      # - name: Install PyInstaller (Standard for macOS)
+      #   if: runner.os == 'macOS'
+      #   run: |
+      #     python -m pip install --require-hashes -r requirements-dev.lock
 
       - name: Install PyInstaller (Compile from Source for Windows and Linux to eliminate False Positives)
         if: runner.os != 'macOS'
@@ -225,11 +229,12 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
 
-      - name: Build executable and DMG (macOS)
-        if: runner.os == 'macOS'
-        run: python build.py --clean --dmg
-        env:
-          QT_QPA_PLATFORM: offscreen
+      # macOS temporarily disabled — runner hangs at pytest collection phase
+      # - name: Build executable and DMG (macOS)
+      #   if: runner.os == 'macOS'
+      #   run: python build.py --clean --dmg
+      #   env:
+      #     QT_QPA_PLATFORM: offscreen
 
       - name: Build executable, AppImage, and Debian package (Linux)
         if: runner.os == 'Linux'
@@ -259,9 +264,10 @@ jobs:
           runner_os = os.environ["RUNNER_OS"]
           if runner_os == "Windows":
               executable = Path("builds/windows/Paracci/Paracci.exe")
-          elif runner_os == "macOS":
-              app_executable = Path("builds/macos/Paracci.app/Contents/MacOS/Paracci")
-              executable = app_executable if app_executable.exists() else Path("builds/macos/Paracci")
+          # macOS temporarily disabled — runner hangs at pytest collection phase
+          # elif runner_os == "macOS":
+          #     app_executable = Path("builds/macos/Paracci.app/Contents/MacOS/Paracci")
+          #     executable = app_executable if app_executable.exists() else Path("builds/macos/Paracci")
           else:
               executable = Path("builds/linux/Paracci/Paracci")
 
@@ -474,14 +480,15 @@ jobs:
             exit 1
           fi
 
-      - name: Validate macOS DMG
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          set -euo pipefail
-          dmgs=(builds/macos/Paracci-*-macOS.dmg)
-          [ "${#dmgs[@]}" -eq 1 ] && [ -f "${dmgs[0]}" ]
-          hdiutil verify "${dmgs[0]}"
+      # macOS temporarily disabled — runner hangs at pytest collection phase
+      # - name: Validate macOS DMG
+      #   if: runner.os == 'macOS'
+      #   shell: bash
+      #   run: |
+      #     set -euo pipefail
+      #     dmgs=(builds/macos/Paracci-*-macOS.dmg)
+      #     [ "${#dmgs[@]}" -eq 1 ] && [ -f "${dmgs[0]}" ]
+      #     hdiutil verify "${dmgs[0]}"
 
       - name: Prepare asset (Windows)
         if: runner.os == 'Windows'
@@ -579,17 +586,18 @@ jobs:
         with:
           subject-path: builds/windows/Paracci-Portable-v*.zip
 
-      - name: Attest macOS build provenance
-        if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/v')
-        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45  # v2
-        with:
-          subject-path: builds/macos/Paracci-macOS*
-
-      - name: Attest macOS DMG provenance
-        if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/v')
-        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45  # v2
-        with:
-          subject-path: builds/macos/Paracci-*-macOS.dmg
+      # macOS temporarily disabled — runner hangs at pytest collection phase
+      # - name: Attest macOS build provenance
+      #   if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/v')
+      #   uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45  # v2
+      #   with:
+      #     subject-path: builds/macos/Paracci-macOS*
+      # 
+      # - name: Attest macOS DMG provenance
+      #   if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/v')
+      #   uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45  # v2
+      #   with:
+      #     subject-path: builds/macos/Paracci-*-macOS.dmg
 
       - name: Attest Linux portable archive provenance
         if: runner.os == 'Linux' && startsWith(github.ref, 'refs/tags/v')
@@ -618,13 +626,14 @@ jobs:
           path: builds/windows/
           retention-days: 7
 
-      - name: Upload artifact (macOS)
-        if: runner.os == 'macOS'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
-        with:
-          name: Paracci-macOS
-          path: builds/macos/
-          retention-days: 7
+      # macOS temporarily disabled — runner hangs at pytest collection phase
+      # - name: Upload artifact (macOS)
+      #   if: runner.os == 'macOS'
+      #   uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+      #   with:
+      #     name: Paracci-macOS
+      #     path: builds/macos/
+      #     retention-days: 7
 
       - name: Upload artifact (Linux)
         if: runner.os == 'Linux'
@@ -653,11 +662,12 @@ jobs:
           name: Paracci-Windows
           path: release-assets/windows
 
-      - name: Download macOS artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
-        with:
-          name: Paracci-macOS
-          path: release-assets/macos
+      # macOS temporarily disabled — runner hangs at pytest collection phase
+      # - name: Download macOS artifact
+      #   uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+      #   with:
+      #     name: Paracci-macOS
+      #     path: release-assets/macos
 
       - name: Download Linux artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
@@ -669,9 +679,13 @@ jobs:
       - name: Generate combined SHA256SUMS.txt
         run: |
           cat release-assets/windows/SHA256SUMS.txt \
-              release-assets/macos/SHA256SUMS.txt \
               release-assets/linux/SHA256SUMS.txt \
             > SHA256SUMS.txt
+          # macOS temporarily disabled — runner hangs at pytest collection phase
+          # cat release-assets/windows/SHA256SUMS.txt \
+          #     release-assets/macos/SHA256SUMS.txt \
+          #     release-assets/linux/SHA256SUMS.txt \
+          #   > SHA256SUMS.txt
           echo "=== SHA256SUMS.txt ==="
           cat SHA256SUMS.txt
 
@@ -689,28 +703,38 @@ jobs:
           LINUX_ZIP_FILE="$(find release-assets/linux -maxdepth 1 -name 'Paracci-Linux.zip' -print -quit)"
           LINUX_APPIMAGE_FILE="$(find release-assets/linux -maxdepth 1 -name 'Paracci-*-x86_64.AppImage' -print -quit)"
           LINUX_DEB_FILE="$(find release-assets/linux -maxdepth 1 -name 'paracci_*_amd64.deb' -print -quit)"
-          MACOS_DMG_FILE="$(find release-assets/macos -maxdepth 1 -name 'Paracci-*-macOS.dmg' -print -quit)"
+          # macOS temporarily disabled — runner hangs at pytest collection phase
+          # MACOS_DMG_FILE="$(find release-assets/macos -maxdepth 1 -name 'Paracci-*-macOS.dmg' -print -quit)"
           if [ -z "$WIN_SETUP_FILE" ] || [ -z "$WIN_PORTABLE_FILE" ] || \
              [ -z "$LINUX_ZIP_FILE" ] || [ -z "$LINUX_APPIMAGE_FILE" ] || \
-             [ -z "$LINUX_DEB_FILE" ] || \
-             [ -z "$MACOS_DMG_FILE" ]; then
+             [ -z "$LINUX_DEB_FILE" ]; then
             echo "Missing one or more required distribution package release files." >&2
             exit 1
           fi
+          # macOS temporarily disabled — runner hangs at pytest collection phase
+          # if [ -z "$WIN_SETUP_FILE" ] || [ -z "$WIN_PORTABLE_FILE" ] || \
+          #    [ -z "$LINUX_ZIP_FILE" ] || [ -z "$LINUX_APPIMAGE_FILE" ] || \
+          #    [ -z "$LINUX_DEB_FILE" ] || \
+          #    [ -z "$MACOS_DMG_FILE" ]; then
+          #   echo "Missing one or more required distribution package release files." >&2
+          #   exit 1
+          # fi
           chmod +x "$LINUX_APPIMAGE_FILE"
 
+          # macOS temporarily disabled — runner hangs at pytest collection phase
           # macOS: .zip bundle or bare binary
-          if [ -f "release-assets/macos/Paracci-macOS.zip" ]; then
-            MACOS_FILE="release-assets/macos/Paracci-macOS.zip"
-          else
-            MACOS_FILE="release-assets/macos/Paracci-macOS"
-            chmod +x "$MACOS_FILE"
-          fi
+          # if [ -f "release-assets/macos/Paracci-macOS.zip" ]; then
+          #   MACOS_FILE="release-assets/macos/Paracci-macOS.zip"
+          # else
+          #   MACOS_FILE="release-assets/macos/Paracci-macOS"
+          #   chmod +x "$MACOS_FILE"
+          # fi
 
           echo "win_setup_file=$WIN_SETUP_FILE" >> $GITHUB_OUTPUT
           echo "win_portable_file=$WIN_PORTABLE_FILE" >> $GITHUB_OUTPUT
-          echo "macos_file=$MACOS_FILE" >> $GITHUB_OUTPUT
-          echo "macos_dmg_file=$MACOS_DMG_FILE" >> $GITHUB_OUTPUT
+          # macOS temporarily disabled — runner hangs at pytest collection phase
+          # echo "macos_file=$MACOS_FILE" >> $GITHUB_OUTPUT
+          # echo "macos_dmg_file=$MACOS_DMG_FILE" >> $GITHUB_OUTPUT
           echo "linux_zip_file=$LINUX_ZIP_FILE" >> $GITHUB_OUTPUT
           echo "linux_appimage_file=$LINUX_APPIMAGE_FILE" >> $GITHUB_OUTPUT
           echo "linux_deb_file=$LINUX_DEB_FILE" >> $GITHUB_OUTPUT
@@ -736,8 +760,10 @@ jobs:
             |----------|------|-------|
             | Windows installer | `Paracci-Setup-${{ github.ref_name }}.exe` | Standard Mode; per-user installation with uninstaller |
             | Windows portable | `Paracci-Portable-${{ github.ref_name }}.zip` | Extract and run; keeps data beside the executable |
+            <!-- macOS temporarily disabled — runner hangs at pytest collection phase
             | macOS DMG | `Paracci-${{ steps.resolve.outputs.package_version }}-macOS.dmg` | Drag to Applications; not notarized, so first launch may require Open Anyway |
             | macOS compatibility | `Paracci-macOS.zip` | Retained bundle archive |
+            -->
             | Linux AppImage | `Paracci-${{ steps.resolve.outputs.package_version }}-x86_64.AppImage` | Universal package; run `chmod +x` after download |
             | Linux Debian/Ubuntu | `paracci_${{ steps.resolve.outputs.package_version }}_amd64.deb` | Installs desktop and `.paracci` MIME registration |
             | Linux compatibility | `Paracci-Linux.zip` | Retained complete onedir archive |
@@ -755,14 +781,17 @@ jobs:
             ```
             # Windows (PowerShell):  Get-FileHash Paracci-Setup-${{ github.ref_name }}.exe -Algorithm SHA256
             # Windows portable:     Get-FileHash Paracci-Portable-${{ github.ref_name }}.zip -Algorithm SHA256
-            # macOS:                 shasum -a 256 Paracci-${{ steps.resolve.outputs.package_version }}-macOS.dmg
+            # macOS temporarily disabled — runner hangs at pytest collection phase
+            # # macOS:                 shasum -a 256 Paracci-${{ steps.resolve.outputs.package_version }}-macOS.dmg
             # Linux:                 sha256sum Paracci-Linux.zip Paracci-${{ steps.resolve.outputs.package_version }}-x86_64.AppImage paracci_${{ steps.resolve.outputs.package_version }}_amd64.deb
             ```
 
+            <!-- macOS temporarily disabled — runner hangs at pytest collection phase
             The macOS DMG is intentionally distributed without Apple notarization.
             On macOS Ventura or later, use **System Settings > Privacy & Security > Open Anyway**
             after the first blocked launch. On older releases, use
             **System Preferences > Security & Privacy > General > Open Anyway**.
+            -->
 
             #### Build Provenance (Sigstore / SLSA Level 2)
             Each published application artifact has GitHub Actions build provenance.
@@ -787,11 +816,12 @@ jobs:
           files: |
             ${{ steps.resolve.outputs.win_setup_file }}
             ${{ steps.resolve.outputs.win_portable_file }}
-            ${{ steps.resolve.outputs.macos_file }}
-            ${{ steps.resolve.outputs.macos_dmg_file }}
             ${{ steps.resolve.outputs.linux_zip_file }}
             ${{ steps.resolve.outputs.linux_appimage_file }}
             ${{ steps.resolve.outputs.linux_deb_file }}
             SHA256SUMS.txt
+            # macOS temporarily disabled — runner hangs at pytest collection phase
+            # ${{ steps.resolve.outputs.macos_file }}
+            # ${{ steps.resolve.outputs.macos_dmg_file }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
