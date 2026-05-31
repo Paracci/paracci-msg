@@ -321,6 +321,9 @@ def create_app(
     from .routes import bp
     app.register_blueprint(bp)
 
+    from .routes import start_sweeper_thread
+    start_sweeper_thread()
+
     # Initialize i18n
     i18n.init_app(app)
 
