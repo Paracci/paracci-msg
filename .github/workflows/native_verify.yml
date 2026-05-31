@@ -20,7 +20,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2025, ubuntu-22.04, macos-15]
+        # macOS temporarily disabled — runner hangs at pytest collection phase
+        # os: [windows-2025, ubuntu-22.04, macos-15]
+        os: [windows-2025, ubuntu-22.04]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
 
