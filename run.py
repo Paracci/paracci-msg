@@ -99,6 +99,40 @@ except ImportError:
 # This makes core/ and app/ folders appear as root.
 sys.path.insert(0, str(Path(__file__).parent / "paracci"))
 
+def ensure_frontend_assets():
+    """Ensure compiled static assets (purify.min.js, marked.min.js, highlight.min.js) are built."""
+    if hasattr(sys, "_MEIPASS"):
+        return
+    root_dir = Path(__file__).resolve().parent
+    static_lib_dir = root_dir / "paracci" / "app" / "static" / "js" / "lib"
+    required_files = ["purify.min.js", "marked.min.js", "highlight.min.js"]
+    
+    if all((static_lib_dir / f).exists() for f in required_files):
+        return
+
+    print("[*] Compiled frontend assets are missing. Building frontend dependencies...", flush=True)
+    import shutil
+    npm_exe = shutil.which("npm")
+    if not npm_exe:
+        print("[WARNING] npm (Node.js) is not found in PATH.", file=sys.stderr)
+        print("[WARNING] Please install Node.js to compile the required frontend assets, or build them manually.", file=sys.stderr)
+        return
+
+    try:
+        lock_file = root_dir / "package-lock.json"
+        npm_cmd = "ci" if lock_file.exists() else "install"
+        
+        print(f"[*] Running npm {npm_cmd}...", flush=True)
+        subprocess.run([npm_exe, npm_cmd], cwd=str(root_dir), shell=(sys.platform == "win32"), check=True)
+        
+        print("[*] Running npm run build...", flush=True)
+        subprocess.run([npm_exe, "run", "build"], cwd=str(root_dir), shell=(sys.platform == "win32"), check=True)
+        print("[SUCCESS] Frontend assets built successfully!", flush=True)
+    except Exception as e:
+        print(f"[ERROR] Failed to compile frontend assets: {e}", file=sys.stderr)
+
+ensure_frontend_assets()
+
 # core.shields import
 from core.shields import shield
 from core.burn import secure_delete

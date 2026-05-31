@@ -30,6 +30,7 @@ function needsLoopbackAuthorization(request) {
     if (target.origin !== self.location.origin) return false;
     if (target.pathname === '/__paracci_bootstrap') return false;
     if (target.pathname === '/favicon.ico') return false;
+    if (target.pathname.startsWith('/preview/')) return false;
 
     // Do not intercept non-GET/HEAD navigation requests (such as form POSTs).
     // Navigation POST requests carry their loopback and CSRF tokens via form parameters

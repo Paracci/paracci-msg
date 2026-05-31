@@ -863,12 +863,11 @@ def enforce_loopback_security():
     # --- NEW: Allow initial preview-window navigation without the SW bearer ---
     # Preview windows open a fresh browser context that has no Service Worker
     # registered yet. The per-entry preview token (64 hex chars embedded in the
-    # URL path) is sufficient authentication for initial navigation GETs.
-    # All subsequent requests from within the loaded page still require the
-    # loopback bearer through the Service Worker as before.
+    # URL path) or the per-entry preview_token query parameter is sufficient
+    # authentication for initial navigation GETs.
     if request.method in {"GET", "HEAD"}:
         preview_store_token = _preview_store_request_token()
-        if preview_store_token:
+        if preview_store_token or _valid_preview_access_request():
             g.preview_access_ok = True
             return
 
