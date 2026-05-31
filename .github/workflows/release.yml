@@ -422,6 +422,8 @@ jobs:
                   fail(f"ML-KEM session creation did not complete. Final URL: {final_url}. Body: {snippet}")
 
               print(f"Packaged ML-KEM smoke test passed: {final_url}")
+          except Exception as e:
+              fail(f"Smoke test failed: {e}")
           finally:
               stop_process()
               output_thread.join(timeout=1)
