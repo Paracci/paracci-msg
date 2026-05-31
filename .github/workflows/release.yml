@@ -626,7 +626,7 @@ jobs:
       # ── 8. Upload artifacts ────────────────────────────────────────────────
       - name: Upload artifact (Windows)
         if: runner.os == 'Windows'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: Paracci-Windows
           path: builds/windows/
@@ -635,7 +635,7 @@ jobs:
       # macOS temporarily disabled — runner hangs at pytest collection phase
       # - name: Upload artifact (macOS)
       #   if: runner.os == 'macOS'
-      #   uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+      #   uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
       #   with:
       #     name: Paracci-macOS
       #     path: builds/macos/
@@ -643,7 +643,7 @@ jobs:
 
       - name: Upload artifact (Linux)
         if: runner.os == 'Linux'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: Paracci-Linux
           path: builds/linux/
