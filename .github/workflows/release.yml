@@ -708,125 +708,217 @@ jobs:
           LINUX_ZIP_FILE="$(find release-assets/linux -maxdepth 1 -name 'Paracci-Linux.zip' -print -quit)"
           LINUX_APPIMAGE_FILE="$(find release-assets/linux -maxdepth 1 -name 'Paracci-*-x86_64.AppImage' -print -quit)"
           LINUX_DEB_FILE="$(find release-assets/linux -maxdepth 1 -name 'paracci_*_amd64.deb' -print -quit)"
-          # macOS temporarily disabled — runner hangs at pytest collection phase
-          # MACOS_DMG_FILE="$(find release-assets/macos -maxdepth 1 -name 'Paracci-*-macOS.dmg' -print -quit)"
+          
+          MACOS_DMG_FILE=""
+          if [ -d "release-assets/macos" ]; then
+            MACOS_DMG_FILE="$(find release-assets/macos -maxdepth 1 -name 'Paracci-*-macOS.dmg' -print -quit || true)"
+          fi
+
           if [ -z "$WIN_SETUP_FILE" ] || [ -z "$WIN_PORTABLE_FILE" ] || \
              [ -z "$LINUX_ZIP_FILE" ] || [ -z "$LINUX_APPIMAGE_FILE" ] || \
              [ -z "$LINUX_DEB_FILE" ]; then
             echo "Missing one or more required distribution package release files." >&2
             exit 1
           fi
-          # macOS temporarily disabled — runner hangs at pytest collection phase
-          # if [ -z "$WIN_SETUP_FILE" ] || [ -z "$WIN_PORTABLE_FILE" ] || \
-          #    [ -z "$LINUX_ZIP_FILE" ] || [ -z "$LINUX_APPIMAGE_FILE" ] || \
-          #    [ -z "$LINUX_DEB_FILE" ] || \
-          #    [ -z "$MACOS_DMG_FILE" ]; then
-          #   echo "Missing one or more required distribution package release files." >&2
-          #   exit 1
-          # fi
           chmod +x "$LINUX_APPIMAGE_FILE"
 
-          # macOS temporarily disabled — runner hangs at pytest collection phase
-          # macOS: .zip bundle or bare binary
-          # if [ -f "release-assets/macos/Paracci-macOS.zip" ]; then
-          #   MACOS_FILE="release-assets/macos/Paracci-macOS.zip"
-          # else
-          #   MACOS_FILE="release-assets/macos/Paracci-macOS"
-          #   chmod +x "$MACOS_FILE"
-          # fi
+          MACOS_FILE=""
+          if [ -d "release-assets/macos" ]; then
+            if [ -f "release-assets/macos/Paracci-macOS.zip" ]; then
+              MACOS_FILE="release-assets/macos/Paracci-macOS.zip"
+            elif [ -f "release-assets/macos/Paracci-macOS" ]; then
+              MACOS_FILE="release-assets/macos/Paracci-macOS"
+              chmod +x "$MACOS_FILE"
+            fi
+          fi
 
           echo "win_setup_file=$WIN_SETUP_FILE" >> $GITHUB_OUTPUT
           echo "win_portable_file=$WIN_PORTABLE_FILE" >> $GITHUB_OUTPUT
-          # macOS temporarily disabled — runner hangs at pytest collection phase
-          # echo "macos_file=$MACOS_FILE" >> $GITHUB_OUTPUT
-          # echo "macos_dmg_file=$MACOS_DMG_FILE" >> $GITHUB_OUTPUT
+          echo "macos_file=$MACOS_FILE" >> $GITHUB_OUTPUT
+          echo "macos_dmg_file=$MACOS_DMG_FILE" >> $GITHUB_OUTPUT
           echo "linux_zip_file=$LINUX_ZIP_FILE" >> $GITHUB_OUTPUT
           echo "linux_appimage_file=$LINUX_APPIMAGE_FILE" >> $GITHUB_OUTPUT
           echo "linux_deb_file=$LINUX_DEB_FILE" >> $GITHUB_OUTPUT
           echo "package_version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
 
-      # ── Create the Release ──────────────────────────────────────────────────
-      - name: Create draft GitHub Release
+      - name: Write release signing key to file
+        run: |
+          cat << 'EOF' > signing_key.pem
+          ${{ secrets.RELEASE_SIGNING_KEY }}
+          EOF
+
+      - name: Set up Python 3.12 for signing
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install cryptography package
+        run: pip install cryptography
+
+      - name: Sign release manifest
+        env:
+          RELEASE_SIGNING_PASSPHRASE: ${{ secrets.RELEASE_SIGNING_PASSPHRASE }}
+        run: |
+          python tools/sign_release_manifest.py SHA256SUMS.txt --key signing_key.pem --output SHA256SUMS.txt.sig
+
+      - name: Normalize filenames for VirusTotal
+        run: |
+          set -euo pipefail
+          mkdir vt-scan
+          cp "${{ steps.resolve.outputs.win_setup_file }}" vt-scan/Paracci-Windows-Setup.exe
+          cp "${{ steps.resolve.outputs.win_portable_file }}" vt-scan/Paracci-Windows-Portable.zip
+          cp "${{ steps.resolve.outputs.linux_zip_file }}" vt-scan/Paracci-Linux.zip
+          cp "${{ steps.resolve.outputs.linux_appimage_file }}" vt-scan/Paracci-Linux.AppImage
+          cp "${{ steps.resolve.outputs.linux_deb_file }}" vt-scan/Paracci-Linux.deb
+          if [ -d "release-assets/macos" ]; then
+            if ls release-assets/macos/Paracci-*-macOS.dmg >/dev/null 2>&1; then
+              cp release-assets/macos/Paracci-*-macOS.dmg vt-scan/Paracci-macOS.dmg
+            fi
+            if [ -f "release-assets/macos/Paracci-macOS.zip" ]; then
+              cp release-assets/macos/Paracci-macOS.zip vt-scan/Paracci-macOS-Compatibility.zip
+            elif [ -f "release-assets/macos/Paracci-macOS" ]; then
+              cp release-assets/macos/Paracci-macOS vt-scan/Paracci-macOS-Compatibility
+            fi
+          fi
+
+      - name: VirusTotal Scan
+        id: virustotal
+        uses: crazy-max/ghaction-virustotal@d34968c958ae283fe976efed637081b9f9dcf74f  # v4
+        with:
+          vt_api_key: ${{ secrets.VT_API_KEY }}
+          request_rate: 4
+          files: |
+            vt-scan/Paracci-Windows-Setup.exe
+            vt-scan/Paracci-Windows-Portable.zip
+            vt-scan/Paracci-macOS*
+            vt-scan/Paracci-Linux.zip
+            vt-scan/Paracci-Linux.AppImage
+            vt-scan/Paracci-Linux.deb
+
+      - name: Generate Release Body
+        env:
+          VT_ANALYSIS: ${{ steps.virustotal.outputs.analysis }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          PACKAGE_VERSION: ${{ steps.resolve.outputs.package_version }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          results = []
+          for entry in filter(None, os.environ.get("VT_ANALYSIS", "").split(",")):
+              filename, separator, url = entry.partition("=")
+              if not separator or not url.startswith("https://"):
+                  raise SystemExit("VirusTotal action returned an unexpected analysis result.")
+              results.append(f"| `{Path(filename).name}` | [Report]({url}) |")
+
+          if results:
+              vt_section = "#### VirusTotal Scan\n\n| File | Analysis |\n|------|----------|\n" + "\n".join(results)
+          else:
+              vt_section = "#### VirusTotal Scan\n\n_VirusTotal scan links are unavailable._"
+
+          tag = os.environ["RELEASE_TAG"]
+          version = os.environ["PACKAGE_VERSION"]
+
+          body = f"""## Paracci {tag}
+          <!-- paracci-update: {{"protocol_version": 4}} -->
+
+          ### 📦 Download
+
+          | Platform | File | Notes |
+          |----------|------|-------|
+          | Windows installer | `Paracci-Setup-{tag}.exe` | Standard Mode; per-user installation with uninstaller |
+          | Windows portable | `Paracci-Portable-{tag}.zip` | Extract and run; keeps data beside the executable |
+          """
+          
+          # Add macOS downloads to table only if they exist in the workspace
+          if list(Path("release-assets/macos").glob("Paracci-*-macOS.dmg")) or list(Path("release-assets/macos").glob("Paracci-macOS.zip")):
+              body += f"""| macOS DMG | `Paracci-{version}-macOS.dmg` | Drag to Applications; not notarized, so first launch may require Open Anyway |\n| macOS compatibility | `Paracci-macOS.zip` | Retained bundle archive |\n"""
+
+          body += f"""| Linux AppImage | `Paracci-{version}-x86_64.AppImage` | Universal package; run `chmod +x` after download |
+          | Linux Debian/Ubuntu | `paracci_{version}_amd64.deb` | Installs desktop and `.paracci` MIME registration |
+          | Linux compatibility | `Paracci-Linux.zip` | Retained complete onedir archive |
+
+          ---
+
+          ### 🔐 Security & Integrity
+
+          #### SHA-256 Checksums
+          Published releases attach `SHA256SUMS.txt` and its offline Ed25519
+          signature `SHA256SUMS.txt.sig`. Paracci verifies this signature
+          before trusting installer checksums.
+
+          To verify a downloaded package checksum after verifying the manifest signature:
+          ```
+          # Windows (PowerShell):  Get-FileHash Paracci-Setup-{tag}.exe -Algorithm SHA256
+          # Windows portable:     Get-FileHash Paracci-Portable-{tag}.zip -Algorithm SHA256
+          ```
+          """
+          
+          if list(Path("release-assets/macos").glob("Paracci-*-macOS.dmg")):
+              body += f"""# macOS:                 shasum -a 256 Paracci-{version}-macOS.dmg\n"""
+          
+          body += f"""# Linux:                 sha256sum Paracci-Linux.zip Paracci-{version}-x86_64.AppImage paracci_{version}_amd64.deb
+          ```
+
+          #### Build Provenance (Sigstore / SLSA Level 2)
+          Each published application artifact has GitHub Actions build provenance.
+          You can verify the attestation without trusting us:
+          ```bash
+          gh attestation verify Paracci-Setup-{tag}.exe \\
+            --repo {os.environ.get("GITHUB_REPOSITORY")}
+          ```
+          Or browse the attestations tab:
+          https://github.com/{os.environ.get("GITHUB_REPOSITORY")}/attestations
+
+          {vt_section}
+
+          > **Why might antivirus flag it?** PyInstaller bundles the Python interpreter
+          > inside the executable. This "packing" technique is sometimes flagged as
+          > heuristic-suspicious by AV engines even when the code is clean.
+          > The source code is fully open and auditable above.
+
+          ---
+
+          > 🔍 Source code: All application logic is in this repository and open for audit.
+          """
+
+          # Clean up indentation for markdown compatibility
+          lines = []
+          in_code_block = False
+          for line in body.splitlines():
+              stripped = line.strip()
+              if stripped.startswith("```"):
+                  in_code_block = not in_code_block
+              if in_code_block:
+                  lines.append(line)  # keep indentation inside code blocks
+              else:
+                  lines.append(stripped)
+          body_cleaned = "\n".join(lines)
+
+          Path("RELEASE_NOTE_BODY.md").write_text(body_cleaned, encoding="utf-8")
+          PY
+
+      - name: Create GitHub Release
         id: gh_release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
         with:
           tag_name: ${{ github.ref_name }}
           name: "Paracci ${{ github.ref_name }}"
-          draft: true
+          draft: false
           prerelease: false
-          generate_release_notes: true
-          body: |
-            ## Paracci ${{ github.ref_name }}
-            <!-- paracci-update: {"protocol_version": 4} -->
-
-            ### 📦 Download
-
-            | Platform | File | Notes |
-            |----------|------|-------|
-            | Windows installer | `Paracci-Setup-${{ github.ref_name }}.exe` | Standard Mode; per-user installation with uninstaller |
-            | Windows portable | `Paracci-Portable-${{ github.ref_name }}.zip` | Extract and run; keeps data beside the executable |
-            <!-- macOS temporarily disabled — runner hangs at pytest collection phase
-            | macOS DMG | `Paracci-${{ steps.resolve.outputs.package_version }}-macOS.dmg` | Drag to Applications; not notarized, so first launch may require Open Anyway |
-            | macOS compatibility | `Paracci-macOS.zip` | Retained bundle archive |
-            -->
-            | Linux AppImage | `Paracci-${{ steps.resolve.outputs.package_version }}-x86_64.AppImage` | Universal package; run `chmod +x` after download |
-            | Linux Debian/Ubuntu | `paracci_${{ steps.resolve.outputs.package_version }}_amd64.deb` | Installs desktop and `.paracci` MIME registration |
-            | Linux compatibility | `Paracci-Linux.zip` | Retained complete onedir archive |
-
-            ---
-
-            ### 🔐 Security & Integrity
-
-            #### SHA-256 Checksums
-            Published releases attach `SHA256SUMS.txt` and its offline Ed25519
-            signature `SHA256SUMS.txt.sig`. Paracci verifies this signature
-            before trusting installer checksums.
-
-            To verify a downloaded package checksum after verifying the manifest signature:
-            ```
-            # Windows (PowerShell):  Get-FileHash Paracci-Setup-${{ github.ref_name }}.exe -Algorithm SHA256
-            # Windows portable:     Get-FileHash Paracci-Portable-${{ github.ref_name }}.zip -Algorithm SHA256
-            # macOS temporarily disabled — runner hangs at pytest collection phase
-            # # macOS:                 shasum -a 256 Paracci-${{ steps.resolve.outputs.package_version }}-macOS.dmg
-            # Linux:                 sha256sum Paracci-Linux.zip Paracci-${{ steps.resolve.outputs.package_version }}-x86_64.AppImage paracci_${{ steps.resolve.outputs.package_version }}_amd64.deb
-            ```
-
-            <!-- macOS temporarily disabled — runner hangs at pytest collection phase
-            The macOS DMG is intentionally distributed without Apple notarization.
-            On macOS Ventura or later, use **System Settings > Privacy & Security > Open Anyway**
-            after the first blocked launch. On older releases, use
-            **System Preferences > Security & Privacy > General > Open Anyway**.
-            -->
-
-            #### Build Provenance (Sigstore / SLSA Level 2)
-            Each published application artifact has GitHub Actions build provenance.
-            You can verify the attestation without trusting us:
-            ```bash
-            gh attestation verify Paracci-Setup-${{ github.ref_name }}.exe \
-              --repo ${{ github.repository }}
-            ```
-            Or browse the attestations tab:
-            https://github.com/${{ github.repository }}/attestations
-
-            #### VirusTotal Scan
-            _VirusTotal scan links are added automatically after the signed draft is published._
-            > **Why might antivirus flag it?** PyInstaller bundles the Python interpreter
-            > inside the executable. This "packing" technique is sometimes flagged as
-            > heuristic-suspicious by AV engines even when the code is clean.
-            > The source code is fully open and auditable above.
-
-            ---
-
-            > 🔍 Source code: All application logic is in this repository and open for audit.
+          generate_release_notes: false
+          body_path: RELEASE_NOTE_BODY.md
           files: |
             ${{ steps.resolve.outputs.win_setup_file }}
             ${{ steps.resolve.outputs.win_portable_file }}
             ${{ steps.resolve.outputs.linux_zip_file }}
             ${{ steps.resolve.outputs.linux_appimage_file }}
             ${{ steps.resolve.outputs.linux_deb_file }}
+            ${{ steps.resolve.outputs.macos_file }}
+            ${{ steps.resolve.outputs.macos_dmg_file }}
             SHA256SUMS.txt
-            # macOS temporarily disabled — runner hangs at pytest collection phase
-            # ${{ steps.resolve.outputs.macos_file }}
-            # ${{ steps.resolve.outputs.macos_dmg_file }}
+            SHA256SUMS.txt.sig
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
