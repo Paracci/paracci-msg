@@ -1,4 +1,5 @@
 name: Build & Release
+# <!-- paracci-update: {"protocol_version": 4} -->
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
