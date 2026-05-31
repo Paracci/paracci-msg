@@ -382,12 +382,15 @@ jobs:
               opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
 
               def request(path, form=None, csrf=None):
-                  headers = {"Host": f"127.0.0.1:{port}", "Origin": origin}
+                  headers = {
+                      "Host": f"127.0.0.1:{port}",
+                      "Origin": origin,
+                      "X-Paracci-Token": token,
+                  }
                   data = None
                   if form is not None:
                       data = urllib.parse.urlencode(form).encode("utf-8")
                       headers["Content-Type"] = "application/x-www-form-urlencoded"
-                      headers["X-Paracci-Token"] = token
                       if csrf:
                           headers["X-CSRF-Token"] = csrf
                   req = urllib.request.Request(origin + path, data=data, headers=headers)
