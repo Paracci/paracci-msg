@@ -22,7 +22,7 @@ pyotp>=2.9.0
 
 # QR code generation and image processing
 qrcode>=7.4.2
-Pillow>=10.3.0
+Pillow>=12.2.0
 
 # Dependency version parsing
 packaging>=24.0
