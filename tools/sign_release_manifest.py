@@ -53,7 +53,11 @@ def main() -> int:
     parser.add_argument("--force", action="store_true", help="Overwrite an existing signature output file.")
     args = parser.parse_args()
 
-    passphrase = getpass("Signing-key passphrase: ").encode("utf-8")
+    env_pass = os.environ.get("RELEASE_SIGNING_PASSPHRASE")
+    if env_pass:
+        passphrase = env_pass.encode("utf-8")
+    else:
+        passphrase = getpass("Signing-key passphrase: ").encode("utf-8")
     signature = sign_manifest(args.key, args.manifest, args.output, passphrase, overwrite=args.force)
     print(f"Raw Ed25519 signature written to: {args.output.resolve()}")
     print("Provide this public Base64 signature to the publish_signed_release workflow:")
