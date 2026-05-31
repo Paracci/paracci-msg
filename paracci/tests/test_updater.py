@@ -670,9 +670,9 @@ def test_update_banner_and_release_workflow_contracts_are_present():
     assert "update_error_signature_missing" in template
     assert "signature_failed" in js
     assert 'Path("VERSION").read_text' in workflow
-    assert "draft: true" in workflow
+    assert "draft: false" in workflow
     assert "SHA256SUMS.txt.sig" in workflow
-    assert "\n  virustotal:" not in workflow
+    assert "VirusTotal Scan" in workflow
     assert "workflow_dispatch:" in publish_workflow
     assert "manifest_signature_b64:" in publish_workflow
     assert "verify_checksum_signature" in publish_workflow
