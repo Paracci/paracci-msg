@@ -29,6 +29,20 @@ MIGRATION_CONTEXT.device_key = None
 MIGRATION_CONTEXT.is_encrypting = False
 MIGRATION_CONTEXT.db_path = None
 
+
+def _get_migrations_dir(name: str) -> Path:
+    """Resolve migrations directory path with support for PyInstaller layout."""
+    if hasattr(sys, '_MEIPASS'):
+        pkg_dir = Path(sys._MEIPASS)
+        candidate1 = pkg_dir / "core" / "migrations" / name
+        if candidate1.is_dir():
+            return candidate1
+        candidate2 = pkg_dir / "paracci" / "core" / "migrations" / name
+        if candidate2.is_dir():
+            return candidate2
+    return Path(__file__).parent / "migrations" / name
+
+
 try:
     import sqlcipher3.dbapi2 as sqlcipher
     _original_sqlite3_connect = sqlcipher.connect
@@ -453,7 +467,7 @@ class BurnDB:
             
         try:
             import sqlite3
-            migrations_dir = Path(__file__).parent / "migrations" / "schema"
+            migrations_dir = _get_migrations_dir("schema")
             migrations = read_migrations(str(migrations_dir))
             
             # 1. Run migrations on meta.db
@@ -648,7 +662,7 @@ class BurnDB:
         MIGRATION_CONTEXT.db_path = self.db_path
         try:
             backend = get_backend(f"sqlite:///{self.db_path}")
-            migrations_dir = Path(__file__).parent / "migrations" / "encryption"
+            migrations_dir = _get_migrations_dir("encryption")
             migrations = read_migrations(str(migrations_dir))
             
             to_run = backend.to_apply(migrations)
