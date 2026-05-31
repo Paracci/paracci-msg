@@ -25,7 +25,7 @@ qrcode>=7.4.2
 Pillow>=10.3.0
 
 # Dependency version parsing
-packaging>=24.0
+packaging>=26.2
 
 # Database migrations
 yoyo-migrations>=8.2.0
