@@ -15,7 +15,7 @@ cryptography>=44.0.1
 liboqs-python==0.15.0
 
 # Password hashing
-argon2-cffi>=23.1.0
+argon2-cffi>=25.1.0
 
 # TOTP / 2FA
 pyotp>=2.9.0
