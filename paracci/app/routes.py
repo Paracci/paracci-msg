@@ -445,8 +445,16 @@ def _temp_file_sweeper():
             logger.error("Error in background temp file sweeper: %s", e)
 
 import threading
-_sweeper_thread = threading.Thread(target=_temp_file_sweeper, daemon=True)
-_sweeper_thread.start()
+_sweeper_thread_started = False
+_sweeper_lock = threading.Lock()
+
+def start_sweeper_thread():
+    global _sweeper_thread_started
+    with _sweeper_lock:
+        if not _sweeper_thread_started:
+            t = threading.Thread(target=_temp_file_sweeper, daemon=True)
+            t.start()
+            _sweeper_thread_started = True
 
 
 def _cleanup_native_file_ref_cache():
