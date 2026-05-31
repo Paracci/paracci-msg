@@ -85,7 +85,6 @@ jobs:
           required_patterns = (
               "Paracci-Setup-v*.exe",
               "Paracci-Portable-v*.zip",
-              "Paracci-*-macOS.dmg",
               "Paracci-Linux.zip",
               "Paracci-*-x86_64.AppImage",
               "paracci_*_amd64.deb",
@@ -97,10 +96,14 @@ jobs:
                   raise SystemExit(f"Expected exactly one release asset for {pattern!r}; found {len(matches)}.")
               expected.add(matches[0].name)
 
+          # macOS is optional since it's temporarily disabled in build
+          macos_dmg = list(root.glob("Paracci-*-macOS.dmg"))
+          if macos_dmg:
+              expected.add(macos_dmg[0].name)
+
           macos_compat = list(root.glob("Paracci-macOS.zip")) or list(root.glob("Paracci-macOS"))
-          if len(macos_compat) != 1:
-              raise SystemExit("Expected exactly one macOS compatibility asset.")
-          expected.add(macos_compat[0].name)
+          if macos_compat:
+              expected.add(macos_compat[0].name)
 
           entries = {}
           line_re = re.compile(r"^([0-9a-fA-F]{64})\s+[* ]?(.+?)\s*$")
@@ -140,10 +143,12 @@ jobs:
           cp release-assets/Paracci-Linux.zip vt-scan/Paracci-Linux.zip
           cp release-assets/Paracci-*-x86_64.AppImage vt-scan/Paracci-Linux.AppImage
           cp release-assets/paracci_*_amd64.deb vt-scan/Paracci-Linux.deb
-          cp release-assets/Paracci-*-macOS.dmg vt-scan/Paracci-macOS.dmg
+          if ls release-assets/Paracci-*-macOS.dmg >/dev/null 2>&1; then
+            cp release-assets/Paracci-*-macOS.dmg vt-scan/Paracci-macOS.dmg
+          fi
           if [ -f "release-assets/Paracci-macOS.zip" ]; then
             cp release-assets/Paracci-macOS.zip vt-scan/Paracci-macOS-Compatibility.zip
-          else
+          elif [ -f "release-assets/Paracci-macOS" ]; then
             cp release-assets/Paracci-macOS vt-scan/Paracci-macOS-Compatibility
           fi
 
@@ -156,8 +161,7 @@ jobs:
           files: |
             vt-scan/Paracci-Windows-Setup.exe
             vt-scan/Paracci-Windows-Portable.zip
-            vt-scan/Paracci-macOS-Compatibility*
-            vt-scan/Paracci-macOS.dmg
+            vt-scan/Paracci-macOS*
             vt-scan/Paracci-Linux.zip
             vt-scan/Paracci-Linux.AppImage
             vt-scan/Paracci-Linux.deb
