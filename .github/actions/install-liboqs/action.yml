@@ -27,8 +27,15 @@ runs:
     - name: Install cmake and ninja
       uses: lukka/get-cmake@7bfc9baacbbdcb5e37957ad05c3546b3e222be3c  # v4.3.2
 
+    - name: Restore liboqs build cache
+      id: cache-liboqs
+      uses: actions/cache@v4
+      with:
+        path: ${{ inputs.install-prefix }}
+        key: liboqs-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}
+
     - name: Install OpenSSL headers (Linux)
-      if: runner.os == 'Linux'
+      if: runner.os == 'Linux' && steps.cache-liboqs.outputs.cache-hit != 'true'
       shell: bash
       run: |
         set -euo pipefail
@@ -36,11 +43,12 @@ runs:
         sudo apt-get install -y libssl-dev gcc
 
     - name: Install OpenSSL headers (macOS)
-      if: runner.os == 'macOS'
+      if: runner.os == 'macOS' && steps.cache-liboqs.outputs.cache-hit != 'true'
       shell: bash
       run: brew install openssl
 
     - name: Build and install liboqs C library
+      if: steps.cache-liboqs.outputs.cache-hit != 'true'
       shell: bash
       env:
         LIBOQS_VERSION: ${{ inputs.version }}
