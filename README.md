@@ -259,7 +259,7 @@ git tag v1.5.0
 git push origin v1.5.0
 ```
 
-GitHub Actions rejects a release tag that does not match `VERSION`, then builds Windows, macOS, and Linux packages in parallel, creates the Windows installer and portable archive, the macOS DMG, and Linux AppImage and Debian packages, and signs application artifacts with Sigstore build provenance attestations. The tag workflow creates a draft GitHub Release containing the packages and canonical `SHA256SUMS.txt`; it does not publish unsigned update metadata.
+GitHub Actions rejects a release tag that does not match `VERSION`, then builds Windows, macOS, and Linux packages in parallel, creates the Windows installer and portable archive, the macOS DMG, and Linux AppImage and Debian packages, and signs application artifacts with Sigstore build provenance attestations. The tag workflow recomputes the canonical `SHA256SUMS.txt` from the package assets it is about to upload, creates a draft GitHub Release, and does not publish unsigned update metadata.
 
 Paracci's in-app Windows updater trusts only a release whose `SHA256SUMS.txt` has a valid detached Ed25519 signature in `SHA256SUMS.txt.sig`. The matching public key is embedded in the desktop updater. The private signing key remains offline and must never be placed in GitHub Actions secrets.
 
@@ -277,7 +277,7 @@ gh release download v1.5.0 --pattern SHA256SUMS.txt
 python tools/sign_release_manifest.py SHA256SUMS.txt
 ```
 
-Start the `Publish Signed Release` workflow manually with the tag and the printed public Base64 signature. That workflow verifies the signature and every listed package checksum, attaches `SHA256SUMS.txt.sig`, publishes the draft, runs VirusTotal scans, and appends the scan links to the release notes.
+Start the `Publish Signed Release` workflow manually with the tag and the printed public Base64 signature. That workflow downloads the draft assets, recomputes every listed package checksum before accepting the signature, attaches `SHA256SUMS.txt.sig`, publishes the draft, runs VirusTotal scans, and appends the scan links to the release notes.
 
 > **Note on antivirus warnings:** PyInstaller bundles the Python runtime into the executable. Some heuristic antivirus engines flag self-extracting Python bundles as suspicious. The VirusTotal scan results and Sigstore attestations are published with every release for independent verification.
 

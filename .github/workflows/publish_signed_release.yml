@@ -56,7 +56,7 @@ jobs:
           rm -f release-assets/SHA256SUMS.txt.sig
           test -f release-assets/SHA256SUMS.txt
 
-      - name: Verify detached signature and every package checksum
+      - name: Verify every package checksum and detached signature
         env:
           MANIFEST_SIGNATURE_B64: ${{ inputs.manifest_signature_b64 }}
         run: |
@@ -74,14 +74,6 @@ jobs:
 
           root = Path("release-assets")
           manifest = (root / "SHA256SUMS.txt").read_bytes()
-          try:
-              signature = base64.b64decode(os.environ["MANIFEST_SIGNATURE_B64"], validate=True)
-          except binascii.Error as exc:
-              raise SystemExit("The supplied manifest signature is not valid Base64.") from exc
-          if not verify_checksum_signature(manifest, signature):
-              raise SystemExit("The detached signature does not authenticate SHA256SUMS.txt.")
-          (root / "SHA256SUMS.txt.sig").write_bytes(signature)
-
           required_patterns = (
               "Paracci-Setup-v*.exe",
               "Paracci-Portable-v*.zip",
@@ -122,6 +114,13 @@ jobs:
               actual_digest = hashlib.sha256((root / filename).read_bytes()).hexdigest()
               if actual_digest != expected_digest:
                   raise SystemExit(f"Checksum mismatch for {filename}.")
+          try:
+              signature = base64.b64decode(os.environ["MANIFEST_SIGNATURE_B64"], validate=True)
+          except binascii.Error as exc:
+              raise SystemExit("The supplied manifest signature is not valid Base64.") from exc
+          if not verify_checksum_signature(manifest, signature):
+              raise SystemExit("The detached signature does not authenticate SHA256SUMS.txt.")
+          (root / "SHA256SUMS.txt.sig").write_bytes(signature)
           print("Verified signed release manifest and all published package checksums.")
           PY
 

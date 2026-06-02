@@ -670,14 +670,16 @@ def test_update_banner_and_release_workflow_contracts_are_present():
     assert "update_error_signature_missing" in template
     assert "signature_failed" in js
     assert 'Path("VERSION").read_text' in workflow
-    assert "draft: false" in workflow
-    assert "SHA256SUMS.txt.sig" in workflow
+    assert "draft: true" in workflow
+    assert "Generate canonical SHA256SUMS.txt" in workflow
+    assert "            SHA256SUMS.txt.sig" not in workflow
     assert "VirusTotal Scan" in workflow
     assert "workflow_dispatch:" in publish_workflow
     assert "manifest_signature_b64:" in publish_workflow
     assert "verify_checksum_signature" in publish_workflow
     assert "SHA256SUMS.txt.sig" in publish_workflow
-    assert publish_workflow.index("verify_checksum_signature") < publish_workflow.index('gh release edit "$RELEASE_TAG" --draft=false')
+    assert publish_workflow.index("actual_digest = hashlib.sha256") < publish_workflow.index("if not verify_checksum_signature(manifest, signature):")
+    assert publish_workflow.index("if not verify_checksum_signature(manifest, signature):") < publish_workflow.index('gh release edit "$RELEASE_TAG" --draft=false')
     assert publish_workflow.index('gh release edit "$RELEASE_TAG" --draft=false') < publish_workflow.index("VirusTotal Scan")
     assert 'id="updates-check-btn"' in updates_template
     assert 'id="updates-history-list"' in updates_template
