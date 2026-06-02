@@ -17,7 +17,7 @@ import sqlite3
 import struct
 import time
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -84,6 +84,7 @@ MIGRATION_MARKER = ".native_migration.json"
 
 MAX_ATTACHMENT_SIZE = 50 * 1024 * 1024
 MAX_ATTACHMENT_COUNT = 10
+PENDING_UNLOCK_TTL_SECONDS = 600
 
 DANGEROUS_EXTENSIONS = {
     ".exe",
@@ -386,6 +387,15 @@ def parse_file_header(file_bytes: bytes) -> dict | None:
     }
 
 
+@dataclass
+class PendingDeviceUnlock:
+    """Memory-only keyed state awaiting the second authentication factor."""
+
+    db: BurnDB = field(repr=False)
+    device_key: bytearray = field(repr=False)
+    created_at: float
+
+
 class DeviceService:
     """Owns device unlock state and device-bound metadata."""
 
@@ -394,15 +404,30 @@ class DeviceService:
         self.db = BurnDB(data_dir / "sessions.db")
         self.device_key: bytearray | None = None
         self.device_binding_warning: DeviceBindingWarning | None = None
+        self._pending_unlock: PendingDeviceUnlock | None = None
 
     @property
     def is_unlocked(self) -> bool:
         return self.device_key is not None
 
+    @property
+    def has_pending_unlock(self) -> bool:
+        self._discard_expired_pending_unlock()
+        return self._pending_unlock is not None
+
+    @property
+    def unlock_state(self) -> str:
+        if self.is_unlocked:
+            return "unlocked"
+        if self.has_pending_unlock:
+            return "pending_2fa"
+        return "locked"
+
     def is_initialized(self) -> bool:
         return is_device_initialized(self.db)
 
     def initialize(self, passphrase: str) -> bytearray:
+        self._discard_pending_unlock()
         self.device_binding_warning = None
         device_key = initialize_device_with_binding(self.db, passphrase)
         try:
@@ -414,12 +439,27 @@ class DeviceService:
         self.device_binding_warning = consume_device_binding_warning()
         return self.device_key
 
-    def unlock(self, passphrase: str) -> bytearray:
+    def unlock(self, passphrase: str) -> bytearray | None:
+        self._discard_pending_unlock()
         self.device_binding_warning = None
+        was_unlocked = self.is_unlocked
         device_key = unlock_device_with_binding(self.db, passphrase)
+        keyed_db = None
         try:
-            self._activate_keyed_db(device_key)
+            keyed_db = self.db.with_device_key(device_key)
+            if keyed_db.is_2fa_enabled() and not was_unlocked:
+                self.db.release_device_key()
+                self._pending_unlock = PendingDeviceUnlock(
+                    db=keyed_db,
+                    device_key=device_key,
+                    created_at=time.time(),
+                )
+                self.device_binding_warning = consume_device_binding_warning()
+                return None
+            self._activate_prepared_db(keyed_db)
         except Exception:
+            if keyed_db is not None and keyed_db is not self.db:
+                keyed_db.release_device_key()
             wipe(device_key)
             raise
         self.device_key = device_key
@@ -428,6 +468,7 @@ class DeviceService:
         return self.device_key
 
     def lock(self) -> None:
+        self._discard_pending_unlock()
         if self.device_key is not None:
             wipe(self.device_key)
         self.device_key = None
@@ -441,8 +482,51 @@ class DeviceService:
 
     def _activate_keyed_db(self, device_key: bytes | bytearray) -> None:
         keyed_db = self.db.with_device_key(device_key)
-        self.db.release_device_key()
+        self._activate_prepared_db(keyed_db)
+
+    def _activate_prepared_db(self, keyed_db: BurnDB) -> None:
+        previous = self.db
         self.db = keyed_db
+        if previous is not keyed_db:
+            previous.release_device_key()
+
+    def _release_pending_unlock(self, pending: PendingDeviceUnlock) -> None:
+        pending.db.release_device_key()
+        wipe(pending.device_key)
+
+    def _discard_pending_unlock(self) -> None:
+        pending = self._pending_unlock
+        self._pending_unlock = None
+        if pending is not None:
+            self._release_pending_unlock(pending)
+
+    def _discard_expired_pending_unlock(self) -> None:
+        pending = self._pending_unlock
+        if pending is not None and time.time() - pending.created_at > PENDING_UNLOCK_TTL_SECONDS:
+            self._discard_pending_unlock()
+
+    def complete_pending_unlock(self, code: str) -> bool:
+        self._discard_expired_pending_unlock()
+        pending = self._pending_unlock
+        self._pending_unlock = None
+        if pending is None:
+            raise DeviceError("Two-factor unlock is not pending.")
+
+        try:
+            secret = self._get_2fa_secret(pending.db, pending.device_key)
+            if not secret or not self.verify_2fa_code(secret, code):
+                self._release_pending_unlock(pending)
+                return False
+            self._activate_prepared_db(pending.db)
+            self.device_key = pending.device_key
+            self._verify_stored_sessions_decryptable()
+            return True
+        except Exception:
+            if self.device_key is pending.device_key:
+                self.lock()
+            else:
+                self._release_pending_unlock(pending)
+            raise
 
     def ensure_unlocked(self) -> bytearray:
         if self.device_key is None:
@@ -455,7 +539,10 @@ class DeviceService:
 
     def is_2fa_enabled(self) -> bool | None:
         if not self.is_unlocked:
-            return None
+            self._discard_expired_pending_unlock()
+            if self._pending_unlock is None:
+                return None
+            return self._pending_unlock.db.is_2fa_enabled()
         return self.db.is_2fa_enabled()
 
     def new_2fa_secret(self) -> str:
@@ -469,22 +556,27 @@ class DeviceService:
 
     def get_2fa_secret(self) -> str | None:
         device_key = self.ensure_unlocked()
-        encrypted = self.db.get_device_meta("2fa_secret_enc_v1")
+        return self._get_2fa_secret(self.db, device_key)
+
+    def _get_2fa_secret(self, db: BurnDB, device_key: bytes | bytearray) -> str | None:
+        encrypted = db.get_device_meta("2fa_secret_enc_v1")
         if encrypted:
             blob = EncryptedBlob(nonce=encrypted[:12], ciphertext=encrypted[12:])
             return decrypt(device_key, blob, aad=b"paracci.device.2fa.v1").decode("utf-8")
 
-        legacy = self.db.get_2fa_secret(device_key)
+        legacy = db.get_2fa_secret(device_key)
         if legacy:
-            self.set_2fa_secret(legacy)
-            self.db.delete_2fa_secret()
+            self._set_2fa_secret(db, device_key, legacy)
         return legacy
 
     def set_2fa_secret(self, secret: str) -> None:
         device_key = self.ensure_unlocked()
+        self._set_2fa_secret(self.db, device_key, secret)
+
+    def _set_2fa_secret(self, db: BurnDB, device_key: bytes | bytearray, secret: str) -> None:
         blob = encrypt(device_key, secret.encode("utf-8"), aad=b"paracci.device.2fa.v1")
-        self.db.set_device_meta("2fa_secret_enc_v1", blob.nonce + blob.ciphertext)
-        self.db.delete_2fa_secret()
+        db.set_device_meta("2fa_secret_enc_v1", blob.nonce + blob.ciphertext)
+        db.delete_2fa_secret()
 
     def set_2fa_enabled(self, enabled: bool) -> None:
         self.db.set_2fa_enabled(enabled)

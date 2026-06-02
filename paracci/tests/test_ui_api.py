@@ -1,12 +1,14 @@
 import base64
 import io
 import json
+import logging
 import os
 import subprocess
 import sys
 import time
 from pathlib import Path
 import pytest
+import pyotp
 from PIL import Image
 
 from conftest import oqs_required
@@ -19,9 +21,18 @@ from desktop.device_key_binding import (
     DPAPI_DIFFERENT_ACCOUNT_MESSAGE,
     DeviceBindingError,
 )
-from desktop.services import AttachmentPayload, NativeServices, OpenedMessage
+from desktop.services import (
+    PENDING_UNLOCK_TTL_SECONDS,
+    AttachmentPayload,
+    NativeServices,
+    OpenedMessage,
+)
 from ui_api import UIApi, UIApiError
 from ui_api.facade import CachedOpenMessage
+
+
+PIN = "Correct-Horse-95175328"
+TOTP_SECRET = "JBSWY3DPEHPK3PXP"
 
 
 def make_api(path: Path) -> UIApi:
@@ -29,6 +40,21 @@ def make_api(path: Path) -> UIApi:
     os.environ["DATA_DIR"] = str(path)
     svc = NativeServices(path, "en")
     return UIApi(svc)
+
+
+def enable_2fa_and_lock(api: UIApi, pin: str = PIN, secret: str = TOTP_SECRET) -> str:
+    api.dispatch("device_init", {"pin": pin})
+    api.dispatch(
+        "2fa_enable",
+        {"secret": secret, "code": pyotp.TOTP(secret).now()},
+    )
+    api.dispatch("device_lock")
+    return secret
+
+
+def assert_sensitive_absent(label: str, sensitive_value: str, text: str) -> None:
+    if sensitive_value and sensitive_value in text:
+        raise AssertionError(f"{label} leaked")
 
 
 def cache_open_attachment(api: UIApi, attachment: AttachmentPayload, open_id: str = "open-id") -> str:
@@ -212,6 +238,152 @@ def test_ui_api_device_lock_drops_open_cache_and_windows_status_is_best_effort(t
     assert locked["two_factor_enabled"] is None
     assert api._opened == {}
     assert retained_device_key == bytearray(len(retained_device_key))
+
+
+def test_ui_api_2fa_unlock_stays_pending_until_totp_verification(tmp_path):
+    api = make_api(tmp_path / "native-2fa-pending")
+    secret = enable_2fa_and_lock(api)
+
+    pending_status = api.dispatch("device_unlock", {"pin": PIN})
+
+    assert pending_status["unlocked"] is False
+    assert pending_status["two_factor_enabled"] is True
+    assert pending_status["unlock_state"] == "pending_2fa"
+    assert pending_status["two_factor_required"] is True
+    assert api.services.device.device_key is None
+    assert api.services.device.db.has_device_key is False
+    assert api.services.device._pending_unlock is not None
+
+    unlocked_status = api.dispatch("2fa_verify", {"code": pyotp.TOTP(secret).now()})
+
+    assert unlocked_status["verified"] is True
+    assert unlocked_status["unlocked"] is True
+    assert unlocked_status["two_factor_enabled"] is True
+    assert unlocked_status["unlock_state"] == "unlocked"
+    assert unlocked_status["two_factor_required"] is False
+    assert api.services.device.device_key is not None
+    assert api.services.device.db.has_device_key is True
+    assert api.services.device._pending_unlock is None
+
+
+def test_ui_api_invalid_totp_clears_pending_unlock_material(tmp_path):
+    api = make_api(tmp_path / "native-2fa-invalid")
+    secret = enable_2fa_and_lock(api)
+    api.dispatch("device_unlock", {"pin": PIN})
+    pending = api.services.device._pending_unlock
+    assert pending is not None
+    pending_key = pending.device_key
+    pending_db = pending.db
+
+    with pytest.raises(UIApiError) as invalid:
+        api.dispatch("2fa_verify", {"code": "invalid-code"})
+
+    assert invalid.value.code == "invalid_2fa"
+    assert api.services.device.device_key is None
+    assert api.services.device.db.has_device_key is False
+    assert api.services.device._pending_unlock is None
+    assert pending_db.has_device_key is False
+    assert pending_key == bytearray(len(pending_key))
+
+    with pytest.raises(UIApiError) as missing:
+        api.dispatch("2fa_verify", {"code": pyotp.TOTP(secret).now()})
+
+    assert missing.value.code == "2fa_not_pending"
+
+
+def test_ui_api_lock_and_expiry_clear_pending_unlock_material(tmp_path):
+    api = make_api(tmp_path / "native-2fa-cleanup")
+    enable_2fa_and_lock(api)
+    api.dispatch("device_unlock", {"pin": PIN})
+    locked_pending = api.services.device._pending_unlock
+    assert locked_pending is not None
+
+    locked_status = api.dispatch("device_lock")
+
+    assert locked_status["unlock_state"] == "locked"
+    assert locked_status["two_factor_required"] is False
+    assert locked_pending.db.has_device_key is False
+    assert locked_pending.device_key == bytearray(len(locked_pending.device_key))
+
+    api.dispatch("device_unlock", {"pin": PIN})
+    expired_pending = api.services.device._pending_unlock
+    assert expired_pending is not None
+    expired_pending.created_at -= PENDING_UNLOCK_TTL_SECONDS + 1
+
+    expired_status = api.dispatch("device_status")
+
+    assert expired_status["unlocked"] is False
+    assert expired_status["unlock_state"] == "locked"
+    assert expired_status["two_factor_required"] is False
+    assert expired_pending.db.has_device_key is False
+    assert expired_pending.device_key == bytearray(len(expired_pending.device_key))
+
+
+def test_ui_api_non_2fa_unlock_still_activates_device(tmp_path):
+    api = make_api(tmp_path / "native-non-2fa-unlock")
+    api.dispatch("device_init", {"pin": PIN})
+    api.dispatch("device_lock")
+
+    unlocked_status = api.dispatch("device_unlock", {"pin": PIN})
+
+    assert unlocked_status["unlocked"] is True
+    assert unlocked_status["two_factor_enabled"] is False
+    assert unlocked_status["unlock_state"] == "unlocked"
+    assert unlocked_status["two_factor_required"] is False
+    assert api.services.device.db.has_device_key is True
+
+
+def test_ui_api_2fa_reunlock_while_active_does_not_create_pending_state(tmp_path):
+    api = make_api(tmp_path / "native-2fa-active-reunlock")
+    api.dispatch("device_init", {"pin": PIN})
+    api.dispatch(
+        "2fa_enable",
+        {"secret": TOTP_SECRET, "code": pyotp.TOTP(TOTP_SECRET).now()},
+    )
+
+    unlocked_status = api.dispatch("device_unlock", {"pin": PIN})
+
+    assert unlocked_status["unlocked"] is True
+    assert unlocked_status["two_factor_enabled"] is True
+    assert unlocked_status["unlock_state"] == "unlocked"
+    assert unlocked_status["two_factor_required"] is False
+    assert api.services.device.db.has_device_key is True
+    assert api.services.device._pending_unlock is None
+
+
+def test_ui_api_2fa_unlock_does_not_log_sensitive_values(tmp_path, caplog):
+    api = make_api(tmp_path / "native-2fa-log-hygiene")
+    pin = "Correct-Horse-Log-Sentinel-95175328"
+    secret = TOTP_SECRET
+    token_sentinel = "session-token-log-sentinel"
+
+    with caplog.at_level(logging.DEBUG):
+        api.dispatch("device_init", {"pin": pin})
+        active_device_key_hex = bytes(api.services.device.device_key or b"").hex()
+        valid_code = pyotp.TOTP(secret).now()
+        api.dispatch("2fa_enable", {"secret": secret, "code": valid_code})
+        api.dispatch("device_lock")
+        api.dispatch("device_unlock", {"pin": pin})
+        pending = api.services.device._pending_unlock
+        assert pending is not None
+        pending_key_hex = bytes(pending.device_key).hex()
+        pending_db_key_hex = bytes(pending.db._device_key or b"").hex()
+        pending_repr = repr(pending)
+        with pytest.raises(UIApiError):
+            api.dispatch("2fa_verify", {"code": token_sentinel})
+
+    for label, value in [
+        ("passphrase", pin),
+        ("TOTP secret", secret),
+        ("valid TOTP", valid_code),
+        ("session token", token_sentinel),
+        ("device key", active_device_key_hex),
+        ("pending key", pending_key_hex),
+        ("pending DB key", pending_db_key_hex),
+    ]:
+        assert_sensitive_absent(label, value, caplog.text)
+    assert_sensitive_absent("pending key repr", pending_key_hex, pending_repr)
+    assert_sensitive_absent("pending DB key repr", pending_db_key_hex, pending_repr)
 
 
 def test_ui_api_non_downloadable_text_preview_returns_policy_message(tmp_path):

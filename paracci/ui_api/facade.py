@@ -98,6 +98,8 @@ class UIApi:
             "initialized": self.services.device.is_initialized(),
             "unlocked": self.services.device.is_unlocked,
             "two_factor_enabled": self.services.device.is_2fa_enabled(),
+            "unlock_state": self.services.device.unlock_state,
+            "two_factor_required": self.services.device.has_pending_unlock,
             "data_dir": str(self.services.data_dir),
             "platform": self.services.shield.get_os_name(),
             "shield": self._shield_status(),
@@ -146,6 +148,14 @@ class UIApi:
         return self.cmd_device_status()
 
     def cmd_2fa_verify(self, code: str) -> dict[str, Any]:
+        if self.services.device.has_pending_unlock:
+            if not self.services.device.complete_pending_unlock(code):
+                raise UIApiError("invalid_2fa", "Invalid two-factor authentication code.")
+            result = self.cmd_device_status()
+            result["verified"] = True
+            return result
+        if not self.services.device.is_unlocked:
+            raise UIApiError("2fa_not_pending", "Two-factor unlock is not pending.")
         secret = self.services.device.get_2fa_secret()
         if not secret or not self.services.device.verify_2fa_code(secret, code):
             raise UIApiError("invalid_2fa", "Invalid two-factor authentication code.")
