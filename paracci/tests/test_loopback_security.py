@@ -1,5 +1,6 @@
 import importlib
 import io
+import logging
 import os
 import sys
 import time
@@ -54,6 +55,21 @@ def auth_headers(client, **extra):
     }
     headers.update(extra)
     return headers
+
+
+def assert_sensitive_absent(label: str, sensitive_value: str, text: str) -> None:
+    if sensitive_value and sensitive_value in text:
+        raise AssertionError(f"{label} leaked into rejection logs")
+
+
+def assert_legacy_rejection_debug_dumps_absent(text: str) -> None:
+    for marker in [
+        "Request URL",
+        "Request Headers",
+        "Request Cookies",
+        "Session Contents",
+    ]:
+        assert marker not in text
 
 
 def seed_downloadable_preview(routes_module, filename="report.txt"):
@@ -332,6 +348,162 @@ def test_api_rejects_missing_bearer_after_bootstrap(tmp_path, monkeypatch):
     )
 
     assert response.status_code == 403
+
+
+def test_loopback_rejection_logs_safe_metadata_without_auth_or_session_secrets(
+    tmp_path, monkeypatch, caplog
+):
+    _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    client = flask_app.test_client()
+    bootstrap(client)
+
+    sentinels = {
+        "loopback header token": "loopback-header-token-log-sentinel",
+        "csrf header token": "csrf-header-token-log-sentinel",
+        "authorization token": "authorization-header-token-log-sentinel",
+        "custom key header": "device-key-header-log-sentinel",
+        "otp header": "otp-header-log-sentinel",
+        "preview header token": "preview-header-token-log-sentinel",
+        "secret header": "secret-header-log-sentinel",
+        "query bootstrap token": "bootstrap-query-token-log-sentinel",
+        "query preview token": "preview-query-token-log-sentinel",
+        "query local path": "query-local-path-log-sentinel",
+        "cookie name": "token_cookie_name_log_sentinel",
+        "cookie value": "cookie-value-log-sentinel",
+        "session csrf": "csrf-session-token-log-sentinel",
+        "2fa setup secret": "totp-setup-secret-log-sentinel",
+        "pending unlock": "pending-unlock-log-sentinel",
+        "passphrase": "passphrase-log-sentinel",
+        "device key": "device-key-log-sentinel",
+        "private key": "private-key-log-sentinel",
+        "decrypted data": "decrypted-data-log-sentinel",
+        "session token": "session-token-log-sentinel",
+        "local filesystem path": str(tmp_path / "private" / "pending-unlock.paracci"),
+        "session csrf key": "csrf_token",
+        "2fa setup key": "2fa_setup_secret",
+        "unlock id key": "unlock_id",
+    }
+    with client.session_transaction(base_url=ORIGIN) as sess:
+        sess["csrf_token"] = sentinels["session csrf"]
+        sess["2fa_setup_secret"] = sentinels["2fa setup secret"]
+        sess["unlock_id"] = sentinels["pending unlock"]
+        sess["passphrase_material"] = sentinels["passphrase"]
+        sess["device_key_material"] = sentinels["device key"]
+        sess["private_key_material"] = sentinels["private key"]
+        sess["decrypted_data"] = sentinels["decrypted data"]
+        sess["preview_token_material"] = sentinels["session token"]
+        sess["sensitive_local_path"] = sentinels["local filesystem path"]
+
+    client.set_cookie(
+        sentinels["cookie name"],
+        sentinels["cookie value"],
+        domain="127.0.0.1",
+    )
+
+    headers = {
+        "Host": HOST,
+        "Origin": "http://evil.test",
+        "X-Paracci-Token": sentinels["loopback header token"],
+        "X-CSRF-Token": sentinels["csrf header token"],
+        "Authorization": f"Bearer {sentinels['authorization token']}",
+        "X-Device-Key": sentinels["custom key header"],
+        "X-TOTP-Code": sentinels["otp header"],
+        "X-Paracci-Preview-Token": sentinels["preview header token"],
+        "X-Secret-Material": sentinels["secret header"],
+    }
+    target = (
+        "/api/stage-attachment"
+        f"?token={sentinels['query bootstrap token']}"
+        f"&preview_token={sentinels['query preview token']}"
+        f"&next={sentinels['query local path']}"
+    )
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="app.routes"):
+        response = client.post(
+            target,
+            base_url=ORIGIN,
+            json={"path": sentinels["local filesystem path"]},
+            headers=headers,
+        )
+
+    assert response.status_code == 403
+    log_text = caplog.text
+    assert "Loopback request rejected" in log_text
+    assert "unexpected origin" in log_text
+    assert "POST" in log_text
+    assert "/api/stage-attachment" in log_text
+    assert "query_present" in log_text
+    assert "cookie_present" in log_text
+    assert "auth_material_present" in log_text
+    assert "session_present" in log_text
+    for label, value in sentinels.items():
+        assert_sensitive_absent(label, value, log_text)
+    for header_name in ["X-Paracci-Token", "X-CSRF-Token", "Authorization"]:
+        assert header_name not in log_text
+    assert_legacy_rejection_debug_dumps_absent(log_text)
+
+
+def test_bootstrap_rejection_logs_route_without_query_token_values(
+    tmp_path, monkeypatch, caplog
+):
+    _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    bootstrap_token = "bootstrap-url-token-log-sentinel"
+    next_token = "next-url-token-log-sentinel"
+    next_path = "<local-user-path>/private-bootstrap.paracci"
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="app.routes"):
+        response = flask_app.test_client().get(
+            f"/__paracci_bootstrap?token={bootstrap_token}&next=/{next_token}&path={next_path}",
+            base_url=ORIGIN,
+            headers={"Host": HOST},
+        )
+
+    assert response.status_code == 403
+    log_text = caplog.text
+    assert "Loopback request rejected" in log_text
+    assert "invalid bootstrap token" in log_text
+    assert "GET" in log_text
+    assert "/__paracci_bootstrap" in log_text
+    for label, value in {
+        "bootstrap query token": bootstrap_token,
+        "next query token": next_token,
+        "query local filesystem path": next_path,
+    }.items():
+        assert_sensitive_absent(label, value, log_text)
+    assert_legacy_rejection_debug_dumps_absent(log_text)
+
+
+def test_preview_rejection_logs_route_without_preview_capability_tokens(
+    tmp_path, monkeypatch, caplog
+):
+    _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    path_token = "preview-capability-path-token-log-sentinel"
+    query_token = "preview-capability-query-token-log-sentinel"
+    header_token = "preview-capability-header-token-log-sentinel"
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="app.routes"):
+        response = flask_app.test_client().get(
+            f"/preview/{path_token}?preview_token={query_token}",
+            base_url=ORIGIN,
+            headers={"Host": HOST, "X-Paracci-Preview-Token": header_token},
+        )
+
+    assert response.status_code == 403
+    log_text = caplog.text
+    assert "Loopback request rejected" in log_text
+    assert "missing source headers" in log_text
+    assert "GET" in log_text
+    assert "/preview/<pid>" in log_text
+    for label, value in {
+        "preview path token": path_token,
+        "preview query token": query_token,
+        "preview header token": header_token,
+    }.items():
+        assert_sensitive_absent(label, value, log_text)
+    assert_legacy_rejection_debug_dumps_absent(log_text)
 
 
 def test_public_unlock_does_not_expose_auth_shell_state_for_cookie_only_request(tmp_path, monkeypatch):

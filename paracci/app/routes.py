@@ -677,18 +677,108 @@ def _post_unlock_target() -> str:
     return target or url_for("main.index")
 
 
+_SENSITIVE_LOG_NAME_PARTS = (
+    "auth",
+    "bearer",
+    "bootstrap",
+    "capability",
+    "cookie",
+    "credential",
+    "csrf",
+    "key",
+    "otp",
+    "passphrase",
+    "preview",
+    "private",
+    "secret",
+    "session",
+    "token",
+    "totp",
+)
+
+_SENSITIVE_LOG_HEADER_NAMES = {
+    "authorization",
+    "cookie",
+    "set-cookie",
+    "x-csrf-token",
+    "x-paracci-token",
+}
+
+
+def _name_suggests_auth_material(name: str | None) -> bool:
+    if not isinstance(name, str):
+        return False
+    normalized = name.lower().replace("_", "-")
+    return normalized in _SENSITIVE_LOG_HEADER_NAMES or any(
+        part in normalized for part in _SENSITIVE_LOG_NAME_PARTS
+    )
+
+
+def _safe_request_route_rule() -> str:
+    try:
+        rule = getattr(request, "url_rule", None)
+        route = getattr(rule, "rule", None)
+        if isinstance(route, str) and route:
+            return route
+    except Exception:
+        pass
+    return "<unmatched>"
+
+
+def _safe_loopback_rejection_diagnostics(reason: str) -> dict[str, object]:
+    try:
+        query_present = bool(request.query_string)
+    except Exception:
+        query_present = False
+
+    try:
+        cookie_present = bool(request.cookies)
+    except Exception:
+        cookie_present = False
+
+    try:
+        header_auth_material_present = any(
+            _name_suggests_auth_material(name) for name in request.headers.keys()
+        )
+    except Exception:
+        header_auth_material_present = False
+
+    try:
+        query_auth_material_present = any(
+            _name_suggests_auth_material(name) for name in request.args.keys()
+        )
+    except Exception:
+        query_auth_material_present = False
+
+    try:
+        session_present = bool(session)
+    except Exception:
+        session_present = False
+
+    try:
+        session_permanent = bool(getattr(session, "permanent", False))
+    except Exception:
+        session_permanent = False
+
+    return {
+        "reason": reason,
+        "method": getattr(request, "method", "<unknown>"),
+        "endpoint": getattr(request, "endpoint", None) or "<unmatched>",
+        "route": _safe_request_route_rule(),
+        "query_present": query_present,
+        "cookie_present": cookie_present,
+        "auth_material_present": header_auth_material_present or query_auth_material_present,
+        "session_present": session_present,
+        "session_permanent": session_permanent,
+    }
+
+
 def _reject_security(reason: str):
     """Fail closed for loopback auth violations."""
-    logger.warning("Loopback request rejected: %s", reason)
-    try:
-        logger.warning("  [DEBUG] Request URL: %s", request.url)
-        logger.warning("  [DEBUG] Request Method: %s", request.method)
-        logger.warning("  [DEBUG] Request Headers: %s", {k: v for k, v in request.headers.items() if k.lower() not in {"cookie", "authorization"}})
-        logger.warning("  [DEBUG] Request Cookies: %s", list(request.cookies.keys()))
-        logger.warning("  [DEBUG] Session Contents: %s", {k: v for k, v in session.items()})
-        logger.warning("  [DEBUG] Session Permanent: %s", getattr(session, "permanent", None))
-    except Exception as e:
-        logger.warning("  [DEBUG] Failed to dump debug info: %s", e)
+    logger.warning(
+        "Loopback request rejected: %s",
+        _safe_loopback_rejection_diagnostics(reason),
+    )
 
     wants_json = request.path.startswith("/api/") or request.headers.get("X-Requested-With") == "XMLHttpRequest"
     if wants_json:
@@ -2852,7 +2942,10 @@ def preview_download(pid: str):
 @bp.app_errorhandler(SecurityError)
 def trusted_host_rejected(e):
     """Convert Werkzeug trusted-host failures into the loopback auth status."""
-    logger.warning("Loopback trusted host rejected: %s", e)
+    logger.warning(
+        "Loopback trusted host rejected: %s",
+        _safe_loopback_rejection_diagnostics("trusted host rejected"),
+    )
     if request.path.startswith("/api/"):
         return jsonify({"success": False, "error": "Forbidden."}), 403
     return "Forbidden", 403
