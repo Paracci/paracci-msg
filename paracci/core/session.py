@@ -58,6 +58,11 @@ from .hybrid_kem import (
     responder_kem_respond,
     validate_hybrid_handshake_payload,
 )
+from .ingest_limits import (
+    MAX_SETUP_FILE_BYTES,
+    IngestionLimitError,
+    ensure_buffer_within_limit,
+)
 
 MAGIC_BYTES = b"PARC"
 FILE_VERSION = 0x01
@@ -237,6 +242,10 @@ def _is_handshake_type(file_type: int) -> bool:
 
 def _load_session_payload(raw: bytes) -> dict:
     try:
+        ensure_buffer_within_limit(raw, MAX_SETUP_FILE_BYTES, "Setup file")
+    except IngestionLimitError as exc:
+        raise SessionFileError(str(exc)) from exc
+    try:
         payload = json.loads(raw.decode("utf-8"))
     except Exception as exc:
         raise SessionFileError("Session payload could not be parsed.") from exc
@@ -246,6 +255,10 @@ def _load_session_payload(raw: bytes) -> dict:
 
 
 def _decode_file_payload(data: bytes, expected_type: int, purpose: bytes) -> tuple[bytes, dict]:
+    try:
+        ensure_buffer_within_limit(data, MAX_SETUP_FILE_BYTES, "Setup file")
+    except IngestionLimitError as exc:
+        raise SessionFileError(str(exc)) from exc
     if not _verify_magic(data):
         raise SessionFileError("Invalid file format.")
     if len(data) < 22:

@@ -50,6 +50,25 @@ def legacy_package(text: str, allow_download):
     return buffer.getvalue()
 
 
+def test_native_session_import_rejects_oversized_buffer_before_header_parse(tmp_path, monkeypatch):
+    svc = make_services(tmp_path / "device")
+    monkeypatch.setattr(service_module, "MAX_SETUP_FILE_BYTES", 32)
+    monkeypatch.setattr(
+        service_module,
+        "parse_file_header",
+        lambda *_args, **_kwargs: pytest.fail("oversized setup reached header parser"),
+    )
+    sentinel = "setup-secret-token"
+    payload = (sentinel.encode("ascii") + b"x" * 64)
+
+    with pytest.raises(service_module.SessionServiceError) as exc_info:
+        svc.sessions.import_handshake(payload, "Y")
+
+    message = str(exc_info.value)
+    assert "too large" in message
+    assert sentinel not in message
+
+
 @oqs_required
 def test_native_services_full_message_roundtrip(tmp_path):
     x, y, x_session_id, y_session_id = make_active_services_pair(tmp_path)
@@ -62,6 +81,48 @@ def test_native_services_full_message_roundtrip(tmp_path):
     assert opened.allow_download is False
     assert opened.secure_delete_failed is False
     assert filename.startswith("msg_step_000000_")
+
+
+@oqs_required
+def test_native_message_open_rejects_oversized_buffer_before_header_parse(tmp_path, monkeypatch):
+    _x, y, _x_session_id, y_session_id = make_active_services_pair(tmp_path)
+    monkeypatch.setattr(service_module, "MAX_MESSAGE_ENVELOPE_BYTES", 32)
+    monkeypatch.setattr(
+        service_module,
+        "parse_file_header",
+        lambda *_args, **_kwargs: pytest.fail("oversized envelope reached header parser"),
+    )
+    sentinel = "message-secret-token"
+    payload = sentinel.encode("ascii") + b"x" * 64
+
+    with pytest.raises(service_module.MessageServiceError) as exc_info:
+        y.messages.open_message(y_session_id, payload)
+
+    message = str(exc_info.value)
+    assert "too large" in message
+    assert sentinel not in message
+
+
+@oqs_required
+def test_native_message_open_rejects_oversized_path_before_read(tmp_path, monkeypatch):
+    _x, y, _x_session_id, y_session_id = make_active_services_pair(tmp_path)
+    source_path = tmp_path / "oversized-message.paracci"
+    sentinel = "message-path-secret"
+    source_path.write_bytes(sentinel.encode("ascii") + b"x" * 64)
+    monkeypatch.setattr(service_module, "MAX_MESSAGE_ENVELOPE_BYTES", 32)
+
+    def fail_open(*_args, **_kwargs):
+        pytest.fail("oversized envelope path was opened")
+
+    monkeypatch.setattr(service_module, "open", fail_open, raising=False)
+
+    with pytest.raises(service_module.MessageServiceError) as exc_info:
+        y.messages.open_message(y_session_id, source_path=source_path)
+
+    message = str(exc_info.value)
+    assert "too large" in message
+    assert sentinel not in message
+    assert str(source_path) not in message
 
 
 @oqs_required

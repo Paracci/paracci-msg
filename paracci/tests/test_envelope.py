@@ -42,6 +42,45 @@ from core.envelope import (
 )
 from core import envelope as envelope_module
 
+
+def test_envelope_buffer_size_limit_rejects_before_decrypt(monkeypatch):
+    monkeypatch.setattr(envelope_module, "MAX_MESSAGE_ENVELOPE_BYTES", 64)
+    monkeypatch.setattr(
+        envelope_module,
+        "decrypt",
+        lambda *_args, **_kwargs: pytest.fail("oversized envelope reached decrypt"),
+    )
+    sentinel = b"decrypted-secret-token"
+    oversized = b"PARC" + b"x" * 64 + sentinel
+
+    with pytest.raises(EnvelopeError) as exc_info:
+        open_envelope(oversized, session=None)
+
+    message = str(exc_info.value)
+    assert "too large" in message
+    assert sentinel.decode("ascii") not in message
+
+
+def test_envelope_path_size_limit_rejects_before_body_read(tmp_path, monkeypatch):
+    path = tmp_path / "oversized.paracci"
+    sentinel = b"local-secret-token"
+    path.write_bytes(b"PARC" + b"x" * 64 + sentinel)
+    monkeypatch.setattr(envelope_module, "MAX_MESSAGE_ENVELOPE_BYTES", 64)
+
+    def fail_open(*_args, **_kwargs):
+        pytest.fail("oversized envelope path was opened")
+
+    monkeypatch.setattr(envelope_module, "open", fail_open, raising=False)
+
+    with pytest.raises(EnvelopeError) as exc_info:
+        open_envelope(session=None, file_path=path)
+
+    message = str(exc_info.value)
+    assert "too large" in message
+    assert sentinel.decode("ascii") not in message
+    assert str(path) not in message
+
+
 def _new_identity():
     priv, pub = generate_identity_keypair()
     return priv, pub
@@ -397,4 +436,3 @@ def test_streaming_operations_from_file_paths(tmp_path):
     assert package.attachments[1].filename == "photo.png"
     assert package.attachments[1].size == 11
     assert package.attachments[1].content == b"photo bytes"
-

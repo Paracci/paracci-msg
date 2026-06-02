@@ -36,6 +36,14 @@ from core.envelope import (
     EnvelopeError,
     EnvelopeTTLError,
 )
+from core.ingest_limits import (
+    MAX_MESSAGE_ENVELOPE_BYTES,
+    MAX_SETUP_FILE_BYTES,
+    IngestionLimitError,
+    copy_stream_limited,
+    ensure_path_within_limit,
+    read_path_limited,
+)
 from core.package import (
     PackageLimitError,
     create_package,
@@ -1567,12 +1575,13 @@ def session_new():
 
 def _import_from_native(path):
     """Reads byte data from a local file."""
-    logger.info(f"Importing from native path: {path}")
+    logger.info("Importing from native selected file.")
     try:
-        with open(path, "rb") as f:
-            return f.read()
+        return read_path_limited(path, MAX_SETUP_FILE_BYTES, "Setup file")
+    except IngestionLimitError:
+        raise
     except Exception as e:
-        logger.error(f"Native read error: {e}")
+        logger.error("Native read error: %s", e.__class__.__name__)
         return None
 
 
@@ -1839,7 +1848,17 @@ def session_import():
     native_filename = ""
 
     if native_file_id:
-        file_bytes, native_ref = _import_from_native_ref(native_file_id)
+        try:
+            file_bytes, native_ref = _import_from_native_ref(native_file_id)
+        except IngestionLimitError as exc:
+            flash(str(exc), "error")
+            return render_template(
+                "setup.html",
+                mode="import",
+                is_import=True,
+                init_native_file_id=native_file_id,
+                init_path=native_filename,
+            )
         native_filename = native_ref["filename"] if native_ref else ""
         if not file_bytes:
             flash(f"Could not read file: {native_filename or 'selected file'}", "error")
@@ -1853,7 +1872,13 @@ def session_import():
     else:
         f = request.files.get("paracci_file")
         if f and f.filename:
-            file_bytes = f.read()
+            try:
+                buf = BytesIO()
+                copy_stream_limited(f.stream, buf, MAX_SETUP_FILE_BYTES, "Setup file")
+                file_bytes = buf.getvalue()
+            except IngestionLimitError as exc:
+                flash(str(exc), "error")
+                return render_template("setup.html", mode="import", is_import=True)
 
     if not file_bytes:
         flash(_('session.import_file_required'), "error")
@@ -1988,7 +2013,11 @@ def session_import_responder(sid: str):
     native_file_id = request.form.get("native_file_id", "").strip()
     file_bytes = None
     if native_file_id:
-        file_bytes, native_ref = _import_from_native_ref(native_file_id)
+        try:
+            file_bytes, native_ref = _import_from_native_ref(native_file_id)
+        except IngestionLimitError as exc:
+            flash(str(exc), "error")
+            return redirect(url_for("main.session_detail", sid=sid))
         if not file_bytes:
             filename = native_ref["filename"] if native_ref else "selected file"
             flash(f"Could not read file: {filename}", "error")
@@ -1996,7 +2025,13 @@ def session_import_responder(sid: str):
     else:
         f = request.files.get("paracci_file")
         if f and f.filename:
-            file_bytes = f.read()
+            try:
+                buf = BytesIO()
+                copy_stream_limited(f.stream, buf, MAX_SETUP_FILE_BYTES, "Setup file")
+                file_bytes = buf.getvalue()
+            except IngestionLimitError as exc:
+                flash(str(exc), "error")
+                return redirect(url_for("main.session_detail", sid=sid))
 
     if not file_bytes:
         flash(_('session.import_file_required'), "error")
@@ -2318,8 +2353,23 @@ def session_open(sid: str):
     temp_upload_path = None
     
     if native_file_id:
-        file_bytes, native_ref = _import_from_native_ref(native_file_id)
+        native_ref = _resolve_native_file_ref(native_file_id)
         native_file_path = native_ref["path"] if native_ref else None
+        if native_file_path is not None:
+            try:
+                ensure_path_within_limit(native_file_path, MAX_MESSAGE_ENVELOPE_BYTES, "Message file")
+            except IngestionLimitError as exc:
+                msg = str(exc)
+                if is_ajax:
+                    return jsonify({"success": False, "error": msg}), 400
+                flash(msg, "error")
+                return redirect(url_for("main.session_detail", sid=sid))
+            except OSError:
+                msg = "Could not read message file."
+                if is_ajax:
+                    return jsonify({"success": False, "error": msg}), 400
+                flash(msg, "error")
+                return redirect(url_for("main.session_detail", sid=sid))
     elif uploaded and uploaded.filename != "":
         temp_dir = Path(os.environ.get("DATA_DIR", "data")) / "temp"
         temp_dir.mkdir(parents=True, exist_ok=True)
@@ -2327,12 +2377,18 @@ def session_open(sid: str):
         temp_upload_path = temp_dir / f"open_upload_{token}.bin"
         try:
             with open(temp_upload_path, "wb") as dest:
-                while True:
-                    chunk = uploaded.stream.read(64 * 1024)
-                    if not chunk:
-                        break
-                    dest.write(chunk)
+                copy_stream_limited(uploaded.stream, dest, MAX_MESSAGE_ENVELOPE_BYTES, "Message file")
+        except IngestionLimitError as exc:
+            if temp_upload_path.exists():
+                secure_delete(temp_upload_path)
+            msg = str(exc)
+            if is_ajax:
+                return jsonify({"success": False, "error": msg}), 400
+            flash(msg, "error")
+            return redirect(url_for("main.session_detail", sid=sid))
         except OSError as exc:
+            if temp_upload_path.exists():
+                secure_delete(temp_upload_path)
             msg = "Failed to write upload file to disk."
             return jsonify({"success": False, "error": msg}) if is_ajax else (flash(msg, "error") or redirect(url_for("main.session_detail", sid=sid)))
         native_file_path = temp_upload_path

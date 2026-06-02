@@ -702,6 +702,137 @@ def _make_active_handshake():
     )
 
 
+def test_flask_setup_upload_rejects_oversized_file_before_parse(tmp_path, monkeypatch):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    import app.routes as routes_module
+
+    client = flask_app.test_client()
+    bootstrap(client)
+    _unlock_test_client(ag_app, client)
+    monkeypatch.setattr(routes_module, "MAX_SETUP_FILE_BYTES", 32)
+    monkeypatch.setattr(
+        routes_module,
+        "_parse_file_header_raw",
+        lambda *_args, **_kwargs: pytest.fail("oversized setup reached header parser"),
+    )
+    sentinel = "flask-setup-secret"
+
+    response = client.post(
+        "/session/import",
+        base_url=ORIGIN,
+        data={
+            "label": "Y",
+            "paracci_file": (io.BytesIO(sentinel.encode("ascii") + b"x" * 64), "setup.paracci"),
+        },
+        headers=auth_headers(client),
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 200
+    assert b"too large" in response.data
+    assert sentinel.encode("ascii") not in response.data
+
+
+def test_flask_setup_native_ref_rejects_oversized_file_before_parse(tmp_path, monkeypatch):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    import app.routes as routes_module
+
+    client = flask_app.test_client()
+    bootstrap(client)
+    _unlock_test_client(ag_app, client)
+    selected = tmp_path / "oversized-setup.paracci"
+    sentinel = "native-setup-secret"
+    selected.write_bytes(sentinel.encode("ascii") + b"x" * 64)
+    native_ref = routes_module.register_native_file_path(selected)
+    monkeypatch.setattr(routes_module, "MAX_SETUP_FILE_BYTES", 32)
+    monkeypatch.setattr(
+        routes_module,
+        "_parse_file_header_raw",
+        lambda *_args, **_kwargs: pytest.fail("oversized setup reached header parser"),
+    )
+
+    response = client.post(
+        "/session/import",
+        base_url=ORIGIN,
+        data={"label": "Y", "native_file_id": native_ref["id"]},
+        headers=auth_headers(client),
+    )
+
+    assert response.status_code == 200
+    assert b"too large" in response.data
+    assert sentinel.encode("ascii") not in response.data
+    assert str(selected).encode("utf-8") not in response.data
+
+
+@oqs_required
+def test_flask_message_upload_rejects_oversized_envelope_before_open(tmp_path, monkeypatch):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    import app.routes as routes_module
+
+    client = flask_app.test_client()
+    bootstrap(client)
+    _unlock_test_client(ag_app, client)
+    _meta_x, meta_y = _make_active_handshake()
+    _save_meta(ag_app, meta_y)
+    monkeypatch.setattr(routes_module, "MAX_MESSAGE_ENVELOPE_BYTES", 32)
+    monkeypatch.setattr(
+        routes_module,
+        "open_envelope",
+        lambda *_args, **_kwargs: pytest.fail("oversized envelope reached decrypt/open"),
+    )
+    sentinel = "flask-message-secret"
+
+    response = client.post(
+        f"/session/{meta_y.session_id.hex()}/open?ajax=1",
+        base_url=ORIGIN,
+        data={
+            "paracci_file": (io.BytesIO(sentinel.encode("ascii") + b"x" * 64), "message.paracci"),
+        },
+        headers=auth_headers(client, **{"X-Requested-With": "XMLHttpRequest"}),
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 400
+    payload = response.get_json()
+    assert "too large" in payload["error"]
+    assert sentinel not in payload["error"]
+
+
+@oqs_required
+def test_flask_message_native_ref_rejects_oversized_envelope_before_open(tmp_path, monkeypatch):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    import app.routes as routes_module
+
+    client = flask_app.test_client()
+    bootstrap(client)
+    _unlock_test_client(ag_app, client)
+    _meta_x, meta_y = _make_active_handshake()
+    _save_meta(ag_app, meta_y)
+    selected = tmp_path / "oversized-message.paracci"
+    sentinel = "native-message-secret"
+    selected.write_bytes(sentinel.encode("ascii") + b"x" * 64)
+    native_ref = routes_module.register_native_file_path(selected)
+    monkeypatch.setattr(routes_module, "MAX_MESSAGE_ENVELOPE_BYTES", 32)
+    monkeypatch.setattr(
+        routes_module,
+        "open_envelope",
+        lambda *_args, **_kwargs: pytest.fail("oversized envelope reached decrypt/open"),
+    )
+
+    response = client.post(
+        f"/session/{meta_y.session_id.hex()}/open?ajax=1",
+        base_url=ORIGIN,
+        data={"native_file_id": native_ref["id"]},
+        headers=auth_headers(client, **{"X-Requested-With": "XMLHttpRequest"}),
+    )
+
+    assert response.status_code == 400
+    payload = response.get_json()
+    assert "too large" in payload["error"]
+    assert sentinel not in payload["error"]
+    assert str(selected) not in payload["error"]
+
+
 @oqs_required
 def test_file_activation_queues_native_message_after_unlock(tmp_path, monkeypatch):
     ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
@@ -1160,4 +1291,3 @@ def test_preview_post_still_requires_loopback(tmp_path, monkeypatch):
 
     # Cleanup
     preview_store.revoke(token)
-

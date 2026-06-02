@@ -28,6 +28,7 @@ from desktop.services import (
     OpenedMessage,
 )
 from ui_api import UIApi, UIApiError
+from ui_api import facade as facade_module
 from ui_api.facade import CachedOpenMessage
 
 
@@ -238,6 +239,27 @@ def test_ui_api_device_lock_drops_open_cache_and_windows_status_is_best_effort(t
     assert locked["two_factor_enabled"] is None
     assert api._opened == {}
     assert retained_device_key == bytearray(len(retained_device_key))
+
+
+def test_ui_api_session_import_rejects_oversized_path_before_service_import(tmp_path, monkeypatch):
+    api = make_api(tmp_path / "oversized-import")
+    setup_path = tmp_path / "oversized-setup.paracci"
+    sentinel = "ui-setup-secret"
+    setup_path.write_bytes(sentinel.encode("ascii") + b"x" * 64)
+    monkeypatch.setattr(facade_module, "MAX_SETUP_FILE_BYTES", 32)
+    monkeypatch.setattr(
+        api.services.sessions,
+        "import_handshake",
+        lambda *_args, **_kwargs: pytest.fail("oversized setup reached service import"),
+    )
+
+    with pytest.raises(UIApiError) as exc_info:
+        api.dispatch("session_import", {"import_path": str(setup_path), "local_label": "Y"})
+
+    assert exc_info.value.code == "session_service_error"
+    assert "too large" in exc_info.value.message
+    assert sentinel not in exc_info.value.message
+    assert str(setup_path) not in exc_info.value.message
 
 
 def test_ui_api_2fa_unlock_stays_pending_until_totp_verification(tmp_path):

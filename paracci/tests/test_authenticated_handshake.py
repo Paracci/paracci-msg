@@ -31,6 +31,30 @@ from core.session import (
 )
 
 
+def test_setup_size_limit_rejects_before_json_parse(monkeypatch):
+    sentinel = b"payload-secret-token"
+    oversized = (
+        b"PARC"
+        + bytes([session_module.HANDSHAKE_FILE_VERSION, session_module.TYPE_INITIATOR])
+        + b"A" * 16
+        + sentinel
+        + b"x" * session_module.MAX_SETUP_FILE_BYTES
+    )
+
+    monkeypatch.setattr(
+        session_module.json,
+        "loads",
+        lambda *_args, **_kwargs: pytest.fail("oversized setup payload was parsed"),
+    )
+
+    with pytest.raises(session_module.SessionFileError) as exc_info:
+        session_module.parse_initiator_file(oversized)
+
+    message = str(exc_info.value)
+    assert "too large" in message
+    assert sentinel.decode("ascii") not in message
+
+
 def _identity():
     private_key, public_key = generate_identity_keypair()
     return private_key, public_key

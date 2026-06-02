@@ -12,6 +12,7 @@ from typing import Any
 
 from desktop.device_key_binding import DeviceBindingError
 from desktop.services import AttachmentPayload, MessageServiceError, NativeServices, OpenedMessage, SessionServiceError
+from core.ingest_limits import MAX_SETUP_FILE_BYTES, IngestionLimitError, read_path_limited
 from core.sanitizer import build_no_download_image_preview
 
 logger = logging.getLogger(__name__)
@@ -246,7 +247,13 @@ class UIApi:
         auto_export_path: str | None = None,
     ) -> dict[str, Any]:
         path = Path(import_path)
-        result = self.services.sessions.import_handshake(path.read_bytes(), local_label or path.stem)
+        try:
+            file_bytes = read_path_limited(path, MAX_SETUP_FILE_BYTES, "Setup file")
+        except IngestionLimitError as exc:
+            raise SessionServiceError(str(exc)) from exc
+        except OSError as exc:
+            raise SessionServiceError("Could not read selected setup file.") from exc
+        result = self.services.sessions.import_handshake(file_bytes, local_label or path.stem)
         response = {
             "session_id_hex": result.session_id_hex,
             "message": result.message,

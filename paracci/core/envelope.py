@@ -49,6 +49,12 @@ from .evolution import (
     validate_evo_config,
     validate_evo_step,
 )
+from .ingest_limits import (
+    MAX_MESSAGE_ENVELOPE_BYTES,
+    IngestionLimitError,
+    ensure_buffer_within_limit,
+    ensure_path_within_limit,
+)
 from .session import SessionMeta
 
 MAGIC_BYTES = b"PARC"
@@ -365,7 +371,9 @@ def open_envelope(
     if file_path is not None:
         path = Path(file_path)
         try:
-            file_size = path.stat().st_size
+            file_size = ensure_path_within_limit(path, MAX_MESSAGE_ENVELOPE_BYTES, "Message file")
+        except IngestionLimitError as exc:
+            raise EnvelopeError(str(exc)) from exc
         except OSError as exc:
             raise EnvelopeError("Could not read message file.") from exc
         if file_size < HEADER_SIZE + 4 + (NONCE_LEN * 2) + 16:
@@ -378,6 +386,10 @@ def open_envelope(
         if file_bytes is None:
             raise ValueError("Either file_bytes or file_path must be provided.")
         file_size = len(file_bytes)
+        try:
+            ensure_buffer_within_limit(file_bytes, MAX_MESSAGE_ENVELOPE_BYTES, "Message file")
+        except IngestionLimitError as exc:
+            raise EnvelopeError(str(exc)) from exc
         if file_size < HEADER_SIZE + 4 + (NONCE_LEN * 2) + 16:
             raise EnvelopeError("File too small.")
         header_bytes = file_bytes[:HEADER_SIZE]

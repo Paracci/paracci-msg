@@ -47,6 +47,13 @@ from core.envelope import (
 )
 from core.evolution import EVO_UNLIMITED, seconds_until_expiry, session_expires_at
 from core.identity import get_or_create_device_identity
+from core.ingest_limits import (
+    MAX_MESSAGE_ENVELOPE_BYTES,
+    MAX_SETUP_FILE_BYTES,
+    IngestionLimitError,
+    ensure_buffer_within_limit,
+    ensure_path_within_limit,
+)
 from core.package import Attachment, PackageLimitError, create_package, extract_package
 from core.sanitizer import SanitizationError, sanitize_image
 from core.security_utils import scan_text_for_security
@@ -695,6 +702,10 @@ class SessionService:
         )
 
     def import_handshake(self, file_bytes: bytes, local_label: str) -> ImportResult:
+        try:
+            ensure_buffer_within_limit(file_bytes, MAX_SETUP_FILE_BYTES, "Setup file")
+        except IngestionLimitError as exc:
+            raise SessionServiceError(str(exc)) from exc
         header = parse_file_header(file_bytes)
         if not header:
             raise SessionServiceError("Invalid Paracci file.")
@@ -876,6 +887,12 @@ class MessageService:
 
         if source_path is not None:
             try:
+                ensure_path_within_limit(source_path, MAX_MESSAGE_ENVELOPE_BYTES, "Message file")
+            except IngestionLimitError as exc:
+                raise MessageServiceError(str(exc)) from exc
+            except OSError as exc:
+                raise MessageServiceError("Could not read message file.") from exc
+            try:
                 with open(source_path, "rb") as f:
                     header_bytes_prefix = f.read(100)
             except OSError as exc:
@@ -884,6 +901,10 @@ class MessageService:
         else:
             if file_bytes is None:
                 raise ValueError("Either file_bytes or source_path must be provided.")
+            try:
+                ensure_buffer_within_limit(file_bytes, MAX_MESSAGE_ENVELOPE_BYTES, "Message file")
+            except IngestionLimitError as exc:
+                raise MessageServiceError(str(exc)) from exc
             header = parse_file_header(file_bytes)
             
         if not header or header["file_type"] != TYPE_MESSAGE:
