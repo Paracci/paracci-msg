@@ -14,6 +14,7 @@ Paracci should be reasoned about as a local encrypted desktop system, not as a n
 - Keep compatibility paths narrow. Legacy read paths must not become new write paths.
 - Add or update focused regression tests for security-sensitive changes; tests should fail without the fix or invariant.
 - Keep logs and errors useful but redacted. Do not record tokens, secrets, passphrases, decrypted content, raw request bodies, or sensitive local paths.
+- Committed docs, tests, and code must not contain local machine paths, local usernames in path context, or machine-specific temp/cache locations.
 - Do not add dependency, workflow, bridge, route, or filesystem shortcuts that bypass existing policy checks.
 
 ## When To Stop And Ask For A Plan Review

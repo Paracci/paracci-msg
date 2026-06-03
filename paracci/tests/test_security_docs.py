@@ -1,4 +1,5 @@
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -12,19 +13,19 @@ DOC_PATHS = [
 ]
 
 EXPECTED_LEDGER_COMMITS = [
-    "b4476c974d69bb632e92e4a1bff576ab6f8bdb8b",
-    "45b22236b1efb8e2d96ad6f396c7826fc165499d",
-    "4bfd4d3ef387cc0173d1c3b697846e67833d2217",
-    "715173ab159150e6eb068cc9b798f0383b28657a",
-    "6ba5bf88909e3d86d373c69b7cbb9be12b396bd5",
-    "efd7b581b6a408298aafec7b4c2c0249c17fd186",
-    "283fc4a9dfdc316d8538e2c1e58d9f3d59b360c0",
-    "a4a1ecc6c270da6f1384b2ad4cd8e3e3867b121d",
-    "b56bcf0d23a5baf010cfca97a8ba34d958d38e86",
-    "d12cec22c16d74867ba3bab6cfb344ff09f7dee2",
-    "f183fd0eb8fdbfe7b095488d33f75747b920fbe9",
-    "c2de0de689162592ef5144e4487d06e52ee07807",
-    "4b6e213f781eb7e911466bbea12f27f1c7bb98ac",
+    "df35a2f07638df74ab745f0ec0cb3cdf1bd6c7d6",
+    "dbc7cc659dbef229f85a049587011a2a0fc910f9",
+    "c24ec7155011721ba4234d8a7c4cbf239999e635",
+    "e559e743afb2ce289c57b72b0984e66b9710a2b7",
+    "ba6bbde14611beef2117956ff7bddba38f031f87",
+    "dbaf594429055900b0e93b0c9e006b85e3a5b054",
+    "4369492db56653354618440d2efab6c9abc5d3b7",
+    "6121e1790e1e0ebf18c0bf989c293b9b6de74e2e",
+    "4999c0e6cbae193daebe0e5aae886f2563f5961f",
+    "b56bb540103145683471b80c9b1bc56ff5b8a0da",
+    "84619d20c9df83d1c26f79c6ec86028becb27790",
+    "43443de1b7fab760dfc1e8d7e00eddff18fbf793",
+    "204c458039f9406ab6296da0a3200ecc5bc48015",
 ]
 
 REQUIRED_AGENT_PHRASES = [
@@ -35,6 +36,7 @@ REQUIRED_AGENT_PHRASES = [
     "Implementation and fix tasks must run focused validation and create one local commit",
     "Never run `git push` from this repository.",
     "Verify no raw audit reports, scratch artifacts, private scan outputs",
+    "Never commit local user-home, Desktop, temp/cache, or absolute workspace paths",
 ]
 
 REQUIRED_ENGINEERING_PHRASES = [
@@ -66,6 +68,7 @@ REQUIRED_ENGINEERING_PHRASES = [
     "UIApi must not accept raw filesystem paths from untrusted JSON or UI parameters.",
     "Linux Secret Service fallback must require explicit user consent",
     "Preview windows must block external navigation consistently",
+    "Committed docs, tests, and code must not contain local machine paths",
 ]
 
 FORBIDDEN_PRIVATE_REFERENCES = [
@@ -82,8 +85,6 @@ FORBIDDEN_PRIVATE_REFERENCES = [
     "rollout_path",
     "validation_script.py",
     "validate_finding.py",
-    "<local-user-path>",
-    "<local-user-path>",
 ]
 
 FORBIDDEN_PRIVATE_PATTERNS = [
@@ -91,9 +92,50 @@ FORBIDDEN_PRIVATE_PATTERNS = [
     re.compile(r"(?im)^\s*(?:secret|token|passphrase|password|api[_-]?key)\s*[:=]\s*['\"][^'\"]+['\"]"),
 ]
 
+_USERS = b"Users"
+_LOCAL_USER = b"k" + b"agan"
+FORBIDDEN_TRACKED_CONTENT_PATTERNS = [
+    (
+        "windows user-home absolute path",
+        re.compile(rb"(?i)\b[A-Za-z]:[\\/]+" + _USERS + rb"[\\/]+"),
+    ),
+    (
+        "macos user-home absolute path",
+        re.compile(rb"(?i)(?<![A-Za-z0-9_./-])/" + _USERS + rb"/"),
+    ),
+    (
+        "escaped users path",
+        re.compile(rb"(?i)\\\\+" + _USERS + rb"\\\\+"),
+    ),
+    (
+        "local username in path context",
+        re.compile(
+            rb"(?i)(?:[\\/]"
+            + re.escape(_LOCAL_USER)
+            + rb"[\\/]|"
+            + re.escape(_LOCAL_USER)
+            + rb"[\\/]+(?:Desktop|AppData|Downloads|Documents|Temp|\.codex)\b)"
+        ),
+    ),
+]
+
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def _tracked_files() -> list[Path]:
+    result = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+    )
+    return [
+        REPO_ROOT / rel.decode("utf-8")
+        for rel in result.stdout.split(b"\0")
+        if rel
+    ]
 
 
 def test_security_guardrail_docs_exist():
@@ -136,3 +178,19 @@ def test_repo_safe_security_docs_do_not_name_private_artifacts():
         assert forbidden not in combined
     for pattern in FORBIDDEN_PRIVATE_PATTERNS:
         assert not pattern.search(combined), pattern.pattern
+
+
+def test_tracked_repo_content_does_not_commit_local_machine_paths():
+    violations = []
+
+    for path in _tracked_files():
+        data = path.read_bytes()
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        for label, pattern in FORBIDDEN_TRACKED_CONTENT_PATTERNS:
+            if pattern.search(data):
+                violations.append(f"{rel}: {label}")
+
+    assert not violations, (
+        "Committed content contains local machine path material:\n"
+        + "\n".join(violations[:50])
+    )

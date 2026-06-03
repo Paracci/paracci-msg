@@ -48,12 +48,14 @@ Use these repo-safe references when planning security-sensitive work:
 - Stage only intended source, test, and repo-safe documentation files.
 - Inspect `git diff --cached --name-only` and confirm the staged set contains only the intended files.
 - Verify no raw audit reports, scratch artifacts, private scan outputs, exploit material, proof transcripts, disposable validation scripts, secrets, private keys, signing keys, tokens, passphrases, decrypted data, local user paths, or machine-specific files are staged.
+- Verify no committed file contains local machine paths, local usernames in path context, or machine-specific temp/cache locations; use `<local-user-path>`, `%APPDATA%`, or repo-relative fixture paths instead.
 - Run `git diff --cached --check`.
 - Create one local commit with a clear message after validation. Do not push.
 
 ## Repository Hygiene
 
 - Never commit raw audit reports, scratch artifacts, private scan artifacts, exploit payloads, proof transcripts, disposable validation scripts, secrets, private keys, signing keys, tokens, passphrases, decrypted data, local user paths, or machine-specific details.
+- Never commit local user-home, Desktop, temp/cache, or absolute workspace paths that identify a developer account or machine. Use placeholders or repo-relative synthetic fixture paths.
 - Keep local-only security work under ignored scratch locations and verify those files remain untracked.
 - Documentation intended for the repository must describe sanitized vulnerability classes, fixed invariants, expected reasoning, and regression expectations only.
 - If a task asks for security memory or guardrails, write repo-safe summaries. Do not copy private report text or sensitive investigation notes into tracked files.
