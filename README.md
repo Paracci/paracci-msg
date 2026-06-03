@@ -168,6 +168,8 @@ python run.py --debug
 - [paracci/desktop/](paracci/desktop/): Native desktop helper services, including platform-specific credential store integration (Windows DPAPI, macOS Keychain, Linux Secret Service).
 - [paracci/audits/](paracci/audits/): Internal QA, dependency, performance, and translation auditing suite.
 - [paracci/docs/](paracci/docs/): Security model documentation and shield guarantees.
+- [paracci/docs/SECURITY_ENGINEERING.md](paracci/docs/SECURITY_ENGINEERING.md): Non-negotiable security engineering invariants for maintainers and coding agents.
+- [paracci/docs/SECURITY_REGRESSION_LEDGER.md](paracci/docs/SECURITY_REGRESSION_LEDGER.md): Sanitized fixed-vulnerability-class ledger and regression expectations.
 
 ---
 

@@ -71,6 +71,9 @@ Paracci is designed with specific architectural trade-offs to enable a serverles
 - [SECURITY_SHIELDS.md](paracci/docs/SECURITY_SHIELDS.md) — For details on platform-native device key binding (shields) and their platform-specific limitations.
 - [ARCHITECTURE.md](paracci/docs/ARCHITECTURE.md) — For the threat model governing our Flask + pywebview loopback backend architecture.
 
+- [SECURITY_ENGINEERING.md](paracci/docs/SECURITY_ENGINEERING.md) - For non-negotiable engineering invariants that must not be weakened.
+- [SECURITY_REGRESSION_LEDGER.md](paracci/docs/SECURITY_REGRESSION_LEDGER.md) - For sanitized fixed vulnerability classes and regression expectations.
+
 Please note that Paracci's documented design limitations (such as the absence of a Double Ratchet protocol, the lack of post-quantum KEM, or the reliance on a local loopback web backend) are known, deliberate design trade-offs and are not treated as vulnerabilities.
 
 ---
