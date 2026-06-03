@@ -2736,6 +2736,11 @@ def session_open(sid: str):
     except (AlreadyBurnedError, TTLExpiredError, EnvelopeTTLError) as e:
         msg = "This message was already opened or has expired."
         return jsonify({"success": False, "error": msg}) if is_ajax else _render_session_error(meta, sid, msg)
+    except EnvelopeError:
+        msg = _('session.invalid_file')
+        if is_ajax:
+            return jsonify({"success": False, "error": msg}), 400
+        return _render_session_error(meta, sid, msg)
     except PackageLimitError as e:
         msg_id = raw.get("msg_id", b"").hex() if isinstance(raw, dict) else ""
         logger.warning("Rejected unsafe package expansion for session=%s msg=%s: %s", sid[:8], msg_id, e)

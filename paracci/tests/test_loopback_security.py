@@ -13,6 +13,8 @@ from conftest import oqs_required
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from envelope_helpers import craft_bond_nonce_envelope
+
 
 TOKEN = "test-loopback-token"
 HOST = "127.0.0.1:18080"
@@ -1295,6 +1297,58 @@ def test_flask_open_uses_bound_header_policy_over_package_metadata(tmp_path, mon
     assert inline_response.data != b"original bytes"
     assert forged_download_response.status_code == 403
     assert forged_download_response.data != b"original bytes"
+
+
+@oqs_required
+def test_flask_open_rejects_post_bond_bond_nonce_without_persisting(
+    tmp_path,
+    monkeypatch,
+):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    from core.package import create_package
+
+    client = flask_app.test_client()
+    bootstrap(client)
+    _unlock_test_client(ag_app, client)
+    meta_x, meta_y = _make_active_handshake()
+    _save_meta(ag_app, meta_x)
+
+    initial = client.post(
+        f"/session/{meta_x.session_id.hex()}/seal",
+        base_url=ORIGIN,
+        data={"message": "Initial bond", "ttl_seconds": "0"},
+        headers=auth_headers(client),
+    )
+    assert initial.status_code == 200
+
+    _save_meta(ag_app, meta_y)
+    opened = client.post(
+        f"/session/{meta_y.session_id.hex()}/open?ajax=1",
+        base_url=ORIGIN,
+        data={"paracci_file": (io.BytesIO(initial.data), "message.paracci")},
+        headers=auth_headers(client, **{"X-Requested-With": "XMLHttpRequest"}),
+        content_type="multipart/form-data",
+    )
+    assert opened.status_code == 200
+
+    before = _load_meta(ag_app, meta_y)
+    sender = _load_meta(ag_app, meta_x)
+    forged_payload = create_package("Forged branch", [], allow_download=False)
+    forged = craft_bond_nonce_envelope(forged_payload, sender, b"\xa7" * 32)
+
+    rejected = client.post(
+        f"/session/{meta_y.session_id.hex()}/open?ajax=1",
+        base_url=ORIGIN,
+        data={"paracci_file": (io.BytesIO(forged), "message.paracci")},
+        headers=auth_headers(client, **{"X-Requested-With": "XMLHttpRequest"}),
+        content_type="multipart/form-data",
+    )
+
+    assert rejected.status_code == 400
+    assert rejected.get_json()["success"] is False
+    after = _load_meta(ag_app, meta_y)
+    assert after.rx_count == before.rx_count
+    assert bytes(after.recv_seed) == bytes(before.recv_seed)
 
 
 @oqs_required

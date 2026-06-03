@@ -421,6 +421,7 @@ def open_envelope(
 
     payload_blob, sync_blob = _split_body(body)
     sync_data, bond_nonce = _decrypt_sync_block(header_bytes, sync_blob, session)
+    _validate_bond_nonce_context(header, sync_data, bond_nonce, session)
     msg_key, next_seed = _derive_receive_keys(header, bond_nonce, session)
 
     if header.version in (LEGACY_FILE_VERSION, ARGON2_FILE_VERSION):
@@ -489,15 +490,42 @@ def _decrypt_sync_block(
     try:
         sync_data = _parse_sync_payload(sync_raw)
         bond_nonce = None
-        if "bond_nonce" in sync_data:
+        if isinstance(sync_data, dict) and "bond_nonce" in sync_data:
+            encoded_bond_nonce = sync_data["bond_nonce"]
+            if not isinstance(encoded_bond_nonce, str):
+                raise EnvelopeError("Sync block contains an invalid bond nonce.")
             try:
-                bond_nonce = bytes.fromhex(sync_data["bond_nonce"])
+                bond_nonce = bytes.fromhex(encoded_bond_nonce)
             except ValueError as exc:
                 raise EnvelopeError("Sync block contains an invalid bond nonce.") from exc
+            if len(bond_nonce) != 32:
+                raise EnvelopeError("Sync block contains an invalid bond nonce.")
         return sync_data, bond_nonce
     finally:
         from .crypto import wipe
         wipe(sync_raw)
+
+
+def _validate_bond_nonce_context(
+    header: EnvelopeHeader,
+    sync_data: dict,
+    bond_nonce: Optional[bytes],
+    session: SessionMeta,
+) -> None:
+    if bond_nonce is None:
+        return
+
+    # bond_nonce is protocol-valid only on X's first message to an unbonded Y.
+    if (
+        session.role != "Y"
+        or header.direction != DIR_X_TO_Y
+        or header.evo_step != 0
+        or sync_data.get("sender") != "X"
+        or sync_data.get("step") != 0
+        or session.recv_seed is not None
+        or session.is_bonded
+    ):
+        raise EnvelopeError("Sync block contains an invalid bond nonce.")
 
 
 def _derive_receive_keys(

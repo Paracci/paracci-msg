@@ -17,6 +17,7 @@ import core.burn as burn_module
 from core import envelope as envelope_module
 from core.burn import BurnDB
 from core.package import create_package
+from envelope_helpers import craft_bond_nonce_envelope
 
 
 def make_services(path: Path) -> NativeServices:
@@ -81,6 +82,30 @@ def test_native_services_full_message_roundtrip(tmp_path):
     assert opened.allow_download is False
     assert opened.secure_delete_failed is False
     assert filename.startswith("msg_step_000000_")
+
+
+@oqs_required
+def test_native_open_rejects_post_bond_bond_nonce_without_persisting(tmp_path):
+    x, y, x_session_id, y_session_id = make_active_services_pair(tmp_path)
+    initial_msg, _ = x.messages.seal_message(
+        x_session_id,
+        "Initial bond",
+        [],
+        False,
+        0,
+    )
+    y.messages.open_message(y_session_id, initial_msg)
+    before = y.sessions.load(y_session_id)
+    sender = x.sessions.load(x_session_id)
+    forged_payload = create_package("Forged branch", [], allow_download=False)
+    forged = craft_bond_nonce_envelope(forged_payload, sender, b"\xa6" * 32)
+
+    with pytest.raises(service_module.MessageServiceError, match="invalid bond nonce"):
+        y.messages.open_message(y_session_id, forged)
+
+    after = y.sessions.load(y_session_id)
+    assert after.rx_count == before.rx_count
+    assert bytes(after.recv_seed) == bytes(before.recv_seed)
 
 
 @oqs_required

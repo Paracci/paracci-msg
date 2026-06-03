@@ -14,6 +14,7 @@ from conftest import oqs_required
 # Ensure core is in the python path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from envelope_helpers import craft_bond_nonce_envelope
 from core.crypto import (
     generate_identity_keypair,
     pack_uint32,
@@ -113,6 +114,89 @@ def _establish_bonded_pair():
         recv_seed=opened_x.next_seed
     )
     return meta_x, meta_y
+
+
+@oqs_required
+def test_initial_x_step_zero_bond_nonce_opens_and_bonds_y():
+    meta_x, meta_y = _make_sessions()
+    sealed = seal_envelope("Initial bond", meta_x)
+
+    opened = open_envelope(sealed.file_bytes, meta_y)
+    bonded_y = apply_bond_nonce_to_y(meta_y, opened.bond_nonce)._replace(
+        rx_count=opened.next_step,
+        recv_seed=opened.next_seed,
+    )
+
+    assert opened.text == "Initial bond"
+    assert opened.evo_step == 0
+    assert opened.bond_nonce == meta_x.bond_nonce
+    assert bonded_y.is_bonded is True
+
+
+@oqs_required
+def test_stock_post_bond_message_has_no_bond_nonce_and_opens_normally():
+    meta_x, meta_y = _establish_bonded_pair()
+
+    sealed = seal_envelope("Stock post-bond message", meta_x, single_use=False)
+    opened = open_envelope(sealed.file_bytes, meta_y)
+
+    assert opened.text == "Stock post-bond message"
+    assert opened.evo_step == 1
+    assert opened.bond_nonce is None
+    assert "bond_nonce" not in opened.sync_data
+
+
+@oqs_required
+def test_post_bond_bond_nonce_rejected_before_receive_derivation(monkeypatch):
+    meta_x, meta_y = _establish_bonded_pair()
+    original_rx_count = meta_y.rx_count
+    original_recv_seed = bytes(meta_y.recv_seed)
+    forged = craft_bond_nonce_envelope(
+        "Forged branch",
+        meta_x,
+        b"\xa5" * 32,
+    )
+
+    def fail_derive(*_args, **_kwargs):
+        pytest.fail("post-bond bond_nonce reached receive-key derivation")
+
+    monkeypatch.setattr(envelope_module, "_derive_receive_keys", fail_derive)
+
+    with pytest.raises(EnvelopeError, match="invalid bond nonce"):
+        open_envelope(forged, meta_y)
+
+    assert meta_y.rx_count == original_rx_count
+    assert bytes(meta_y.recv_seed) == original_recv_seed
+
+
+@oqs_required
+def test_bond_nonce_must_be_exactly_32_bytes():
+    meta_x, meta_y = _make_sessions()
+    forged = craft_bond_nonce_envelope("Short nonce", meta_x, b"\x01" * 16)
+
+    with pytest.raises(EnvelopeError, match="invalid bond nonce"):
+        open_envelope(forged, meta_y)
+
+
+@oqs_required
+def test_tampered_sync_ciphertext_still_fails_at_sync_aead():
+    meta_x, meta_y = _make_sessions()
+    sealed = seal_envelope("Initial bond", meta_x)
+    raw = bytearray(sealed.file_bytes)
+    payload_ct_len = envelope_module.unpack_uint32(
+        raw[HEADER_SIZE : HEADER_SIZE + 4]
+    )
+    sync_ct_offset = (
+        HEADER_SIZE
+        + 4
+        + envelope_module.NONCE_LEN
+        + payload_ct_len
+        + envelope_module.NONCE_LEN
+    )
+    raw[sync_ct_offset] ^= 0x01
+
+    with pytest.raises(EnvelopeError, match="Sync block decryption failed"):
+        open_envelope(bytes(raw), meta_y)
 
 
 def _enable_legacy_read_compatibility(meta_x, meta_y):
@@ -378,7 +462,7 @@ def test_new_bond_large_ratchet_jump_rejected():
     
     header = header._replace(evo_step=150)
     
-    bond_nonce = os.urandom(16)
+    bond_nonce = os.urandom(32)
     with pytest.raises(EnvelopeError, match="jump too large"):
         envelope_module._derive_receive_keys(header, bond_nonce, meta_y)
 
