@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -26,7 +27,32 @@ EXPECTED_LEDGER_COMMITS = [
     "4b6e213f781eb7e911466bbea12f27f1c7bb98ac",
 ]
 
+REQUIRED_AGENT_PHRASES = [
+    "Identify the affected trust boundary before coding.",
+    "## Before Editing",
+    "## Before Committing",
+    "Analysis, audit, review, and reporting tasks must not create commits",
+    "Implementation and fix tasks must run focused validation and create one local commit",
+    "Never run `git push` from this repository.",
+    "Verify no raw audit reports, scratch artifacts, private scan outputs",
+]
+
 REQUIRED_ENGINEERING_PHRASES = [
+    "## Security Review Checklist For Code Changes",
+    "## When To Stop And Ask For A Plan Review",
+    "## Offline Setup And Responder Files",
+    "## `.paracci` Message Envelopes",
+    "## Key Evolution And Ratchet State",
+    "## BurnDB Single-Open Registry",
+    "## Flask Loopback Server",
+    "## Service Worker, Bootstrap, And Bearer Token Flow",
+    "## pywebview Bridge",
+    "## Preview And Content Routes",
+    "## Native Filesystem Save, Open, Import, And Reveal Flows",
+    "## UIApi And JSON-RPC Boundary",
+    "## Release And Updater Trust",
+    "## Dependency And Native-Library Supply Chain",
+    "## Platform Device Key Binding",
     "The updater signing private key must remain offline.",
     "Release manifests must be recomputed from the actual assets",
     "2FA-enabled profiles must never become active from passphrase-only native unlock.",
@@ -54,8 +80,15 @@ FORBIDDEN_PRIVATE_REFERENCES = [
     "exploit transcript",
     "rollout-",
     "rollout_path",
+    "validation_script.py",
+    "validate_finding.py",
     "<local-user-path>",
     "<local-user-path>",
+]
+
+FORBIDDEN_PRIVATE_PATTERNS = [
+    re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----"),
+    re.compile(r"(?im)^\s*(?:secret|token|passphrase|password|api[_-]?key)\s*[:=]\s*['\"][^'\"]+['\"]"),
 ]
 
 
@@ -68,6 +101,13 @@ def test_security_guardrail_docs_exist():
         assert path.is_file(), f"{path.relative_to(REPO_ROOT)} is missing"
 
 
+def test_agents_doc_records_required_agent_workflow():
+    doc = _read(REPO_ROOT / "AGENTS.md")
+
+    for phrase in REQUIRED_AGENT_PHRASES:
+        assert phrase in doc
+
+
 def test_security_engineering_doc_records_required_invariants():
     doc = _read(REPO_ROOT / "paracci" / "docs" / "SECURITY_ENGINEERING.md")
 
@@ -78,10 +118,15 @@ def test_security_engineering_doc_records_required_invariants():
 def test_security_regression_ledger_records_all_remediation_commits():
     ledger = _read(REPO_ROOT / "paracci" / "docs" / "SECURITY_REGRESSION_LEDGER.md")
 
-    assert "| ID / Title | Status | Related commit | Component | Security invariant | Regression-test expectation | Note |" in ledger
+    assert "| ID / Title | Status | Related commit | Component | Change triggers | Security invariant | Regression-test expectation | Note |" in ledger
     for commit in EXPECTED_LEDGER_COMMITS:
         assert commit in ledger
     assert ledger.count("Do not include raw exploit details here.") >= len(EXPECTED_LEDGER_COMMITS)
+
+
+def test_private_reference_filter_allows_normal_security_terms():
+    for allowed in ("audit", "security review", "passphrase", "private key", "proof"):
+        assert allowed not in FORBIDDEN_PRIVATE_REFERENCES
 
 
 def test_repo_safe_security_docs_do_not_name_private_artifacts():
@@ -89,3 +134,5 @@ def test_repo_safe_security_docs_do_not_name_private_artifacts():
 
     for forbidden in FORBIDDEN_PRIVATE_REFERENCES:
         assert forbidden not in combined
+    for pattern in FORBIDDEN_PRIVATE_PATTERNS:
+        assert not pattern.search(combined), pattern.pattern
