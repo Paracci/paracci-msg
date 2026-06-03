@@ -34,6 +34,7 @@ from .keychain_mac import KeychainError, delete_from_keychain, unwrap_with_keych
 from .secret_service_linux import (
     SecretServiceError,
     delete_from_secret_service,
+    is_secret_service_available,
     unwrap_with_secret_service,
     wrap_with_secret_service,
 )
@@ -52,6 +53,7 @@ PLATFORM_BINDING_KIND_META_KEY = "platform_binding_kind_v1"
 PLATFORM_BOUND_DEVICE_KEY_AAD = b"paracci.device_key.platform_binding.v1"
 MACOS_KEYCHAIN_KIND = b"macos_keychain"
 LINUX_SECRET_SERVICE_KIND = b"linux_secret_service"
+LINUX_SECRET_SERVICE_FALLBACK_ALLOWED_META_KEY = "linux_secret_service_fallback_allowed_v1"
 
 DEVICE_KEY_NONCE_LEN = 12
 KEY_LEN = 32
@@ -81,14 +83,20 @@ KEYCHAIN_FAILED_MESSAGE = (
 )
 
 SECRET_SERVICE_UNAVAILABLE_CODE = "secret_service_unavailable"
+SECRET_SERVICE_FALLBACK_REQUIRED_CODE = "secret_service_fallback_required"
 SECRET_SERVICE_MISSING_CODE = "secret_service_missing"
 SECRET_SERVICE_FAILED_CODE = "secret_service_failed"
 SECRET_SERVICE_UNAVAILABLE_I18N = "auth.secret_service_unavailable"
+SECRET_SERVICE_FALLBACK_REQUIRED_I18N = "auth.secret_service_fallback_required"
 SECRET_SERVICE_MISSING_I18N = "auth.secret_service_missing"
 SECRET_SERVICE_FAILED_I18N = "auth.secret_service_failed"
 SECRET_SERVICE_UNAVAILABLE_MESSAGE = (
     "No keyring daemon is running. Install and unlock GNOME Keyring or KWallet "
     "to enable device binding. Falling back to passphrase-only mode."
+)
+SECRET_SERVICE_FALLBACK_REQUIRED_MESSAGE = (
+    "Linux system keyring is unavailable. Confirm passphrase-only mode to continue "
+    "without platform binding."
 )
 SECRET_SERVICE_MISSING_MESSAGE = (
     "This profile's device binding could not be found in the system keyring."
@@ -121,7 +129,12 @@ def consume_device_binding_warning() -> DeviceBindingWarning | None:
     return warning
 
 
-def initialize_device_with_binding(db: BurnDB, passphrase: str) -> bytearray:
+def initialize_device_with_binding(
+    db: BurnDB,
+    passphrase: str,
+    *,
+    allow_linux_passphrase_fallback: bool = False,
+) -> bytearray:
     """Initialize the profile, adding platform binding when available."""
     _clear_device_binding_warning()
     if sys.platform == "win32":
@@ -135,11 +148,20 @@ def initialize_device_with_binding(db: BurnDB, passphrase: str) -> bytearray:
             _keychain_failed_error,
         )
     if sys.platform.startswith("linux"):
-        return _initialize_linux_bound_or_fallback(db, passphrase)
+        return _initialize_linux_bound_or_fallback(
+            db,
+            passphrase,
+            allow_linux_passphrase_fallback=allow_linux_passphrase_fallback,
+        )
     return legacy_init_device(db, passphrase)
 
 
-def unlock_device_with_binding(db: BurnDB, passphrase: str) -> bytearray:
+def unlock_device_with_binding(
+    db: BurnDB,
+    passphrase: str,
+    *,
+    allow_linux_passphrase_fallback: bool = False,
+) -> bytearray:
     """Unlock the profile, requiring platform binding when available."""
     _clear_device_binding_warning()
     if sys.platform == "win32":
@@ -150,7 +172,11 @@ def unlock_device_with_binding(db: BurnDB, passphrase: str) -> bytearray:
     if sys.platform == "darwin":
         return _unlock_macos_bound_device(db, passphrase)
     if sys.platform.startswith("linux"):
-        return _unlock_linux_bound_or_fallback(db, passphrase)
+        return _unlock_linux_bound_or_fallback(
+            db,
+            passphrase,
+            allow_linux_passphrase_fallback=allow_linux_passphrase_fallback,
+        )
     return legacy_unlock_device(db, passphrase)
 
 
@@ -176,6 +202,66 @@ def delete_device_binding_for_profile(db: BurnDB) -> None:
 
     db.delete_device_meta(PLATFORM_BINDING_PROFILE_ID_META_KEY)
     db.delete_device_meta(PLATFORM_BINDING_KIND_META_KEY)
+
+
+def device_binding_status(db: BurnDB) -> dict[str, object]:
+    """Return JSON-safe platform binding state without exposing secrets."""
+    if sys.platform == "win32":
+        platform_bound = bool(db.get_device_meta(DPAPI_BLOB_META_KEY))
+        return _binding_status_dict(
+            platform="windows_dpapi",
+            state="platform_bound" if platform_bound else "platform_binding_available",
+            platform_bound=platform_bound,
+            platform_binding_available=True,
+            passphrase_only_fallback_active=False,
+            fallback_allowed=False,
+        )
+
+    if sys.platform == "darwin":
+        kind = _read_binding_kind(db)
+        platform_bound = kind == MACOS_KEYCHAIN_KIND and bool(_read_profile_id(db))
+        return _binding_status_dict(
+            platform="macos_keychain",
+            state="platform_bound" if platform_bound else "platform_binding_available",
+            platform_bound=platform_bound,
+            platform_binding_available=True,
+            passphrase_only_fallback_active=False,
+            fallback_allowed=False,
+        )
+
+    if sys.platform.startswith("linux"):
+        kind = _read_binding_kind(db)
+        platform_bound = kind == LINUX_SECRET_SERVICE_KIND and bool(_read_profile_id(db))
+        fallback_allowed = _linux_passphrase_fallback_allowed(db)
+        fallback_active = fallback_allowed and not platform_bound
+        available = is_secret_service_available()
+        if platform_bound:
+            state = "platform_bound"
+        elif fallback_active:
+            state = "passphrase_only_fallback"
+        elif available:
+            state = "platform_binding_available"
+        else:
+            state = "platform_binding_unavailable"
+        warning_code = SECRET_SERVICE_UNAVAILABLE_CODE if fallback_active or not available else None
+        return _binding_status_dict(
+            platform="linux_secret_service",
+            state=state,
+            platform_bound=platform_bound,
+            platform_binding_available=available,
+            passphrase_only_fallback_active=fallback_active,
+            fallback_allowed=fallback_allowed,
+            warning_code=warning_code,
+        )
+
+    return _binding_status_dict(
+        platform="unsupported",
+        state="passphrase_only",
+        platform_bound=False,
+        platform_binding_available=False,
+        passphrase_only_fallback_active=False,
+        fallback_allowed=False,
+    )
 
 
 def _initialize_windows_device_with_binding(db: BurnDB, passphrase: str) -> bytearray:
@@ -295,21 +381,34 @@ def _unlock_legacy_and_bind(db: BurnDB, passphrase: str) -> bytearray:
     return device_key
 
 
-def _initialize_linux_bound_or_fallback(db: BurnDB, passphrase: str) -> bytearray:
+def _initialize_linux_bound_or_fallback(
+    db: BurnDB,
+    passphrase: str,
+    *,
+    allow_linux_passphrase_fallback: bool,
+) -> bytearray:
+    if not is_secret_service_available() and not allow_linux_passphrase_fallback:
+        raise _secret_service_fallback_required_error()
     try:
-        return _initialize_platform_bound_device(
+        device_key = _initialize_platform_bound_device(
             db,
             passphrase,
             LINUX_SECRET_SERVICE_KIND,
             _store_secret_service_factor,
             _secret_service_failed_error,
         )
+        _clear_linux_passphrase_fallback(db)
+        return device_key
     except DeviceBindingError as exc:
         if exc.code != SECRET_SERVICE_UNAVAILABLE_CODE:
             raise
+        if not allow_linux_passphrase_fallback:
+            raise _secret_service_fallback_required_error() from exc
         logger.warning("Linux Secret Service unavailable during initialization; using passphrase-only mode.")
         _set_device_binding_warning(_secret_service_unavailable_warning())
-        return legacy_init_device(db, passphrase)
+        device_key = legacy_init_device(db, passphrase)
+        _set_linux_passphrase_fallback_allowed(db)
+        return device_key
 
 
 def _unlock_macos_bound_device(db: BurnDB, passphrase: str) -> bytearray:
@@ -336,13 +435,27 @@ def _unlock_macos_bound_device(db: BurnDB, passphrase: str) -> bytearray:
     )
 
 
-def _unlock_linux_bound_or_fallback(db: BurnDB, passphrase: str) -> bytearray:
+def _unlock_linux_bound_or_fallback(
+    db: BurnDB,
+    passphrase: str,
+    *,
+    allow_linux_passphrase_fallback: bool,
+) -> bytearray:
     profile_id = _read_profile_id(db)
     kind = _read_binding_kind(db)
     if not profile_id and not kind:
+        fallback_allowed = _linux_passphrase_fallback_allowed(db)
+        if not is_secret_service_available():
+            if not (fallback_allowed or allow_linux_passphrase_fallback):
+                raise _secret_service_fallback_required_error()
+            device_key = legacy_unlock_device(db, passphrase)
+            _set_linux_passphrase_fallback_allowed(db)
+            logger.warning("Linux Secret Service unavailable during unlock migration; using passphrase-only mode.")
+            _set_device_binding_warning(_secret_service_unavailable_warning())
+            return device_key
         device_key = legacy_unlock_device(db, passphrase)
         try:
-            return _bind_legacy_device_with_platform_factor(
+            bound_key = _bind_legacy_device_with_platform_factor(
                 db,
                 passphrase,
                 device_key,
@@ -350,11 +463,16 @@ def _unlock_linux_bound_or_fallback(db: BurnDB, passphrase: str) -> bytearray:
                 _store_secret_service_factor,
                 _secret_service_failed_error,
             )
+            _clear_linux_passphrase_fallback(db)
+            return bound_key
         except DeviceBindingError as exc:
             if exc.code != SECRET_SERVICE_UNAVAILABLE_CODE:
                 raise
+            if not (fallback_allowed or allow_linux_passphrase_fallback):
+                raise _secret_service_fallback_required_error() from exc
             logger.warning("Linux Secret Service unavailable during unlock migration; using passphrase-only mode.")
             _set_device_binding_warning(_secret_service_unavailable_warning())
+            _set_linux_passphrase_fallback_allowed(db)
             return device_key
     if kind != LINUX_SECRET_SERVICE_KIND or not profile_id:
         raise _secret_service_missing_error()
@@ -576,7 +694,7 @@ def _best_effort_delete_platform_factor(kind: bytes, profile_id: str) -> None:
         elif kind == LINUX_SECRET_SERVICE_KIND:
             delete_from_secret_service(profile_id)
     except Exception:
-        logger.warning("Failed to clean up orphaned platform binding factor.", exc_info=True)
+        logger.warning("Failed to clean up orphaned platform binding factor.")
 
 
 def _decrypt_stored_device_key(
@@ -636,6 +754,40 @@ def _read_profile_id(db: BurnDB) -> str | None:
 
 def _read_binding_kind(db: BurnDB) -> bytes | None:
     return db.get_device_meta(PLATFORM_BINDING_KIND_META_KEY)
+
+
+def _linux_passphrase_fallback_allowed(db: BurnDB) -> bool:
+    return db.get_device_meta(LINUX_SECRET_SERVICE_FALLBACK_ALLOWED_META_KEY) == b"1"
+
+
+def _set_linux_passphrase_fallback_allowed(db: BurnDB) -> None:
+    db.set_device_meta(LINUX_SECRET_SERVICE_FALLBACK_ALLOWED_META_KEY, b"1")
+
+
+def _clear_linux_passphrase_fallback(db: BurnDB) -> None:
+    if db.get_device_meta(LINUX_SECRET_SERVICE_FALLBACK_ALLOWED_META_KEY) is not None:
+        db.delete_device_meta(LINUX_SECRET_SERVICE_FALLBACK_ALLOWED_META_KEY)
+
+
+def _binding_status_dict(
+    *,
+    platform: str,
+    state: str,
+    platform_bound: bool,
+    platform_binding_available: bool,
+    passphrase_only_fallback_active: bool,
+    fallback_allowed: bool,
+    warning_code: str | None = None,
+) -> dict[str, object]:
+    return {
+        "platform": platform,
+        "state": state,
+        "platform_bound": platform_bound,
+        "platform_binding_available": platform_binding_available,
+        "passphrase_only_fallback_active": passphrase_only_fallback_active,
+        "fallback_allowed": fallback_allowed,
+        "warning_code": warning_code,
+    }
 
 
 def _encode_dpapi_blob(raw_blob: bytes) -> bytes:
@@ -702,6 +854,14 @@ def _secret_service_unavailable_error() -> DeviceBindingError:
         SECRET_SERVICE_UNAVAILABLE_CODE,
         SECRET_SERVICE_UNAVAILABLE_I18N,
         SECRET_SERVICE_UNAVAILABLE_MESSAGE,
+    )
+
+
+def _secret_service_fallback_required_error() -> DeviceBindingError:
+    return DeviceBindingError(
+        SECRET_SERVICE_FALLBACK_REQUIRED_CODE,
+        SECRET_SERVICE_FALLBACK_REQUIRED_I18N,
+        SECRET_SERVICE_FALLBACK_REQUIRED_MESSAGE,
     )
 
 

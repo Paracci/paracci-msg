@@ -792,7 +792,7 @@ def test_unlock_route_renders_dpapi_binding_error(tmp_path, monkeypatch):
 
     init_device(ag_app.db, "Correct-Horse-95175328")
 
-    def fail_unlock(_db, _pin):
+    def fail_unlock(_db, _pin, **_kwargs):
         raise DeviceBindingError(
             DPAPI_DIFFERENT_ACCOUNT_CODE,
             DPAPI_DIFFERENT_ACCOUNT_I18N,
@@ -810,6 +810,59 @@ def test_unlock_route_renders_dpapi_binding_error(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     assert DPAPI_DIFFERENT_ACCOUNT_MESSAGE.encode("utf-8") in response.data
+
+
+def test_unlock_route_linux_fallback_requires_explicit_consent(tmp_path, monkeypatch):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    client = flask_app.test_client()
+    bootstrap(client)
+
+    from desktop import device_key_binding as binding
+    from desktop.device_key_binding import (
+        LINUX_SECRET_SERVICE_FALLBACK_ALLOWED_META_KEY,
+        SECRET_SERVICE_FALLBACK_REQUIRED_MESSAGE,
+    )
+    from desktop.secret_service_linux import SecretServiceError
+
+    monkeypatch.setattr(binding.sys, "platform", "linux")
+    monkeypatch.setattr(binding, "is_secret_service_available", lambda: False)
+    monkeypatch.setattr(
+        binding,
+        "wrap_with_secret_service",
+        lambda *_args: (_ for _ in ()).throw(
+            SecretServiceError("wrap", "no daemon", code="unavailable")
+        ),
+    )
+
+    rendered = client.get("/unlock", base_url=ORIGIN, headers={"Host": HOST})
+
+    assert rendered.status_code == 200
+    assert b'name="allow_linux_passphrase_fallback"' in rendered.data
+
+    blocked = client.post(
+        "/unlock",
+        base_url=ORIGIN,
+        data={"pin": "Correct-Horse-95175328"},
+        headers=auth_headers(client),
+    )
+
+    assert blocked.status_code == 200
+    assert SECRET_SERVICE_FALLBACK_REQUIRED_MESSAGE.encode("utf-8") in blocked.data
+    assert ag_app.db.get_device_meta(LINUX_SECRET_SERVICE_FALLBACK_ALLOWED_META_KEY) is None
+
+    allowed = client.post(
+        "/unlock",
+        base_url=ORIGIN,
+        data={
+            "pin": "Correct-Horse-95175328",
+            "allow_linux_passphrase_fallback": "1",
+        },
+        headers=auth_headers(client),
+    )
+
+    assert allowed.status_code == 302
+    assert allowed.headers["Location"].endswith("/unlock/2fa/setup")
+    assert ag_app.db.get_device_meta(LINUX_SECRET_SERVICE_FALLBACK_ALLOWED_META_KEY) == b"1"
 
 
 def _unlock_test_client(ag_app, client):
@@ -1033,7 +1086,7 @@ def test_file_activation_queues_native_message_after_unlock(tmp_path, monkeypatc
     assert locked.status_code == 302
     assert locked.headers["Location"].endswith("/unlock")
 
-    monkeypatch.setattr(routes_module, "unlock_device_with_binding", lambda _db, _pin: unlocked_key)
+    monkeypatch.setattr(routes_module, "unlock_device_with_binding", lambda _db, _pin, **_kwargs: unlocked_key)
     unlocked = client.post(
         "/unlock",
         base_url=ORIGIN,
@@ -1079,7 +1132,7 @@ def test_file_activation_queues_native_message_after_2fa_unlock(tmp_path, monkey
         base_url=ORIGIN,
         headers={"Host": HOST, "X-Paracci-Token": TOKEN},
     ).status_code == 302
-    monkeypatch.setattr(routes_module, "unlock_device_with_binding", lambda _db, _pin: unlocked_key)
+    monkeypatch.setattr(routes_module, "unlock_device_with_binding", lambda _db, _pin, **_kwargs: unlocked_key)
     first_step = client.post(
         "/unlock",
         base_url=ORIGIN,
@@ -1118,7 +1171,7 @@ def test_file_activation_unknown_session_notice_survives_unlock_without_identifi
     assert locked.status_code == 302
     assert locked.headers["Location"].endswith("/unlock")
 
-    monkeypatch.setattr(routes_module, "unlock_device_with_binding", lambda _db, _pin: unlocked_key)
+    monkeypatch.setattr(routes_module, "unlock_device_with_binding", lambda _db, _pin, **_kwargs: unlocked_key)
     response = client.post(
         "/unlock",
         base_url=ORIGIN,

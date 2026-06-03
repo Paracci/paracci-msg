@@ -68,6 +68,7 @@ from core.burn import (
 from desktop.device_key_binding import (
     DeviceBindingError,
     consume_device_binding_warning,
+    device_binding_status,
     initialize_device_with_binding,
     unlock_device_with_binding,
 )
@@ -100,6 +101,16 @@ def _flash_device_binding_warning():
     if warning is not None:
         flash(_(warning.i18n_key), "warning")
 _ = i18n.translate
+
+
+def _render_unlock_template(mode: str, initialized: bool, lockout_seconds: int = 0):
+    return render_template(
+        "unlock.html",
+        mode=mode,
+        is_initialized=initialized,
+        lockout_seconds=lockout_seconds,
+        device_binding=device_binding_status(ag_app.db),
+    )
 
 
 def _hybrid_error_message(exc: HybridKEMError) -> str:
@@ -1335,12 +1346,22 @@ def unlock():
         pin = request.form.get("pin")
         if not pin:
             flash(_('auth.pin_required'), "error")
-            return render_template("unlock.html", mode=mode, is_initialized=initialized, lockout_seconds=lockout_seconds)
+            return _render_unlock_template(mode, initialized, lockout_seconds)
+        allow_linux_passphrase_fallback = request.form.get("allow_linux_passphrase_fallback") in {
+            "1",
+            "true",
+            "on",
+            "yes",
+        }
 
         try:
             if mode == "init":
                 # Redirect to 2FA setup after the passphrase is set during initial setup
-                device_key = initialize_device_with_binding(ag_app.db, pin)
+                device_key = initialize_device_with_binding(
+                    ag_app.db,
+                    pin,
+                    allow_linux_passphrase_fallback=allow_linux_passphrase_fallback,
+                )
                 try:
                     keyed_db = ag_app.db.with_device_key(device_key)
                 except Exception:
@@ -1355,7 +1376,11 @@ def unlock():
                 return redirect(url_for("main.unlock_2fa_setup"))
             else:
                 # Normal unlock: check 2FA if the passphrase is correct
-                device_key = unlock_device_with_binding(ag_app.db, pin)
+                device_key = unlock_device_with_binding(
+                    ag_app.db,
+                    pin,
+                    allow_linux_passphrase_fallback=allow_linux_passphrase_fallback,
+                )
                 _flash_device_binding_warning()
                 try:
                     keyed_db = ag_app.db.with_device_key(device_key)
@@ -1392,20 +1417,20 @@ def unlock():
                 ag_app.active_client_id = session.get("paracci_client_id")
                 flash(_('auth.unlock_success'), "success")
                 return redirect(_post_unlock_target())
-                
+
         except DeviceLockedError as e:
             flash(str(e), "error")
-            return render_template("unlock.html", mode=mode, is_initialized=initialized, lockout_seconds=e.retry_after_seconds)
+            return _render_unlock_template(mode, initialized, e.retry_after_seconds)
         except DeviceBindingError as e:
             flash(_(e.i18n_key), "error")
             lockout_seconds = ag_app.db.get_unlock_rate_limit().get("retry_after_seconds", 0) if initialized else 0
-            return render_template("unlock.html", mode=mode, is_initialized=initialized, lockout_seconds=lockout_seconds)
+            return _render_unlock_template(mode, initialized, lockout_seconds)
         except DeviceError as e:
             flash(str(e), "error")
             lockout_seconds = ag_app.db.get_unlock_rate_limit().get("retry_after_seconds", 0) if initialized else 0
-            return render_template("unlock.html", mode=mode, is_initialized=initialized, lockout_seconds=lockout_seconds)
+            return _render_unlock_template(mode, initialized, lockout_seconds)
 
-    return render_template("unlock.html", mode=mode, is_initialized=initialized, lockout_seconds=lockout_seconds)
+    return _render_unlock_template(mode, initialized, lockout_seconds)
 
 @bp.route("/unlock/2fa/setup", methods=["GET", "POST"])
 def unlock_2fa_setup():

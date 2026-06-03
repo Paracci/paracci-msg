@@ -79,6 +79,7 @@ from core.hybrid_kem import HybridKEMError
 from desktop.device_key_binding import (
     DeviceBindingWarning,
     consume_device_binding_warning,
+    device_binding_status,
     initialize_device_with_binding,
     unlock_device_with_binding,
 )
@@ -433,10 +434,19 @@ class DeviceService:
     def is_initialized(self) -> bool:
         return is_device_initialized(self.db)
 
-    def initialize(self, passphrase: str) -> bytearray:
+    def initialize(
+        self,
+        passphrase: str,
+        *,
+        allow_linux_passphrase_fallback: bool = False,
+    ) -> bytearray:
         self._discard_pending_unlock()
         self.device_binding_warning = None
-        device_key = initialize_device_with_binding(self.db, passphrase)
+        device_key = initialize_device_with_binding(
+            self.db,
+            passphrase,
+            allow_linux_passphrase_fallback=allow_linux_passphrase_fallback,
+        )
         try:
             self._activate_keyed_db(device_key)
         except Exception:
@@ -446,11 +456,20 @@ class DeviceService:
         self.device_binding_warning = consume_device_binding_warning()
         return self.device_key
 
-    def unlock(self, passphrase: str) -> bytearray | None:
+    def unlock(
+        self,
+        passphrase: str,
+        *,
+        allow_linux_passphrase_fallback: bool = False,
+    ) -> bytearray | None:
         self._discard_pending_unlock()
         self.device_binding_warning = None
         was_unlocked = self.is_unlocked
-        device_key = unlock_device_with_binding(self.db, passphrase)
+        device_key = unlock_device_with_binding(
+            self.db,
+            passphrase,
+            allow_linux_passphrase_fallback=allow_linux_passphrase_fallback,
+        )
         keyed_db = None
         try:
             keyed_db = self.db.with_device_key(device_key)
@@ -473,6 +492,9 @@ class DeviceService:
         self.device_binding_warning = consume_device_binding_warning()
         self._verify_stored_sessions_decryptable()
         return self.device_key
+
+    def binding_status(self) -> dict[str, object]:
+        return device_binding_status(self.db)
 
     def lock(self) -> None:
         self._discard_pending_unlock()

@@ -166,16 +166,31 @@ class UIApi:
             "data_dir": str(self.services.data_dir),
             "platform": self.services.shield.get_os_name(),
             "shield": self._shield_status(),
+            "device_binding": self.services.device.binding_status(),
         }
 
-    def cmd_device_init(self, pin: str) -> dict[str, Any]:
-        self.services.device.initialize(pin)
+    def cmd_device_init(
+        self,
+        pin: str,
+        allow_linux_passphrase_fallback: bool = False,
+    ) -> dict[str, Any]:
+        self.services.device.initialize(
+            pin,
+            allow_linux_passphrase_fallback=bool(allow_linux_passphrase_fallback),
+        )
         result = self.cmd_device_status()
         self._attach_device_binding_warning(result)
         return result
 
-    def cmd_device_unlock(self, pin: str) -> dict[str, Any]:
-        self.services.device.unlock(pin)
+    def cmd_device_unlock(
+        self,
+        pin: str,
+        allow_linux_passphrase_fallback: bool = False,
+    ) -> dict[str, Any]:
+        self.services.device.unlock(
+            pin,
+            allow_linux_passphrase_fallback=bool(allow_linux_passphrase_fallback),
+        )
         result = self.cmd_device_status()
         self._attach_device_binding_warning(result)
         return result

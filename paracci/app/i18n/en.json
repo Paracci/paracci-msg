@@ -79,6 +79,8 @@
     "keychain_missing": "This profile's device binding could not be found in the macOS Keychain. The profile may have been created on a different Mac.",
     "keychain_failed": "Keychain access failed. Ensure Paracci is allowed in System Settings → Privacy & Security.",
     "secret_service_unavailable": "No keyring daemon is running. Install and unlock GNOME Keyring or KWallet to enable device binding. Falling back to passphrase-only mode.",
+    "secret_service_fallback_required": "Linux system keyring is unavailable. Confirm passphrase-only mode to continue without platform binding.",
+    "secret_service_fallback_consent": "I understand Linux platform binding is unavailable and want to continue in passphrase-only mode.",
     "secret_service_missing": "This profile's device binding could not be found in the system keyring.",
     "secret_service_failed": "System keyring access failed. Unlock the keyring and try again."
   },

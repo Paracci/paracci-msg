@@ -79,6 +79,8 @@
     "keychain_missing": "Bu profilin cihaz bağı macOS Anahtar Zinciri'nde (Keychain) bulunamadı. Profil farklı bir Mac üzerinde oluşturulmuş olabilir.",
     "keychain_failed": "Anahtar Zinciri'ne erişim başarısız oldu. Paracci'nin Sistem Ayarları → Gizlilik & Güvenlik altından izinli olduğundan emin olun.",
     "secret_service_unavailable": "Çalışan bir anahtarlık arka plan programı (keyring daemon) bulunamadı. Cihaz bağlamayı etkinleştirmek için GNOME Keyring veya KWallet kurun ve kilidini açın. Sadece parola moduna geri dönülüyor.",
+    "secret_service_fallback_required": "Linux sistem anahtarlığı kullanılamıyor. Cihaz bağlaması olmadan devam etmek için sadece parola modunu onaylayın.",
+    "secret_service_fallback_consent": "Linux platform bağlamasının kullanılamadığını anlıyorum ve sadece parola modunda devam etmek istiyorum.",
     "secret_service_missing": "Bu profilin cihaz bağı sistem anahtarlığında bulunamadı.",
     "secret_service_failed": "Sistem anahtarlığına erişim başarısız oldu. Anahtarlığın kilidini açıp tekrar deneyin."
   },

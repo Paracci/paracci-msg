@@ -79,6 +79,8 @@
     "keychain_missing": "La liaison de périphérique de ce profil est introuvable dans le trousseau d'accès macOS. Le profil a peut-être été créé sur un autre Mac.",
     "keychain_failed": "Échec de l'accès au trousseau d'accès. Assurez-vous que Paracci est autorisé dans Réglages Système → Confidentialité et sécurité.",
     "secret_service_unavailable": "Aucun démon de trousseau de clés n'est actif. Installez et déverrouillez GNOME Keyring ou KWallet pour activer la liaison de périphérique. Retour au mode phrase de passe uniquement.",
+    "secret_service_fallback_required": "Le trousseau système Linux n'est pas disponible. Confirmez le mode phrase de passe uniquement pour continuer sans liaison de plateforme.",
+    "secret_service_fallback_consent": "Je comprends que la liaison de plateforme Linux n'est pas disponible et je veux continuer en mode phrase de passe uniquement.",
     "secret_service_missing": "La liaison de périphérique de ce profil est introuvable dans le trousseau de clés système.",
     "secret_service_failed": "Échec de l'accès au trousseau de clés système. Déverrouillez le trousseau de clés et réessayez."
   },

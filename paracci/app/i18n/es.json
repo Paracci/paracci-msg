@@ -79,6 +79,8 @@
     "keychain_missing": "No se pudo encontrar la vinculación del dispositivo de este perfil en el Llavero de macOS. Es posible que el perfil se haya creado en un Mac diferente.",
     "keychain_failed": "Acceso al Llavero fallido. Asegúrese de que Paracci está permitido en Ajustes del Sistema → Privacidad y Seguridad.",
     "secret_service_unavailable": "No hay ningún demonio de llavero ejecutándose. Instale y desbloquee GNOME Keyring o KWallet para habilitar la vinculación del dispositivo. Alternando al modo de solo frase de acceso.",
+    "secret_service_fallback_required": "El llavero del sistema Linux no está disponible. Confirme el modo de solo frase de acceso para continuar sin vinculación de plataforma.",
+    "secret_service_fallback_consent": "Entiendo que la vinculación de plataforma de Linux no está disponible y quiero continuar en modo de solo frase de acceso.",
     "secret_service_missing": "No se pudo encontrar la vinculación de dispositivo de este perfil en el llavero del sistema.",
     "secret_service_failed": "Acceso al llavero del sistema fallido. Desbloquee el llavero e inténtelo de nuevo."
   },

@@ -18,7 +18,7 @@ To mitigate offline storage decryption attacks, Paracci binds its local database
 
 - **Windows DPAPI**: Binds the device key using the Windows Data Protection API (DPAPI). Keys are protected by Windows credentials tied to the active user account session. See [dpapi_win.py](paracci/desktop/dpapi_win.py).
 - **macOS Keychain**: Stores key factors in the macOS system Keychain via the Security.framework, restricting access to the logged-in macOS user. See [keychain_mac.py](paracci/desktop/keychain_mac.py).
-- **Linux Secret Service**: Integrates with the `org.freedesktop.secrets` D-Bus API to store key factors in the active keyring daemon (e.g., GNOME Keyring, KWallet). Falls back to passphrase-only security if no keyring is running. See [secret_service_linux.py](paracci/desktop/secret_service_linux.py).
+- **Linux Secret Service**: Integrates with the `org.freedesktop.secrets` D-Bus API to store key factors in the active keyring daemon (e.g., GNOME Keyring, KWallet). If no keyring is running, Paracci requires explicit consent before using passphrase-only fallback and reports that the profile is not platform-bound until Secret Service becomes available and the profile is rebound. See [secret_service_linux.py](paracci/desktop/secret_service_linux.py).
 
 Platform routing and fallbacks are coordinated by [device_key_binding.py](paracci/desktop/device_key_binding.py).
 

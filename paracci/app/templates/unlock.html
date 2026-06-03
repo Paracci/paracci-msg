@@ -95,6 +95,16 @@
             <span id="lockoutMessage">{{ _('unlock.lockout_message') }} <span id="lockoutCountdown">{{ lockout_seconds|default(0)|int }}</span>s</span>
           </div>
         {% endif %}
+
+        {% if device_binding and device_binding.platform == 'linux_secret_service' and not device_binding.platform_bound and not device_binding.platform_binding_available %}
+          <label class="alert alert-warning mt-4" for="allowLinuxPassphraseFallback">
+            <input type="checkbox"
+                   id="allowLinuxPassphraseFallback"
+                   name="allow_linux_passphrase_fallback"
+                   value="1">
+            <span>{{ _('auth.secret_service_fallback_consent') }}</span>
+          </label>
+        {% endif %}
       </div>
 
       <div class="form-actions-center mt-6 mb-4">

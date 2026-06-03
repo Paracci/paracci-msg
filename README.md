@@ -51,7 +51,7 @@ To protect the local database (`BurnDB`) against offline attacks and credential 
 
 - **Windows**: Binds the device key using the Windows Data Protection API (DPAPI) via native `ctypes` bindings in [dpapi_win.py](paracci/desktop/dpapi_win.py). DPAPI encrypts a platform-specific key factor using keys tied to the Windows user account's credentials. If the SQLite database is copied to a different Windows account or machine, it cannot be decrypted.
 - **macOS**: Stores the platform key factor in the macOS system Keychain via `Security.framework` bindings in [keychain_mac.py](paracci/desktop/keychain_mac.py), restricting access to the logged-in macOS user account.
-- **Linux**: Integrates with the `org.freedesktop.secrets` D-Bus API in [secret_service_linux.py](paracci/desktop/secret_service_linux.py) to store the key factor in the user's active keyring (e.g., GNOME Keyring or KWallet). If no keyring daemon is running, the application alerts the user and falls back to passphrase-only security.
+- **Linux**: Integrates with the `org.freedesktop.secrets` D-Bus API in [secret_service_linux.py](paracci/desktop/secret_service_linux.py) to store the key factor in the user's active keyring (e.g., GNOME Keyring or KWallet). If no keyring daemon is running, Paracci blocks silent downgrade and requires explicit consent before using passphrase-only fallback. Profiles in fallback mode are not platform-bound until Secret Service becomes available and the profile is rebound.
 
 Platform dispatching is handled dynamically by [device_key_binding.py](paracci/desktop/device_key_binding.py).
 

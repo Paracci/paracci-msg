@@ -69,6 +69,18 @@ def delete_from_secret_service(profile_id: str) -> None:
         raise SecretServiceError("delete", "Linux Secret Service delete failed.") from exc
 
 
+def is_secret_service_available() -> bool:
+    """Return whether Secret Service appears usable without creating items."""
+    try:
+        backend = _get_backend()
+        probe = getattr(backend, "probe", None)
+        if callable(probe):
+            return bool(probe())
+        return True
+    except Exception:
+        return False
+
+
 def _validate_profile_id(profile_id: str) -> None:
     if not isinstance(profile_id, str) or not profile_id:
         raise ValueError("profile_id must be a non-empty string")
@@ -173,6 +185,10 @@ class _DBusSecretServiceBackend:
                 raise
             except Exception as exc:
                 raise SecretServiceError("delete", "Linux Secret Service delete failed.") from exc
+
+    def probe(self) -> bool:
+        self._default_collection_path()
+        return True
 
     def _default_collection_path(self):
         try:

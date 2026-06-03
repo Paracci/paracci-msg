@@ -79,6 +79,8 @@
     "keychain_missing": "Die Gerätebindung dieses Profils konnte nicht im macOS-Schlüsselbund gefunden werden. Das Profil wurde möglicherweise auf einem anderen Mac erstellt.",
     "keychain_failed": "Zugriff auf den Schlüsselbund fehlgeschlagen. Stellen Sie sicher, dass Paracci in den Systemeinstellungen → Datenschutz & Sicherheit zugelassen ist.",
     "secret_service_unavailable": "Es läuft kein Keyring-Dienst. Installieren und entsperren Sie GNOME Keyring oder KWallet, um die Gerätebindung zu aktivieren. Rückfall auf reinen Passphrasen-Modus.",
+    "secret_service_fallback_required": "Der Linux-Systemschlüsselbund ist nicht verfügbar. Bestätigen Sie den reinen Passphrasen-Modus, um ohne Plattformbindung fortzufahren.",
+    "secret_service_fallback_consent": "Ich verstehe, dass die Linux-Plattformbindung nicht verfügbar ist, und möchte im reinen Passphrasen-Modus fortfahren.",
     "secret_service_missing": "Die Gerätebindung dieses Profils konnte nicht im System-Schlüsselbund gefunden werden.",
     "secret_service_failed": "Zugriff auf den System-Schlüsselbund fehlgeschlagen. Entsperren Sie den Schlüsselbund und versuchen Sie es erneut."
   },

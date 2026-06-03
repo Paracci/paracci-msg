@@ -15,12 +15,16 @@ from conftest import oqs_required
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from desktop import device_key_binding as binding
 from desktop.device_key_binding import (
     DPAPI_DIFFERENT_ACCOUNT_CODE,
     DPAPI_DIFFERENT_ACCOUNT_I18N,
     DPAPI_DIFFERENT_ACCOUNT_MESSAGE,
+    SECRET_SERVICE_FALLBACK_REQUIRED_CODE,
+    SECRET_SERVICE_UNAVAILABLE_CODE,
     DeviceBindingError,
 )
+from desktop.secret_service_linux import SecretServiceError
 from desktop.services import (
     PENDING_UNLOCK_TTL_SECONDS,
     AttachmentPayload,
@@ -100,6 +104,7 @@ def test_ui_api_device_settings_and_profile(tmp_path):
     assert status["initialized"] is False
     assert status["unlocked"] is False
     assert status["two_factor_enabled"] is None
+    assert "device_binding" in status
 
     initialized = api.dispatch("device_init", {"pin": "Correct-Horse-95175328"})
     assert initialized["initialized"] is True
@@ -110,6 +115,74 @@ def test_ui_api_device_settings_and_profile(tmp_path):
 
     profile = api.dispatch("profile_update", {"username": "Paracci Operator", "avatar_color": "#0a84ff"})
     assert profile["settings"]["username"] == "Paracci Operator"
+
+
+def test_ui_api_linux_fallback_requires_consent_and_reports_status(tmp_path, monkeypatch):
+    api = make_api(tmp_path / "linux-fallback-ui")
+    monkeypatch.setattr(binding.sys, "platform", "linux")
+    monkeypatch.setattr(binding, "is_secret_service_available", lambda: False)
+    monkeypatch.setattr(
+        binding,
+        "wrap_with_secret_service",
+        lambda *_args: (_ for _ in ()).throw(
+            SecretServiceError("wrap", "no daemon", code="unavailable")
+        ),
+    )
+
+    status = api.dispatch("device_status")
+    assert status["device_binding"] == {
+        "platform": "linux_secret_service",
+        "state": "platform_binding_unavailable",
+        "platform_bound": False,
+        "platform_binding_available": False,
+        "passphrase_only_fallback_active": False,
+        "fallback_allowed": False,
+        "warning_code": SECRET_SERVICE_UNAVAILABLE_CODE,
+    }
+
+    with pytest.raises(UIApiError) as blocked:
+        api.dispatch("device_init", {"pin": PIN})
+
+    assert blocked.value.code == SECRET_SERVICE_FALLBACK_REQUIRED_CODE
+
+    initialized = api.dispatch(
+        "device_init",
+        {"pin": PIN, "allow_linux_passphrase_fallback": True},
+    )
+
+    assert initialized["initialized"] is True
+    assert initialized["unlocked"] is True
+    assert initialized["device_binding"]["state"] == "passphrase_only_fallback"
+    assert initialized["device_binding"]["passphrase_only_fallback_active"] is True
+    assert initialized["device_binding"]["fallback_allowed"] is True
+    assert initialized["device_binding_warning"]["code"] == SECRET_SERVICE_UNAVAILABLE_CODE
+
+
+def test_ui_api_linux_fallback_error_and_logs_are_sanitized(tmp_path, monkeypatch, caplog):
+    api = make_api(tmp_path / "linux-fallback-log-hygiene")
+    pin = "Correct-Horse-Ui-Secret-95175328"
+    sensitive_error = "/home/private-user/.cache/token-sentinel/Paracci - profile-secret"
+    profile_id_holder = {}
+    monkeypatch.setattr(binding.sys, "platform", "linux")
+    monkeypatch.setattr(binding, "is_secret_service_available", lambda: True)
+
+    def unavailable_wrap(profile_id, _data):
+        profile_id_holder["profile_id"] = profile_id
+        raise SecretServiceError("wrap", sensitive_error, code="unavailable")
+
+    monkeypatch.setattr(binding, "wrap_with_secret_service", unavailable_wrap)
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(UIApiError) as exc:
+            api.dispatch("device_init", {"pin": pin})
+
+    serialized = json.dumps(exc.value.to_dict()) + caplog.text
+    assert exc.value.code == SECRET_SERVICE_FALLBACK_REQUIRED_CODE
+    assert pin not in serialized
+    assert sensitive_error not in serialized
+    assert "token-sentinel" not in serialized
+    assert "profile-secret" not in serialized
+    assert profile_id_holder["profile_id"] not in serialized
 
 
 @oqs_required
@@ -812,7 +885,7 @@ def test_ui_api_downloadable_image_preview_returns_original_bytes(tmp_path):
 def test_ui_api_maps_device_binding_error(tmp_path):
     api = make_api(tmp_path / "device-binding-error")
 
-    def fail_unlock(_pin: str):
+    def fail_unlock(_pin: str, **_kwargs):
         raise DeviceBindingError(
             DPAPI_DIFFERENT_ACCOUNT_CODE,
             DPAPI_DIFFERENT_ACCOUNT_I18N,

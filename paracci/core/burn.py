@@ -140,6 +140,7 @@ BOOTSTRAP_DEVICE_META_KEYS = frozenset(
         "dpapi_blob",
         "platform_binding_profile_id_v1",
         "platform_binding_kind_v1",
+        "linux_secret_service_fallback_allowed_v1",
         UNLOCK_RATE_LIMIT_KEY,
         UNLOCK_EVER_SUCCEEDED_KEY,
     }

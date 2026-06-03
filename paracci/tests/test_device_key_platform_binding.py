@@ -1,3 +1,4 @@
+import logging
 import sys
 from pathlib import Path
 
@@ -14,13 +15,16 @@ from core.burn import (
 from desktop import device_key_binding as binding
 from desktop.device_key_binding import (
     LINUX_SECRET_SERVICE_KIND,
+    LINUX_SECRET_SERVICE_FALLBACK_ALLOWED_META_KEY,
     MACOS_KEYCHAIN_KIND,
     PLATFORM_BINDING_KIND_META_KEY,
     PLATFORM_BINDING_PROFILE_ID_META_KEY,
+    SECRET_SERVICE_FALLBACK_REQUIRED_CODE,
     SECRET_SERVICE_FAILED_CODE,
     SECRET_SERVICE_UNAVAILABLE_CODE,
     DeviceBindingError,
     consume_device_binding_warning,
+    device_binding_status,
     initialize_device_with_binding,
     unlock_device_with_binding,
 )
@@ -64,6 +68,7 @@ def fake_keychain(monkeypatch):
 def fake_secret_service(monkeypatch):
     store = {}
     monkeypatch.setattr(binding.sys, "platform", "linux")
+    monkeypatch.setattr(binding, "is_secret_service_available", lambda: True)
     monkeypatch.setattr(
         binding,
         "wrap_with_secret_service",
@@ -166,8 +171,9 @@ def test_legacy_linux_profile_is_bound_after_successful_unlock(tmp_path, monkeyp
     assert unlock_device_with_binding(db, PASSPHRASE) == device_key
 
 
-def test_linux_no_daemon_initialization_falls_back_to_passphrase_only(tmp_path, monkeypatch):
+def test_linux_no_daemon_initialization_requires_consent_then_falls_back(tmp_path, monkeypatch):
     monkeypatch.setattr(binding.sys, "platform", "linux")
+    monkeypatch.setattr(binding, "is_secret_service_available", lambda: False)
     monkeypatch.setattr(
         binding,
         "wrap_with_secret_service",
@@ -177,20 +183,32 @@ def test_linux_no_daemon_initialization_falls_back_to_passphrase_only(tmp_path, 
     )
     db = BurnDB(tmp_path / "sessions.db")
 
-    device_key = initialize_device_with_binding(db, PASSPHRASE)
+    with pytest.raises(DeviceBindingError) as blocked:
+        initialize_device_with_binding(db, PASSPHRASE)
+
+    assert blocked.value.code == SECRET_SERVICE_FALLBACK_REQUIRED_CODE
+    assert db.get_device_meta(LINUX_SECRET_SERVICE_FALLBACK_ALLOWED_META_KEY) is None
+
+    device_key = initialize_device_with_binding(
+        db,
+        PASSPHRASE,
+        allow_linux_passphrase_fallback=True,
+    )
     warning = consume_device_binding_warning()
 
     assert len(device_key) == 32
     assert warning is not None
     assert warning.code == SECRET_SERVICE_UNAVAILABLE_CODE
     assert db.get_device_meta(PLATFORM_BINDING_PROFILE_ID_META_KEY) is None
+    assert db.get_device_meta(LINUX_SECRET_SERVICE_FALLBACK_ALLOWED_META_KEY) == b"1"
     assert unlock_device_with_binding(db, PASSPHRASE) == device_key
 
 
-def test_linux_no_daemon_unlock_migration_falls_back_to_passphrase_only(tmp_path, monkeypatch):
+def test_linux_no_daemon_unlock_migration_requires_consent_then_falls_back(tmp_path, monkeypatch):
     db = BurnDB(tmp_path / "sessions.db")
     device_key = init_device(db, PASSPHRASE)
     monkeypatch.setattr(binding.sys, "platform", "linux")
+    monkeypatch.setattr(binding, "is_secret_service_available", lambda: False)
     monkeypatch.setattr(
         binding,
         "wrap_with_secret_service",
@@ -199,12 +217,100 @@ def test_linux_no_daemon_unlock_migration_falls_back_to_passphrase_only(tmp_path
         ),
     )
 
-    assert unlock_device_with_binding(db, PASSPHRASE) == device_key
+    with pytest.raises(DeviceBindingError) as blocked:
+        unlock_device_with_binding(db, PASSPHRASE)
+
+    assert blocked.value.code == SECRET_SERVICE_FALLBACK_REQUIRED_CODE
+    assert db.get_device_meta(LINUX_SECRET_SERVICE_FALLBACK_ALLOWED_META_KEY) is None
+
+    assert unlock_device_with_binding(
+        db,
+        PASSPHRASE,
+        allow_linux_passphrase_fallback=True,
+    ) == device_key
     warning = consume_device_binding_warning()
 
     assert warning is not None
     assert warning.code == SECRET_SERVICE_UNAVAILABLE_CODE
     assert db.get_device_meta(PLATFORM_BINDING_PROFILE_ID_META_KEY) is None
+    assert db.get_device_meta(LINUX_SECRET_SERVICE_FALLBACK_ALLOWED_META_KEY) == b"1"
+
+
+def test_linux_fallback_profile_rebinds_when_secret_service_returns(tmp_path, monkeypatch):
+    monkeypatch.setattr(binding.sys, "platform", "linux")
+    monkeypatch.setattr(binding, "is_secret_service_available", lambda: False)
+    monkeypatch.setattr(
+        binding,
+        "wrap_with_secret_service",
+        lambda *_args: (_ for _ in ()).throw(
+            SecretServiceError("wrap", "no daemon", code="unavailable")
+        ),
+    )
+    db = BurnDB(tmp_path / "sessions.db")
+    device_key = initialize_device_with_binding(
+        db,
+        PASSPHRASE,
+        allow_linux_passphrase_fallback=True,
+    )
+    assert db.get_device_meta(LINUX_SECRET_SERVICE_FALLBACK_ALLOWED_META_KEY) == b"1"
+
+    store = fake_secret_service(monkeypatch)
+
+    assert unlock_device_with_binding(db, PASSPHRASE) == device_key
+    profile_id = db.get_device_meta(PLATFORM_BINDING_PROFILE_ID_META_KEY).decode("ascii")
+    assert db.get_device_meta(PLATFORM_BINDING_KIND_META_KEY) == LINUX_SECRET_SERVICE_KIND
+    assert profile_id in store
+    assert db.get_device_meta(LINUX_SECRET_SERVICE_FALLBACK_ALLOWED_META_KEY) is None
+
+
+def test_linux_binding_status_reports_unavailable_and_fallback_states(tmp_path, monkeypatch):
+    monkeypatch.setattr(binding.sys, "platform", "linux")
+    monkeypatch.setattr(binding, "is_secret_service_available", lambda: False)
+    db = BurnDB(tmp_path / "sessions.db")
+
+    unavailable = device_binding_status(db)
+    assert unavailable == {
+        "platform": "linux_secret_service",
+        "state": "platform_binding_unavailable",
+        "platform_bound": False,
+        "platform_binding_available": False,
+        "passphrase_only_fallback_active": False,
+        "fallback_allowed": False,
+        "warning_code": SECRET_SERVICE_UNAVAILABLE_CODE,
+    }
+
+    db.set_device_meta(LINUX_SECRET_SERVICE_FALLBACK_ALLOWED_META_KEY, b"1")
+    fallback = device_binding_status(db)
+    assert fallback["state"] == "passphrase_only_fallback"
+    assert fallback["passphrase_only_fallback_active"] is True
+    assert fallback["fallback_allowed"] is True
+
+
+def test_linux_secret_service_errors_and_logs_are_sanitized(tmp_path, monkeypatch, caplog):
+    pin = "Correct-Horse-Log-Sentinel-95175328"
+    profile_id_holder = {}
+    sensitive_error = "/home/private-user/.cache/token-sentinel/Paracci - profile-secret"
+    monkeypatch.setattr(binding.sys, "platform", "linux")
+    monkeypatch.setattr(binding, "is_secret_service_available", lambda: True)
+
+    def unavailable_wrap(profile_id, _data):
+        profile_id_holder["profile_id"] = profile_id
+        raise SecretServiceError("wrap", sensitive_error, code="unavailable")
+
+    monkeypatch.setattr(binding, "wrap_with_secret_service", unavailable_wrap)
+    db = BurnDB(tmp_path / "sessions.db")
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(DeviceBindingError) as exc:
+            initialize_device_with_binding(db, pin)
+
+    combined = f"{exc.value} {caplog.text}"
+    assert exc.value.code == SECRET_SERVICE_FALLBACK_REQUIRED_CODE
+    assert pin not in combined
+    assert sensitive_error not in combined
+    assert "token-sentinel" not in combined
+    assert "profile-secret" not in combined
+    assert profile_id_holder["profile_id"] not in combined
 
 
 def test_linux_no_daemon_on_bound_profile_does_not_downgrade(tmp_path, monkeypatch):
