@@ -903,33 +903,12 @@ async function handleManualDownload(url, filename) {
         }
 
         const blob = await response.blob();
-        if (api) {
-            const reader = new FileReader();
-            reader.onloadend = async () => {
-                let b64 = "";
-                try {
-                    b64 = String(reader.result || '').split(',')[1] || '';
-                    if (api.save_file) {
-                        const loopbackToken = window.ParacciSecurity?.getLoopbackToken?.() || '';
-                        await api.save_file(b64, filename, loopbackToken);
-                    }
-                } catch (err) {
-                    console.error('Download save error:', err);
-                    showNotification(err?.message || window.PARACCI_I18N?.download_failed || 'Download failed', 'error');
-                } finally {
-                    b64 = "";
-                }
-            };
-            reader.readAsDataURL(blob);
-        } else {
-            // Browser Fallback (Legacy/Dev)
-            const link = document.createElement('a');
-            const objectUrl = URL.createObjectURL(blob);
-            link.href = objectUrl;
-            link.download = filename;
-            link.click();
-            URL.revokeObjectURL(objectUrl);
-        }
+        const link = document.createElement('a');
+        const objectUrl = URL.createObjectURL(blob);
+        link.href = objectUrl;
+        link.download = filename;
+        link.click();
+        URL.revokeObjectURL(objectUrl);
     } catch (err) {
         console.error('Download error:', err);
         showNotification(err?.message || window.PARACCI_I18N?.download_failed || 'Download failed', 'error');

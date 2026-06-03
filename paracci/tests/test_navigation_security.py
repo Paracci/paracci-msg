@@ -1,4 +1,3 @@
-import base64
 import os
 import sys
 from pathlib import Path
@@ -151,7 +150,6 @@ def test_main_pro_api_exposes_expected_methods():
         "minimize",
         "select_file",
         "select_attachments",
-        "save_file",
         "save_file_silent",
         "open_file_location",
         "copy_and_clear",
@@ -159,6 +157,7 @@ def test_main_pro_api_exposes_expected_methods():
         "install_verified_update",
     ]:
         assert callable(getattr(api, method))
+    assert not hasattr(api, "save_file")
 
 
 def test_open_file_location_launches_explorer_with_managed_file_as_single_argument(tmp_path, monkeypatch):
@@ -350,7 +349,7 @@ def test_save_file_silent_rejects_arbitrary_page_payload_without_grant(tmp_path,
     api, _window, _grants, downloads = _authorized_save_api(tmp_path, monkeypatch)
 
     with pytest.raises(PermissionError, match="grant is invalid"):
-        api.save_file_silent(base64.b64encode(b"payload").decode("ascii"), LOOPBACK_TOKEN)
+        api.save_file_silent("cGF5bG9hZA==", LOOPBACK_TOKEN)
 
     assert list(downloads.iterdir()) == []
 
@@ -425,69 +424,14 @@ def test_native_download_writer_does_not_follow_existing_symlink(tmp_path, monke
     assert saved_path.read_bytes() == b"payload"
 
 
-def test_save_file_preserves_user_selected_destination_after_authentication(tmp_path, monkeypatch):
-    from core.config import ParacciConfig
+def test_pro_api_does_not_expose_legacy_renderer_supplied_save_file(tmp_path, monkeypatch):
+    api, window, _grants, downloads = _authorized_save_api(tmp_path, monkeypatch)
 
-    downloads = tmp_path / "Downloads"
-    downloads.mkdir()
-    chosen = downloads / "chosen-location.paracci"
-    monkeypatch.setattr(ParacciConfig, "__init__", lambda self: setattr(self, "full_downloads_path", str(downloads)))
-    window = FakeMainWindow(RecordingEventHook())
-    window.dialog_path = str(chosen)
-    api = run.ProApi(loopback_token=LOOPBACK_TOKEN).bind_window(window)
+    with pytest.raises(AttributeError):
+        getattr(api, "save_file")
 
-    result = api.save_file(
-        base64.b64encode(b"payload").decode("ascii"),
-        "message.paracci",
-        LOOPBACK_TOKEN,
-    )
-
-    assert result == str(chosen)
-    assert chosen.read_bytes() == b"payload"
-
-
-def test_save_file_rejects_destination_outside_downloads(tmp_path, monkeypatch):
-    from core.config import ParacciConfig
-
-    downloads = tmp_path / "Downloads"
-    downloads.mkdir()
-    chosen = tmp_path / "outside-location.paracci"
-    monkeypatch.setattr(ParacciConfig, "__init__", lambda self: setattr(self, "full_downloads_path", str(downloads)))
-    window = FakeMainWindow(RecordingEventHook())
-    window.dialog_path = str(chosen)
-    api = run.ProApi(loopback_token=LOOPBACK_TOKEN).bind_window(window)
-
-    result = api.save_file(
-        base64.b64encode(b"payload").decode("ascii"),
-        "message.paracci",
-        LOOPBACK_TOKEN,
-    )
-
-    assert result is None
-    assert not chosen.exists()
-
-
-@pytest.mark.parametrize("content_b64", ["%%%bad-base64%%%", base64.b64encode(b"payload").decode("ascii")])
-def test_save_file_rejects_invalid_or_oversized_payload_before_dialog(
-    tmp_path,
-    monkeypatch,
-    content_b64,
-):
-    from core.config import ParacciConfig
-
-    downloads = tmp_path / "Downloads"
-    downloads.mkdir()
-    monkeypatch.setattr(ParacciConfig, "__init__", lambda self: setattr(self, "full_downloads_path", str(downloads)))
-    if content_b64 != "%%%bad-base64%%%":
-        monkeypatch.setattr(run, "MAX_NATIVE_SAVE_BYTES", 2)
-    window = FakeMainWindow(RecordingEventHook())
-    window.dialog_path = str(tmp_path / "should-not-exist.paracci")
-    api = run.ProApi(loopback_token=LOOPBACK_TOKEN).bind_window(window)
-
-    with pytest.raises(ValueError):
-        api.save_file(content_b64, "message.paracci", LOOPBACK_TOKEN)
-
-    assert not Path(window.dialog_path).exists()
+    assert window.dialog_path is None
+    assert list(downloads.iterdir()) == []
 
 
 def test_session_native_download_uses_grant_instead_of_page_base64():
@@ -495,4 +439,7 @@ def test_session_native_download_uses_grant_instead_of_page_base64():
 
     assert "'X-Paracci-Native-Save': '1'" in session_js
     assert "save_file_silent(grant.native_save_token, loopbackToken)" in session_js
+    assert ".save_file(" not in session_js
     assert "save_file_silent(b64" not in session_js
+    assert "new FileReader()" not in session_js
+    assert "readAsDataURL" not in session_js

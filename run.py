@@ -12,8 +12,6 @@ from __future__ import annotations
 import sys
 import os
 import argparse
-import base64
-import binascii
 import logging
 import secrets
 import json
@@ -521,19 +519,6 @@ def download_preview_file(token: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
-def _decode_native_base64(content_b64: str) -> bytes:
-    max_encoded_length = 4 * ((MAX_NATIVE_SAVE_BYTES + 2) // 3)
-    if not isinstance(content_b64, str) or len(content_b64) > max_encoded_length:
-        raise ValueError("Native download exceeds the size limit.")
-    try:
-        file_data = base64.b64decode(content_b64, validate=True)
-    except (ValueError, binascii.Error) as exc:
-        raise ValueError("Native download payload is invalid.") from exc
-    if len(file_data) > MAX_NATIVE_SAVE_BYTES:
-        raise ValueError("Native download exceeds the size limit.")
-    return file_data
-
-
 class ProApi:
     """Privileged API exposed only to the trusted main pywebview window."""
 
@@ -598,47 +583,6 @@ class ProApi:
         except Exception as e:
             print(f"  [!] Attachment staging error: {e}")
             return {"success": False, "error": str(e)}
-
-    def save_file(self, content_b64, filename, loopback_token):
-        from core.config import ParacciConfig
-
-        self._require_native_write_token(loopback_token)
-        safe_filename = validate_native_download_filename(filename)
-        file_data = _decode_native_base64(content_b64)
-        window = self._require_window()
-        cfg = ParacciConfig()
-
-        print(f"  [>] save_file requested: {safe_filename}")
-
-        path = window.create_file_dialog(
-            webview.FileDialog.SAVE,
-            directory=cfg.full_downloads_path,
-            save_filename=safe_filename,
-            file_types=('Paracci Message (*.paracci)', 'All Files (*.*)')
-        )
-
-        if path:
-            if isinstance(path, (list, tuple)):
-                path = path[0]
-
-            try:
-                resolved_downloads = Path(cfg.full_downloads_path).resolve()
-                resolved_path = Path(path).resolve()
-                try:
-                    resolved_path.relative_to(resolved_downloads)
-                except ValueError:
-                    raise ValueError("Destination path must be inside the managed Downloads directory.")
-
-                if _is_link_or_junction(resolved_path) or _is_link_or_junction(resolved_path.parent):
-                    raise ValueError("Junctions or symbolic links are not permitted.")
-
-                with open(path, "wb") as f:
-                    f.write(file_data)
-                print(f"  [+] Saved to: {path}")
-                return path
-            except Exception as e:
-                print(f"  [!] Save error: {e}")
-        return None
 
     def save_file_silent(self, native_save_token, loopback_token):
         """Save a one-shot server-authorized download after native confirmation."""

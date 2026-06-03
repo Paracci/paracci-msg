@@ -36,20 +36,46 @@ function makeHarness({
     writeText = async () => {},
     nativeApi = null,
     hasNativeWindow = false,
-    resolveNativeWaitImmediately = false
+    resolveNativeWaitImmediately = false,
+    fetchImpl = null
 } = {}) {
     let timerId = 0;
     const intervals = new Map();
     const timeouts = new Map();
     const notices = [];
+    const anchors = [];
+    const objectUrls = [];
+    const revokedUrls = [];
     let focused = true;
     const button = { disabled: false, style: {}, textContent: '' };
+    class TestURL extends URL {}
+    TestURL.createObjectURL = blob => {
+        const objectUrl = `blob:paracci-test-${objectUrls.length + 1}`;
+        objectUrls.push({ objectUrl, blob });
+        return objectUrl;
+    };
+    TestURL.revokeObjectURL = objectUrl => {
+        revokedUrls.push(objectUrl);
+    };
 
     const document = eventTarget({
         visibilityState: 'visible',
         hasFocus: () => focused,
         getElementById: id => id === 'btn-copy-msg' ? button : null,
-        querySelectorAll: () => []
+        querySelectorAll: () => [],
+        createElement(tag) {
+            assert.equal(tag, 'a');
+            const anchor = {
+                href: '',
+                download: '',
+                clicked: false,
+                click() {
+                    this.clicked = true;
+                }
+            };
+            anchors.push(anchor);
+            return anchor;
+        }
     });
     const window = eventTarget({
         PARACCI_I18N: {
@@ -60,7 +86,8 @@ function makeHarness({
             clearing_clipboard: 'Clearing ({s})',
             copy_protection_btn: 'Copy'
         },
-        pywebview: nativeApi ? { api: nativeApi } : undefined
+        pywebview: nativeApi ? { api: nativeApi } : undefined,
+        URL: TestURL
     });
     const setTimeout = (handler, delay) => {
         const id = ++timerId;
@@ -76,12 +103,13 @@ function makeHarness({
         document,
         navigator: { clipboard: { writeText } },
         localStorage: { getItem: () => null, setItem: () => {} },
-        fetch: async () => ({
+        fetch: fetchImpl || (async () => ({
             ok: true,
             json: async () => ({ has_native_window: hasNativeWindow })
-        }),
+        })),
         console: { error: () => {}, warn: () => {}, log: () => {} },
         showNotification: (message, type = 'info') => notices.push({ message, type }),
+        URL: TestURL,
         setInterval(handler) {
             const id = ++timerId;
             intervals.set(id, handler);
@@ -111,6 +139,9 @@ function makeHarness({
         window,
         document,
         notices,
+        anchors,
+        objectUrls,
+        revokedUrls,
         button,
         setFocused(value) {
             focused = value;
@@ -230,4 +261,31 @@ test('native-capable shell does not downgrade to browser clipboard before API in
 
     assert.deepEqual(writes, []);
     assert.ok(harness.notices.some(notice => notice.type === 'error'));
+});
+
+test('manual downloads without native grant support use browser download only', async () => {
+    const fetches = [];
+    const downloadBlob = { bytes: 'download-bytes' };
+    const harness = makeHarness({
+        nativeApi: {},
+        fetchImpl: async (url, options = {}) => {
+            fetches.push({ url, options });
+            return {
+                ok: true,
+                blob: async () => downloadBlob
+            };
+        }
+    });
+
+    await harness.window.handleManualDownload('/preview/file/download', 'report.txt');
+
+    assert.equal(fetches.length, 1);
+    assert.equal(fetches[0].url, '/preview/file/download');
+    assert.ok(!fetches[0].options.headers?.['X-Paracci-Native-Save']);
+    assert.equal(harness.anchors.length, 1);
+    assert.equal(harness.anchors[0].href, 'blob:paracci-test-1');
+    assert.equal(harness.anchors[0].download, 'report.txt');
+    assert.equal(harness.anchors[0].clicked, true);
+    assert.deepEqual(harness.objectUrls, [{ objectUrl: 'blob:paracci-test-1', blob: downloadBlob }]);
+    assert.deepEqual(harness.revokedUrls, ['blob:paracci-test-1']);
 });
