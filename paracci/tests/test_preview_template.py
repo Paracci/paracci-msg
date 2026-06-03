@@ -40,7 +40,7 @@ def fresh_preview_store(monkeypatch, ttl_seconds=300, clock=None):
 def test_preview_template_is_standalone_and_receives_metadata(tmp_path, monkeypatch):
     flask_app = make_flask_app(tmp_path, monkeypatch)
     store = fresh_preview_store(monkeypatch)
-    token = store.generate_token(b"secret-content", "document.pdf", "application/pdf")
+    token = store.generate_token(b"secret-content", "note.txt", "text/plain")
 
     response = flask_app.test_client().get(
         f"/preview/{token}",
@@ -51,7 +51,7 @@ def test_preview_template_is_standalone_and_receives_metadata(tmp_path, monkeypa
     html = response.data.decode("utf-8")
     assert response.status_code == 200
     assert response.mimetype == "text/html"
-    assert "document.pdf" in html
+    assert "note.txt" in html
     assert token in html
     assert f"/preview/{token}/content" in html
     assert "static/css/standalone-preview.css" in html
@@ -111,6 +111,45 @@ def test_preview_token_page_does_not_overwrite_main_session_cookie(tmp_path, mon
 
     assert response.status_code == 200
     assert "Set-Cookie" not in response.headers
+
+
+def test_preview_template_treats_pdf_as_download_only(tmp_path, monkeypatch):
+    flask_app = make_flask_app(tmp_path, monkeypatch)
+    store = fresh_preview_store(monkeypatch)
+    token = store.generate_token(b"%PDF-secret-content", "document.pdf", "application/pdf")
+
+    response = flask_app.test_client().get(
+        f"/preview/{token}",
+        base_url=ORIGIN,
+        headers=preview_headers(),
+    )
+
+    html = response.data.decode("utf-8")
+    assert response.status_code == 200
+    assert "document.pdf" in html
+    assert 'data-content-url=""' in html
+    assert 'data-media-url=""' in html
+    assert f"/preview/{token}/content?download=1" in html
+    assert "%PDF-secret-content" not in html
+
+
+def test_preview_template_treats_svg_as_download_only(tmp_path, monkeypatch):
+    flask_app = make_flask_app(tmp_path, monkeypatch)
+    store = fresh_preview_store(monkeypatch)
+    token = store.generate_token(b"<svg></svg>", "vector.svg", "image/svg+xml")
+
+    response = flask_app.test_client().get(
+        f"/preview/{token}",
+        base_url=ORIGIN,
+        headers=preview_headers(),
+    )
+
+    html = response.data.decode("utf-8")
+    assert response.status_code == 200
+    assert 'data-content-url=""' in html
+    assert 'data-media-url=""' in html
+    assert f"/preview/{token}/content?download=1" in html
+    assert "<svg>" not in html
 
 
 def test_preview_template_hides_download_for_non_downloadable_token(tmp_path, monkeypatch):
@@ -179,6 +218,10 @@ def test_preview_runtime_uses_custom_media_controls():
     assert "⏸" in preview_js
     assert "toggleFullscreen" in preview_js
     assert "exitFullscreen" in preview_js
+    assert "const ACTIVE_EXTS" in preview_js
+    assert "\"pdf\"" in preview_js
+    assert "\"svg\"" in preview_js
+    assert "\"html\"" in preview_js
 
 
 def test_preview_template_returns_404_for_expired_token(tmp_path, monkeypatch):
@@ -198,6 +241,7 @@ def test_preview_template_returns_404_for_expired_token(tmp_path, monkeypatch):
     html = response.data.decode("utf-8")
     assert "static/css/standalone-preview.css" in html
     assert "static/js/preview.js" in html
+    assert token not in html
     assert "cdn.jsdelivr.net" not in html
     assert "cdnjs.cloudflare.com" not in html
     assert "<style>" not in html

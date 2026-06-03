@@ -69,12 +69,12 @@ def png_bytes(size=(1400, 900), color=(14, 80, 130, 255)):
     return output.getvalue()
 
 
-def seed_preview(pid, content, mime, allow_download):
+def seed_preview(pid, content, mime, allow_download, filename=None):
     from app import routes
 
     routes.PREVIEW_CACHE.clear()
     routes.PREVIEW_CACHE[pid] = {
-        "filename": "preview.png" if mime.startswith("image/") else "preview.mp4",
+        "filename": filename or ("preview.png" if mime.startswith("image/") else "preview.mp4"),
         "content": content,
         "mime": mime,
         "expires": time.time() + 600,
@@ -244,6 +244,55 @@ def test_allow_download_raw_and_attachment_download_return_original_bytes(tmp_pa
     assert download_response.status_code == 200
     assert download_response.data == original
     assert "attachment" in download_response.headers["Content-Disposition"]
+
+
+def test_allow_download_raw_html_is_forced_to_attachment(tmp_path, monkeypatch):
+    client = auth_client(tmp_path, monkeypatch)
+    original = b"<script>alert(1)</script>"
+    seed_preview(
+        "downloadable-html",
+        original,
+        "text/html",
+        allow_download=True,
+        filename="page.html",
+    )
+
+    raw_response = get(client, "/preview/downloadable-html?raw=1")
+    preview_response = get(client, "/preview/downloadable-html")
+    download_response = get(client, "/preview/downloadable-html/download")
+
+    assert raw_response.status_code == 200
+    assert raw_response.data == original
+    assert raw_response.mimetype == "application/octet-stream"
+    assert "attachment" in raw_response.headers["Content-Disposition"].lower()
+    assert raw_response.headers["X-Content-Type-Options"] == "nosniff"
+    assert "default-src 'none'" in raw_response.headers["Content-Security-Policy"]
+    assert download_response.status_code == 200
+    assert download_response.mimetype == "application/octet-stream"
+    assert "attachment" in download_response.headers["Content-Disposition"].lower()
+    html = preview_response.data.decode("utf-8")
+    assert "raw=1" not in html
+    assert "/preview/downloadable-html/download" in html
+
+
+def test_allow_download_raw_svg_pdf_xml_and_unknown_are_forced_to_attachment(tmp_path, monkeypatch):
+    client = auth_client(tmp_path, monkeypatch)
+    cases = [
+        ("svg", b"<svg></svg>", "image/svg+xml", "vector.svg"),
+        ("pdf", b"%PDF-active", "application/pdf", "report.pdf"),
+        ("xml", b"<root/>", "application/xml", "data.xml"),
+        ("unknown", b"unknown", "application/x-paracci-test", "payload.bin"),
+    ]
+
+    for pid, original, mime, filename in cases:
+        seed_preview(f"downloadable-{pid}", original, mime, allow_download=True, filename=filename)
+        response = get(client, f"/preview/downloadable-{pid}?raw=1")
+
+        assert response.status_code == 200
+        assert response.data == original
+        assert response.mimetype == "application/octet-stream"
+        assert "attachment" in response.headers["Content-Disposition"].lower()
+        assert response.headers["X-Content-Type-Options"] == "nosniff"
 
 
 def test_allow_download_token_content_and_download_return_original_bytes(tmp_path, monkeypatch):

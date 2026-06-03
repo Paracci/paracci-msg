@@ -3,6 +3,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
@@ -53,6 +55,22 @@ def preview_headers(**extra):
     headers = {"Host": HOST, "X-Paracci-Token": TOKEN}
     headers.update(extra)
     return headers
+
+
+def assert_forced_preview_attachment(response, filename, *, token=None, body=None):
+    assert response.status_code == 200
+    assert response.mimetype == "application/octet-stream"
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert "attachment" in response.headers["Content-Disposition"].lower()
+    assert filename in response.headers["Content-Disposition"]
+    assert "default-src 'none'" in response.headers["Content-Security-Policy"]
+    assert "sandbox" in response.headers["Content-Security-Policy"]
+    if body is not None:
+        assert response.data == body
+    header_text = "\n".join(f"{key}: {value}" for key, value in response.headers.items())
+    if token:
+        assert token not in header_text
+        assert token.encode("utf-8") not in response.data
 
 
 def unlock_test_client(ag_app, client):
@@ -178,6 +196,61 @@ def test_preview_content_returns_bytes_and_content_type(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.data == file_bytes
     assert response.mimetype == "image/png"
+    assert "attachment" not in response.headers.get("Content-Disposition", "").lower()
+
+
+def test_preview_content_returns_safe_text_inline(tmp_path, monkeypatch):
+    _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    _routes, store = fresh_preview_store(monkeypatch)
+    file_bytes = b"safe plain text"
+    token = store.generate_token(file_bytes, "note.txt", "text/plain")
+
+    response = flask_app.test_client().get(
+        f"/preview/{token}/content",
+        base_url=ORIGIN,
+        headers=preview_headers(),
+    )
+
+    assert response.status_code == 200
+    assert response.data == file_bytes
+    assert response.mimetype == "text/plain"
+    assert "attachment" not in response.headers.get("Content-Disposition", "").lower()
+
+
+def test_preview_content_returns_safe_markdown_inline(tmp_path, monkeypatch):
+    _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    _routes, store = fresh_preview_store(monkeypatch)
+    file_bytes = b"# Safe markdown"
+    token = store.generate_token(file_bytes, "note.md", "text/markdown")
+
+    response = flask_app.test_client().get(
+        f"/preview/{token}/content",
+        base_url=ORIGIN,
+        headers=preview_headers(),
+    )
+
+    assert response.status_code == 200
+    assert response.data == file_bytes
+    assert response.mimetype == "text/markdown"
+    assert "attachment" not in response.headers.get("Content-Disposition", "").lower()
+
+
+def test_preview_content_returns_safe_json_inline(tmp_path, monkeypatch):
+    _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    _routes, store = fresh_preview_store(monkeypatch)
+    file_bytes = b'{"safe": true}'
+    token = store.generate_token(file_bytes, "data.json", "application/json")
+
+    response = flask_app.test_client().get(
+        f"/preview/{token}/content",
+        base_url=ORIGIN,
+        headers=preview_headers(),
+    )
+
+    assert response.status_code == 200
+    assert response.data == file_bytes
+    assert response.mimetype == "application/json"
+    assert "attachment" not in response.headers.get("Content-Disposition", "").lower()
 
 
 def test_preview_content_download_sets_attachment_disposition(tmp_path, monkeypatch):
@@ -194,6 +267,77 @@ def test_preview_content_download_sets_attachment_disposition(tmp_path, monkeypa
     assert response.status_code == 200
     assert "attachment" in response.headers["Content-Disposition"]
     assert "report.txt" in response.headers["Content-Disposition"]
+
+
+@pytest.mark.parametrize(
+    ("filename", "mime_type", "body"),
+    [
+        ("page.html", "text/html", b"<script>alert(1)</script>"),
+        ("page.xhtml", "application/xhtml+xml", b"<html></html>"),
+        ("vector.svg", "image/svg+xml", b"<svg><script></script></svg>"),
+        ("report.pdf", "application/pdf", b"%PDF-active"),
+        ("data.xml", "application/xml", b"<?xml version='1.0'?><x/>"),
+        ("feed.atom", "application/atom+xml", b"<feed></feed>"),
+        ("script.js", "application/javascript", b"alert(1)"),
+        ("module.wasm", "application/wasm", b"\x00asm"),
+        ("unknown.bin", "application/x-paracci-test", b"unknown"),
+        ("missing", "", b"missing mime"),
+        ("bad.txt", "not a real mime", b"bad mime"),
+    ],
+)
+def test_preview_content_active_or_ambiguous_types_force_attachment(
+    tmp_path,
+    monkeypatch,
+    filename,
+    mime_type,
+    body,
+):
+    _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    _routes, store = fresh_preview_store(monkeypatch)
+    token = store.generate_token(body, filename, mime_type)
+
+    inline_response = flask_app.test_client().get(
+        f"/preview/{token}/content",
+        base_url=ORIGIN,
+        headers=preview_headers(),
+    )
+    download_response = flask_app.test_client().get(
+        f"/preview/{token}/content?download=1",
+        base_url=ORIGIN,
+        headers=preview_headers(),
+    )
+
+    assert_forced_preview_attachment(inline_response, filename, token=token, body=body)
+    assert_forced_preview_attachment(download_response, filename, token=token, body=body)
+
+
+@pytest.mark.parametrize(
+    ("filename", "mime_type"),
+    [
+        ("safe.txt", "text/html"),
+        ("page.html", "text/plain"),
+        ("picture.png", "image/svg+xml"),
+        ("vector.svg", "image/png"),
+    ],
+)
+def test_preview_content_active_filename_or_mime_mismatch_forces_attachment(
+    tmp_path,
+    monkeypatch,
+    filename,
+    mime_type,
+):
+    _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    _routes, store = fresh_preview_store(monkeypatch)
+    body = b"mismatch"
+    token = store.generate_token(body, filename, mime_type)
+
+    response = flask_app.test_client().get(
+        f"/preview/{token}/content",
+        base_url=ORIGIN,
+        headers=preview_headers(),
+    )
+
+    assert_forced_preview_attachment(response, filename, token=token, body=body)
 
 
 def test_preview_content_rejects_non_downloadable_non_image_token_bytes(tmp_path, monkeypatch):

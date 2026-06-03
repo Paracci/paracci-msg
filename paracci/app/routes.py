@@ -7,7 +7,8 @@ import datetime
 import secrets
 import hmac
 import mimetypes
-from typing import Optional, Sequence
+import re
+from typing import NamedTuple, Optional, Sequence
 from pathlib import Path
 import logging
 import unicodedata
@@ -133,8 +134,39 @@ CODE_EXTENSIONS = {
 }
 
 INLINE_PREVIEW_IMAGE_EXTENSIONS = {
-    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".ico"
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico"
 }
+INLINE_PREVIEW_AUDIO_EXTENSIONS = {".mp3", ".wav", ".ogg", ".flac", ".aac", ".m4a"}
+INLINE_PREVIEW_VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov"}
+INERT_PREVIEW_TEXT_EXTENSIONS = {".txt", ".log", ".csv", ".md", ".markdown", ".json"}
+ACTIVE_PREVIEW_EXTENSIONS = {
+    ".html", ".htm", ".xhtml", ".svg", ".pdf", ".xml", ".xsl", ".xslt",
+    ".js", ".mjs", ".cjs", ".wasm", ".css", ".hta",
+}
+
+INLINE_PREVIEW_IMAGE_MIME_TYPES = {
+    "image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp",
+    "image/x-ms-bmp", "image/vnd.microsoft.icon", "image/x-icon",
+}
+INLINE_PREVIEW_AUDIO_MIME_TYPES = {
+    "audio/mpeg", "audio/mp4", "audio/wav", "audio/x-wav", "audio/ogg",
+    "audio/flac", "audio/aac",
+}
+INLINE_PREVIEW_VIDEO_MIME_TYPES = {
+    "video/mp4", "video/webm", "video/quicktime",
+}
+INERT_PREVIEW_TEXT_MIME_TYPES = {
+    "text/plain", "text/csv", "text/markdown", "application/json", "text/json",
+}
+ACTIVE_PREVIEW_MIME_TYPES = {
+    "text/html", "application/xhtml+xml", "image/svg+xml", "application/pdf",
+    "text/xml", "application/xml", "text/javascript", "application/javascript",
+    "application/x-javascript", "application/ecmascript", "text/ecmascript",
+    "application/wasm", "text/css", "text/vbscript",
+}
+
+GENERIC_DOWNLOAD_MIME = "application/octet-stream"
+_MIME_TYPE_RE = re.compile(r"^[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+$")
 
 SENSITIVE_CACHE_CLEAR_LIMIT = 100
 NATIVE_SAVE_REQUEST_HEADER = "X-Paracci-Native-Save"
@@ -193,19 +225,41 @@ def _preview_embedded_content_security_policy() -> str:
     )
 
 
+def _preview_attachment_content_security_policy() -> str:
+    """Return a conservative CSP for attachment-only preview bytes."""
+    return (
+        "default-src 'none'; "
+        "sandbox; "
+        "base-uri 'none'; "
+        "frame-ancestors 'none';"
+    )
+
+
 def _apply_security_headers(response):
     """Apply consistent security headers to all route responses."""
     response.headers["X-Content-Type-Options"] = "nosniff"
-    is_preview_route = request.endpoint in {"main.preview", "main.preview_content"}
+    is_preview_route = request.endpoint in {
+        "main.preview",
+        "main.preview_content",
+        "main.preview_download",
+    }
     is_preview_html = request.endpoint == "main.preview" and response.mimetype == "text/html"
+    is_preview_attachment = (
+        is_preview_route
+        and "attachment" in response.headers.get("Content-Disposition", "").lower()
+    )
     is_preview_pdf = (
         request.endpoint in {"main.preview", "main.preview_content"}
         and response.mimetype == "application/pdf"
     )
-    response.headers["X-Frame-Options"] = "SAMEORIGIN" if is_preview_pdf else "DENY"
+    response.headers["X-Frame-Options"] = (
+        "SAMEORIGIN" if is_preview_pdf and not is_preview_attachment else "DENY"
+    )
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "no-referrer"
-    if is_preview_html:
+    if is_preview_attachment:
+        response.headers["Content-Security-Policy"] = _preview_attachment_content_security_policy()
+    elif is_preview_html:
         response.headers["Content-Security-Policy"] = _preview_content_security_policy()
     elif is_preview_pdf:
         response.headers["Content-Security-Policy"] = _preview_embedded_content_security_policy()
@@ -365,11 +419,148 @@ def _can_send_original_attachment(file_data):
     return bool(file_data and file_data.get("allow_download") is True)
 
 
+class PreviewMimePolicy(NamedTuple):
+    effective_mime: str
+    inline_allowed: bool
+    inert_text: bool
+    download_mime: str
+
+
+def _normalize_preview_mime(value: str | None) -> str:
+    """Return a normalized MIME type or an empty string when malformed."""
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return ""
+    mime = raw.split(";", 1)[0].strip()
+    if not _MIME_TYPE_RE.fullmatch(mime):
+        return ""
+    return mime
+
+
+def _is_active_preview_mime(mime_type: str) -> bool:
+    if not mime_type:
+        return False
+    subtype = mime_type.split("/", 1)[1] if "/" in mime_type else ""
+    return (
+        mime_type in ACTIVE_PREVIEW_MIME_TYPES
+        or mime_type.endswith("+xml")
+        or "javascript" in subtype
+        or "ecmascript" in subtype
+    )
+
+
+def _preview_mime_category(mime_type: str) -> str:
+    if _is_active_preview_mime(mime_type):
+        return "active"
+    if mime_type in INLINE_PREVIEW_IMAGE_MIME_TYPES:
+        return "inline_media"
+    if mime_type in INLINE_PREVIEW_AUDIO_MIME_TYPES:
+        return "inline_media"
+    if mime_type in INLINE_PREVIEW_VIDEO_MIME_TYPES:
+        return "inline_media"
+    if mime_type in INERT_PREVIEW_TEXT_MIME_TYPES or mime_type.endswith("+json"):
+        return "inert_text"
+    return "unknown"
+
+
+def _preview_extension_category(filename: str) -> str:
+    suffix = Path(str(filename or "")).suffix.lower()
+    if suffix in ACTIVE_PREVIEW_EXTENSIONS:
+        return "active"
+    if suffix in INLINE_PREVIEW_IMAGE_EXTENSIONS:
+        return "inline_media"
+    if suffix in INLINE_PREVIEW_AUDIO_EXTENSIONS:
+        return "inline_media"
+    if suffix in INLINE_PREVIEW_VIDEO_EXTENSIONS:
+        return "inline_media"
+    if suffix in INERT_PREVIEW_TEXT_EXTENSIONS:
+        return "inert_text"
+    return "unknown"
+
+
+def _mime_for_inert_preview_extension(filename: str) -> str:
+    suffix = Path(str(filename or "")).suffix.lower()
+    if suffix == ".csv":
+        return "text/csv"
+    if suffix in {".md", ".markdown"}:
+        return "text/markdown"
+    if suffix == ".json":
+        return "application/json"
+    return "text/plain"
+
+
+def _preview_mime_policy(filename: str | None, mime_type: str | None) -> PreviewMimePolicy:
+    """Classify whether attachment bytes may be rendered inline on app origin."""
+    safe_filename = sanitize_attachment_filename(filename or "attachment.bin")
+    stored_raw = str(mime_type or "").strip()
+    stored_mime = _normalize_preview_mime(stored_raw)
+    guessed_mime = _normalize_preview_mime(mimetypes.guess_type(safe_filename)[0])
+    extension_category = _preview_extension_category(safe_filename)
+
+    if stored_raw and not stored_mime:
+        return PreviewMimePolicy(GENERIC_DOWNLOAD_MIME, False, False, GENERIC_DOWNLOAD_MIME)
+    if extension_category == "active":
+        return PreviewMimePolicy(stored_mime or guessed_mime or GENERIC_DOWNLOAD_MIME, False, False, GENERIC_DOWNLOAD_MIME)
+    if _is_active_preview_mime(stored_mime) or _is_active_preview_mime(guessed_mime):
+        return PreviewMimePolicy(stored_mime or guessed_mime or GENERIC_DOWNLOAD_MIME, False, False, GENERIC_DOWNLOAD_MIME)
+
+    if (
+        stored_mime
+        and guessed_mime
+        and stored_mime != guessed_mime
+        and stored_mime != GENERIC_DOWNLOAD_MIME
+        and guessed_mime != GENERIC_DOWNLOAD_MIME
+        and _preview_mime_category(stored_mime) != _preview_mime_category(guessed_mime)
+    ):
+        return PreviewMimePolicy(stored_mime, False, False, GENERIC_DOWNLOAD_MIME)
+
+    effective_mime = (
+        stored_mime
+        if stored_mime and stored_mime != GENERIC_DOWNLOAD_MIME
+        else guessed_mime
+    )
+    if not effective_mime and extension_category == "inert_text":
+        effective_mime = _mime_for_inert_preview_extension(safe_filename)
+    if not effective_mime:
+        return PreviewMimePolicy(GENERIC_DOWNLOAD_MIME, False, False, GENERIC_DOWNLOAD_MIME)
+
+    mime_category = _preview_mime_category(effective_mime)
+    if mime_category == "inline_media" and extension_category in {"inline_media", "unknown"}:
+        return PreviewMimePolicy(effective_mime, True, False, effective_mime)
+    if mime_category == "inert_text" and extension_category in {"inert_text", "unknown"}:
+        return PreviewMimePolicy(effective_mime, True, True, effective_mime)
+    return PreviewMimePolicy(effective_mime, False, False, GENERIC_DOWNLOAD_MIME)
+
+
+def _can_render_no_download_image_preview(filename: str | None, mime_type: str | None) -> bool:
+    policy = _preview_mime_policy(filename, mime_type)
+    return (
+        policy.inline_allowed
+        and not policy.inert_text
+        and policy.effective_mime in INLINE_PREVIEW_IMAGE_MIME_TYPES
+    )
+
+
 def _is_inline_preview_image(filename: str | None, mime_type: str | None) -> bool:
     """Return whether an attachment may be rendered as an inline image preview."""
-    mime = str(mime_type or "").lower()
-    suffix = Path(str(filename or "")).suffix.lower()
-    return mime.startswith("image/") or suffix in INLINE_PREVIEW_IMAGE_EXTENSIONS
+    return _can_render_no_download_image_preview(filename, mime_type)
+
+
+def _preview_send_file(
+    file_path,
+    filename: str,
+    policy: PreviewMimePolicy,
+    *,
+    as_attachment: bool,
+):
+    mimetype = policy.download_mime if as_attachment else policy.effective_mime
+    response = send_file(
+        file_path,
+        mimetype=mimetype,
+        as_attachment=as_attachment,
+        download_name=filename if as_attachment else None,
+    )
+    return _mark_sensitive_no_store(response)
 
 
 def _preview_url(endpoint: str, pid: str, file_data=None, **values) -> str:
@@ -2750,15 +2941,16 @@ def profile():
 def _get_preview_response_data(file_data, pid):
     """Prepare metadata for the standalone preview page."""
     filename = sanitize_attachment_filename(file_data["filename"])
-    mime = file_data.get("mime") or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    policy = _preview_mime_policy(filename, file_data.get("mime"))
+    mime = policy.effective_mime
     allow_download = file_data.get("allow_download") is True
     content_path = _resolve_content_path(file_data)
     file_size = os.path.getsize(content_path) if content_path and os.path.exists(content_path) else 0
     content_url = ""
 
-    if mime.startswith("image/") and not allow_download:
+    if not allow_download and _can_render_no_download_image_preview(filename, mime):
         content_url = _preview_url("main.preview", pid, file_data, variant="preview")
-    elif allow_download:
+    elif allow_download and policy.inline_allowed:
         content_url = _preview_url("main.preview", pid, file_data, raw=1)
 
     return render_template(
@@ -2775,7 +2967,6 @@ def _get_preview_response_data(file_data, pid):
     )
 
 def _preview_token_not_found():
-    token = (request.view_args or {}).get("pid") or ""
     preview_css = url_for("static", filename="css/standalone-preview.css")
     preview_js = url_for("static", filename="js/preview.js")
     return (
@@ -2790,7 +2981,7 @@ def _preview_token_not_found():
         "<p class=\"state-copy\">This preview has expired. Please reopen the message.</p>"
         "<button class=\"btn\" id=\"closeBtn\" type=\"button\">Close</button></div>"
         "</div></main></div>"
-        f"<div id=\"previewConfig\" hidden data-token=\"{token}\" data-allow-download=\"false\"></div>"
+        "<div id=\"previewConfig\" hidden data-token=\"\" data-allow-download=\"false\"></div>"
         "</body></html>"
     ), 404
 
@@ -2798,10 +2989,13 @@ def _preview_token_not_found():
 def _get_preview_token_response_data(entry: PreviewEntry):
     """Render token-based preview metadata without exposing file bytes to Jinja."""
     filename = sanitize_attachment_filename(entry.filename or "attachment.bin")
-    mime = entry.mime_type or "application/octet-stream"
+    policy = _preview_mime_policy(filename, entry.mime_type)
+    mime = policy.effective_mime
     allow_download = entry.allow_download is True
     content_url = ""
-    if allow_download or mime.lower().startswith("image/"):
+    if (allow_download and policy.inline_allowed) or (
+        not allow_download and _can_render_no_download_image_preview(filename, mime)
+    ):
         content_url = url_for("main.preview_content", preview_token=entry.token)
 
     return render_template(
@@ -2847,12 +3041,22 @@ def preview(pid: str):
     if request.args.get("raw") == "1":
         if not _can_send_original_attachment(file_data):
             abort(403)
-        response = send_file(content_path, mimetype=file_data["mime"], as_attachment=False)
-        return _mark_sensitive_no_store(response)
+        filename = sanitize_attachment_filename(file_data["filename"])
+        policy = _preview_mime_policy(filename, file_data.get("mime"))
+        return _preview_send_file(
+            content_path,
+            filename,
+            policy,
+            as_attachment=not policy.inline_allowed,
+        )
 
     if request.args.get("variant") == "preview":
+        filename = sanitize_attachment_filename(file_data.get("filename") or "attachment.bin")
+        policy = _preview_mime_policy(filename, file_data.get("mime", ""))
+        if not _can_render_no_download_image_preview(filename, policy.effective_mime):
+            abort(415)
         preview_data = build_no_download_image_preview(
-            mime_type=file_data.get("mime", ""),
+            mime_type=policy.effective_mime,
             image_path=content_path,
         )
         if not preview_data:
@@ -2882,11 +3086,14 @@ def preview_content(preview_token: str):
 
     download_requested = request.args.get("download") == "1"
     filename = sanitize_attachment_filename(entry.filename or "attachment.bin")
-    mime_type = entry.mime_type or "application/octet-stream"
+    policy = _preview_mime_policy(filename, entry.mime_type)
+    mime_type = policy.effective_mime
     if entry.allow_download is not True:
         if download_requested:
             abort(403)
 
+        if not _can_render_no_download_image_preview(filename, mime_type):
+            abort(415)
         preview_data = build_no_download_image_preview(mime_type=mime_type, image_path=entry.file_path)
         if not preview_data:
             abort(415)
@@ -2898,17 +3105,12 @@ def preview_content(preview_token: str):
         )
         return _mark_sensitive_no_store(response)
 
-    response = send_file(
+    return _preview_send_file(
         entry.file_path,
-        mimetype=mime_type,
-        as_attachment=download_requested,
-        download_name=(
-            filename
-            if download_requested
-            else None
-        ),
+        filename,
+        policy,
+        as_attachment=download_requested or not policy.inline_allowed,
     )
-    return _mark_sensitive_no_store(response)
 
 
 @bp.route("/preview/<pid>/download")
@@ -2923,12 +3125,13 @@ def preview_download(pid: str):
         abort(404)
 
     filename = sanitize_attachment_filename(file_data["filename"])
+    policy = _preview_mime_policy(filename, file_data.get("mime"))
     native_response = _native_save_response(None, filename, file_path=content_path)
     if native_response is not None:
         return native_response
     response = send_file(
         content_path,
-        mimetype=file_data["mime"],
+        mimetype=policy.download_mime,
         as_attachment=True,
         download_name=filename
     )

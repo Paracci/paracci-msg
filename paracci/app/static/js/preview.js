@@ -2,11 +2,16 @@
 
 (() => {
     const MAX_TEXT_CHARS = 50000;
-    const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "ico"]);
+    const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico"]);
     const VIDEO_EXTS = new Set(["mp4", "webm", "mov"]);
     const AUDIO_EXTS = new Set(["mp3", "wav", "ogg", "flac", "aac", "m4a"]);
     const TEXT_EXTS = new Set(["txt", "log", "csv"]);
-    const CODE_EXTS = new Set(["json", "xml", "html", "py", "js", "css"]);
+    const MARKDOWN_EXTS = new Set(["md", "markdown"]);
+    const JSON_EXTS = new Set(["json"]);
+    const ACTIVE_EXTS = new Set([
+        "html", "htm", "xhtml", "svg", "pdf", "xml", "xsl", "xslt",
+        "js", "mjs", "cjs", "wasm", "css", "hta"
+    ]);
     const objectUrls = [];
 
     let config = {
@@ -101,16 +106,38 @@
         return String(config.mimeType || "").toLowerCase();
     }
 
+    function isActiveMime(mime) {
+        if (!mime) return false;
+        const clean = mime.split(";")[0].trim();
+        const subtype = clean.includes("/") ? clean.split("/")[1] : "";
+        return clean === "text/html"
+            || clean === "application/xhtml+xml"
+            || clean === "image/svg+xml"
+            || clean === "application/pdf"
+            || clean === "text/xml"
+            || clean === "application/xml"
+            || clean.endsWith("+xml")
+            || clean === "text/javascript"
+            || clean === "application/javascript"
+            || clean === "application/x-javascript"
+            || clean === "application/ecmascript"
+            || clean === "text/ecmascript"
+            || clean === "application/wasm"
+            || clean === "text/css"
+            || subtype.includes("javascript")
+            || subtype.includes("ecmascript");
+    }
+
     function previewKind() {
         const ext = extension();
         const mime = mimeType();
-        if (mime === "application/pdf" || ext === "pdf") return "pdf";
+        if (ACTIVE_EXTS.has(ext) || isActiveMime(mime)) return "unsupported";
         if (mime.startsWith("image/") || IMAGE_EXTS.has(ext)) return "image";
         if (mime.startsWith("video/") || VIDEO_EXTS.has(ext)) return "video";
         if (mime.startsWith("audio/") || AUDIO_EXTS.has(ext)) return "audio";
-        if (ext === "md" || mime === "text/markdown") return "markdown";
+        if (MARKDOWN_EXTS.has(ext) || mime === "text/markdown") return "markdown";
         if (TEXT_EXTS.has(ext) || mime === "text/plain" || mime === "text/csv") return "text";
-        if (CODE_EXTS.has(ext) || mime.includes("json") || mime.includes("xml")) return "code";
+        if (JSON_EXTS.has(ext) || mime === "application/json" || mime.endsWith("+json")) return "code";
         return "unsupported";
     }
 
@@ -500,11 +527,6 @@
     function languageForCode() {
         const ext = extension();
         const map = {
-            js: "javascript",
-            py: "python",
-            html: "xml",
-            xml: "xml",
-            css: "css",
             json: "json"
         };
         return map[ext] || "";
