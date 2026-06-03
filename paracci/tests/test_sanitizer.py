@@ -1,16 +1,26 @@
 import importlib
 import io
+import logging
+import struct
 import sys
+import zlib
 from pathlib import Path
 
 import pytest
 from flask import g
-from PIL import Image
+from PIL import Image, ImageOps
 from werkzeug.datastructures import FileStorage
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core.sanitizer import SanitizationError, build_no_download_image_preview, sanitize_image, sanitize_text
+from core import sanitizer as sanitizer_module
+from core.sanitizer import (
+    MAX_IMAGE_DIMENSION,
+    SanitizationError,
+    build_no_download_image_preview,
+    sanitize_image,
+    sanitize_text,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +81,15 @@ HOST = "127.0.0.1:18080"
 ORIGIN = f"http://{HOST}"
 
 
+def png_metadata_bytes(width, height):
+    def chunk(kind, data):
+        crc = zlib.crc32(kind + data) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", crc)
+
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IEND", b"")
+
+
 def make_flask_app(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("PARACCI_LOOPBACK_HOST", "127.0.0.1")
@@ -97,6 +116,82 @@ def test_sanitize_image_leaves_non_image_bytes_unchanged():
     original = b"not an image but not a supported image extension"
 
     assert sanitize_image(original, "note.txt") == original
+
+
+@pytest.mark.parametrize(("image_format", "filename"), [("PNG", "safe.png"), ("JPEG", "safe.jpg")])
+def test_sanitize_image_accepts_valid_small_raster_images(image_format, filename):
+    source = io.BytesIO()
+    Image.new("RGB", (64, 48), (14, 80, 130)).save(source, format=image_format)
+
+    sanitized = sanitize_image(source.getvalue(), filename)
+
+    rendered = Image.open(io.BytesIO(sanitized))
+    assert rendered.size == (64, 48)
+
+
+def test_sanitize_image_rejects_over_pixel_budget_before_conversion(monkeypatch):
+    def fail_convert(_image, *_args, **_kwargs):
+        pytest.fail("over-budget image reached Pillow conversion")
+
+    monkeypatch.setattr(Image.Image, "convert", fail_convert)
+
+    with pytest.raises(SanitizationError):
+        sanitize_image(png_metadata_bytes(6000, 5000), "huge.png")
+
+
+def test_build_no_download_preview_rejects_over_dimension_before_thumbnail(monkeypatch):
+    def fail_processing(*_args, **_kwargs):
+        pytest.fail("over-dimension image reached preview processing")
+
+    monkeypatch.setattr(ImageOps, "exif_transpose", fail_processing)
+    monkeypatch.setattr(Image.Image, "thumbnail", fail_processing)
+
+    assert (
+        build_no_download_image_preview(
+            png_metadata_bytes(MAX_IMAGE_DIMENSION + 1, 1),
+            "image/png",
+        )
+        is None
+    )
+
+
+def test_sanitize_image_converts_decompression_bomb_warning_to_safe_rejection():
+    with pytest.raises(SanitizationError):
+        sanitize_image(png_metadata_bytes(5001, 5001), "bomb-warning.png")
+
+
+def test_no_download_preview_converts_decompression_bomb_error_to_safe_rejection():
+    assert build_no_download_image_preview(png_metadata_bytes(10000, 6000), "image/png") is None
+
+
+def test_build_no_download_preview_rejects_svg_without_raster_decoder(monkeypatch):
+    monkeypatch.setattr(
+        sanitizer_module.Image,
+        "open",
+        lambda *_args, **_kwargs: pytest.fail("SVG reached Pillow raster decoder"),
+    )
+
+    assert build_no_download_image_preview(b"<svg><script></script></svg>", "image/svg+xml") is None
+
+
+def test_image_rejection_logs_are_generic(caplog):
+    sentinel = "preview-token-local-path-secret"
+    secret_filename = r"tests/fixtures/preview-token-local-path-secret.png"
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="core.sanitizer"):
+        with pytest.raises(SanitizationError) as exc_info:
+            sanitize_image(
+                png_metadata_bytes(MAX_IMAGE_DIMENSION + 1, 1) + sentinel.encode("ascii"),
+                secret_filename,
+            )
+
+    log_text = caplog.text
+    assert "Image attachment rejected during sanitization." in log_text
+    assert sentinel not in log_text
+    assert secret_filename not in log_text
+    assert sentinel not in str(exc_info.value)
+    assert secret_filename not in str(exc_info.value)
 
 
 def test_build_no_download_image_preview_returns_lossy_bounded_jpeg():

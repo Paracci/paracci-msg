@@ -13,7 +13,7 @@ from typing import Any
 from desktop.device_key_binding import DeviceBindingError
 from desktop.services import AttachmentPayload, MessageServiceError, NativeServices, OpenedMessage, SessionServiceError
 from core.ingest_limits import MAX_SETUP_FILE_BYTES, IngestionLimitError, read_path_limited
-from core.sanitizer import build_no_download_image_preview
+from core.sanitizer import build_no_download_image_preview, is_safe_raster_image_mime
 
 logger = logging.getLogger(__name__)
 
@@ -313,7 +313,7 @@ class UIApi:
         attachment = self._get_attachment(open_id, attachment_id)
         response = self._attachment_meta(attachment, attachment_id)
         if not attachment.allow_download:
-            if attachment.is_image:
+            if attachment.is_image and is_safe_raster_image_mime(attachment.mime_type):
                 preview_data = build_no_download_image_preview(
                     attachment.content,
                     attachment.mime_type,

@@ -503,6 +503,36 @@ def test_ui_api_non_downloadable_invalid_image_preview_exposes_no_bytes(tmp_path
     assert "content_base64" not in preview
 
 
+def test_ui_api_non_downloadable_svg_preview_does_not_use_raster_decoder(tmp_path, monkeypatch):
+    api = make_api(tmp_path / "native-preview-svg")
+    svg_bytes = b"<svg><script>secretPreviewToken()</script></svg>"
+    open_id = cache_open_attachment(
+        api,
+        AttachmentPayload(
+            filename="vector.svg",
+            content=svg_bytes,
+            mime_type="image/svg+xml",
+            allow_download=False,
+        ),
+    )
+
+    monkeypatch.setattr(
+        facade_module,
+        "build_no_download_image_preview",
+        lambda *_args, **_kwargs: pytest.fail("SVG reached raster preview builder"),
+    )
+
+    preview = api.dispatch(
+        "attachment_preview",
+        {"open_id": open_id, "attachment_id": "0"},
+    )
+
+    assert preview["preview_kind"] == "unsupported"
+    assert preview["message"] == "Preview not available for this file type when downloading is disabled."
+    assert "content_base64" not in preview
+    assert svg_bytes.decode("utf-8") not in str(preview)
+
+
 def test_ui_api_downloadable_image_preview_returns_original_bytes(tmp_path):
     api = make_api(tmp_path / "native-preview-downloadable-image")
     image_bytes = png_bytes()

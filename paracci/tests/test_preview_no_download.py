@@ -1,12 +1,17 @@
 import importlib
 import io
+import struct
 import sys
 import time
+import zlib
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from core.sanitizer import MAX_IMAGE_DIMENSION
 
 
 TOKEN = "test-loopback-token"
@@ -67,6 +72,15 @@ def png_bytes(size=(1400, 900), color=(14, 80, 130, 255)):
     output = io.BytesIO()
     image.save(output, format="PNG")
     return output.getvalue()
+
+
+def png_metadata_bytes(width, height):
+    def chunk(kind, data):
+        crc = zlib.crc32(kind + data) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", crc)
+
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IEND", b"")
 
 
 def seed_preview(pid, content, mime, allow_download, filename=None):
@@ -203,6 +217,65 @@ def test_no_download_token_invalid_image_content_fails_closed(tmp_path, monkeypa
 
     assert response.status_code == 415
     assert response.data != original
+
+
+def test_no_download_token_over_pixel_budget_image_fails_closed(tmp_path, monkeypatch):
+    client = auth_client(tmp_path, monkeypatch)
+    store = fresh_preview_store(monkeypatch)
+    sentinel = b"preview-token-sensitive-image-bytes"
+    original = png_metadata_bytes(6000, 5000) + sentinel
+    token = store.generate_token(
+        original,
+        "preview.png",
+        "image/png",
+        allow_download=False,
+    )
+
+    response = get(client, f"/preview/{token}/content")
+
+    assert response.status_code == 415
+    assert response.data != original
+    assert sentinel not in response.data
+
+
+def test_no_download_legacy_preview_over_dimension_image_fails_closed(tmp_path, monkeypatch):
+    client = auth_client(tmp_path, monkeypatch)
+    sentinel = b"legacy-preview-sensitive-image-bytes"
+    original = png_metadata_bytes(MAX_IMAGE_DIMENSION + 1, 1) + sentinel
+    seed_preview("over-dimension-image", original, "image/png", allow_download=False)
+
+    response = get(client, "/preview/over-dimension-image?variant=preview")
+
+    assert response.status_code == 415
+    assert response.data != original
+    assert sentinel not in response.data
+
+
+def test_no_download_svg_is_rejected_before_raster_decoder(tmp_path, monkeypatch):
+    client = auth_client(tmp_path, monkeypatch)
+    store = fresh_preview_store(monkeypatch)
+    from app import routes
+
+    def fail_preview_builder(*_args, **_kwargs):
+        pytest.fail("SVG reached no-download raster preview builder")
+
+    monkeypatch.setattr(routes, "build_no_download_image_preview", fail_preview_builder)
+    original = b"<svg><script>secretPreviewToken()</script></svg>"
+    token = store.generate_token(
+        original,
+        "vector.svg",
+        "image/svg+xml",
+        allow_download=False,
+    )
+    seed_preview("legacy-vector", original, "image/svg+xml", allow_download=False, filename="vector.svg")
+
+    token_response = get(client, f"/preview/{token}/content")
+    legacy_response = get(client, "/preview/legacy-vector?variant=preview")
+
+    assert token_response.status_code == 415
+    assert token_response.data != original
+    assert legacy_response.status_code == 415
+    assert legacy_response.data != original
 
 
 def test_no_download_raw_preview_rejects_original_bytes(tmp_path, monkeypatch):

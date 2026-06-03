@@ -1,5 +1,6 @@
 import io
 import logging
+import warnings
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageOps, UnidentifiedImageError
@@ -7,9 +8,28 @@ from PIL import Image, ImageDraw, ImageOps, UnidentifiedImageError
 
 logger = logging.getLogger(__name__)
 
+MAX_IMAGE_PIXELS = 25_000_000
+MAX_IMAGE_DIMENSION = 10_000
+MAX_IMAGE_FRAMES = 1
 NO_DOWNLOAD_PREVIEW_MAX_DIMENSION = 1024
 NO_DOWNLOAD_PREVIEW_JPEG_QUALITY = 60
 NO_DOWNLOAD_PREVIEW_WATERMARK = "PARACCI PREVIEW"
+SAFE_RASTER_IMAGE_MIME_TYPES = {
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "image/bmp",
+    "image/x-ms-bmp",
+    "image/vnd.microsoft.icon",
+    "image/x-icon",
+}
+
+Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
+
+
+class ImageSafetyError(Exception):
+    """Raised when image metadata exceeds the application preview budget."""
 
 
 class SanitizationError(Exception):
@@ -26,6 +46,29 @@ class SanitizationError(Exception):
         super().__init__(self.user_message)
 
 
+def _normalize_image_mime(mime_type: str | None) -> str:
+    return str(mime_type or "").split(";", 1)[0].strip().lower()
+
+
+def is_safe_raster_image_mime(mime_type: str | None) -> bool:
+    """Return whether a MIME type is eligible for Pillow raster decoding."""
+    return _normalize_image_mime(mime_type) in SAFE_RASTER_IMAGE_MIME_TYPES
+
+
+def _validate_image_metadata(image: Image.Image) -> None:
+    width, height = image.size
+    if width <= 0 or height <= 0:
+        raise ImageSafetyError("invalid image dimensions")
+    if width > MAX_IMAGE_DIMENSION or height > MAX_IMAGE_DIMENSION:
+        raise ImageSafetyError("image dimensions exceed preview limits")
+    if width * height > MAX_IMAGE_PIXELS:
+        raise ImageSafetyError("image pixel count exceeds preview limits")
+
+    frame_count = getattr(image, "n_frames", 1) or 1
+    if frame_count > MAX_IMAGE_FRAMES:
+        raise ImageSafetyError("image frame count exceeds preview limits")
+
+
 def sanitize_image(image_bytes: bytes, filename: str) -> bytes:
     """
     Cleans EXIF and other metadata from image files.
@@ -36,24 +79,35 @@ def sanitize_image(image_bytes: bytes, filename: str) -> bytes:
         if ext not in ['jpg', 'jpeg', 'png', 'webp']:
             return image_bytes
 
-        img = Image.open(io.BytesIO(image_bytes))
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(image_bytes)) as img:
+                _validate_image_metadata(img)
 
-        # Take only the data part (save to a new buffer without EXIF)
-        output = io.BytesIO()
+                # Take only the data part (save to a new buffer without EXIF)
+                output = io.BytesIO()
 
-        # Maintain transparency for PNG/WebP
-        if img.mode in ("RGBA", "P"):
-            img = img.convert("RGBA")
-        else:
-            img = img.convert("RGB")
+                # Maintain transparency for PNG/WebP
+                if img.mode in ("RGBA", "P"):
+                    img = img.convert("RGBA")
+                else:
+                    img = img.convert("RGB")
 
-        save_format = "JPEG" if ext in ['jpg', 'jpeg'] else ext.upper()
+                save_format = "JPEG" if ext in ['jpg', 'jpeg'] else ext.upper()
 
-        # Save without adding EXIF
-        img.save(output, format=save_format, optimize=True)
-        return output.getvalue()
-    except Exception as e:
-        logger.error(f"Image cleaning error ({filename}): {e}")
+                # Save without adding EXIF
+                img.save(output, format=save_format, optimize=True)
+                return output.getvalue()
+    except (
+        ImageSafetyError,
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+        UnidentifiedImageError,
+        OSError,
+        ValueError,
+        KeyError,
+    ) as e:
+        logger.warning("Image attachment rejected during sanitization.")
         raise SanitizationError(filename) from e
 
 
@@ -64,58 +118,71 @@ def build_no_download_image_preview(
     image_path: str | Path | None = None
 ) -> tuple[bytes, str] | None:
     """Build a lossy, marked derivative for a restricted inline image preview."""
-    if not str(mime_type or "").lower().startswith("image/"):
+    if not is_safe_raster_image_mime(mime_type):
+        return None
+    if image_path is None and image_bytes is None:
         return None
 
     try:
         image_source = image_path if image_path else io.BytesIO(image_bytes)
-        with Image.open(image_source) as image:
-            image = ImageOps.exif_transpose(image)
-            image.thumbnail(
-                (NO_DOWNLOAD_PREVIEW_MAX_DIMENSION, NO_DOWNLOAD_PREVIEW_MAX_DIMENSION)
-            )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(image_source) as image:
+                _validate_image_metadata(image)
+                image = ImageOps.exif_transpose(image)
+                image.thumbnail(
+                    (NO_DOWNLOAD_PREVIEW_MAX_DIMENSION, NO_DOWNLOAD_PREVIEW_MAX_DIMENSION)
+                )
 
-            has_alpha = image.mode in ("RGBA", "LA") or (
-                image.mode == "P" and "transparency" in image.info
-            )
-            if has_alpha:
-                rgba = image.convert("RGBA")
-                background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
-                background.alpha_composite(rgba)
-                image = background.convert("RGB")
-            else:
-                image = image.convert("RGB")
+                has_alpha = image.mode in ("RGBA", "LA") or (
+                    image.mode == "P" and "transparency" in image.info
+                )
+                if has_alpha:
+                    rgba = image.convert("RGBA")
+                    background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+                    background.alpha_composite(rgba)
+                    image = background.convert("RGB")
+                else:
+                    image = image.convert("RGB")
 
-            draw = ImageDraw.Draw(image)
-            text = NO_DOWNLOAD_PREVIEW_WATERMARK
-            try:
-                left, top, right, bottom = draw.textbbox((0, 0), text)
-                text_width = right - left
-                text_height = bottom - top
-            except AttributeError:
-                text_width, text_height = draw.textsize(text)
+                draw = ImageDraw.Draw(image)
+                text = NO_DOWNLOAD_PREVIEW_WATERMARK
+                try:
+                    left, top, right, bottom = draw.textbbox((0, 0), text)
+                    text_width = right - left
+                    text_height = bottom - top
+                except AttributeError:
+                    text_width, text_height = draw.textsize(text)
 
-            margin = max(12, min(image.size) // 40)
-            pad = 6
-            x = max(margin, image.width - text_width - margin)
-            y = max(margin, image.height - text_height - margin)
-            draw.rectangle(
-                [x - pad, y - pad, x + text_width + pad, y + text_height + pad],
-                fill=(255, 255, 255),
-                outline=(30, 30, 30),
-            )
-            draw.text((x, y), text, fill=(30, 30, 30))
+                margin = max(12, min(image.size) // 40)
+                pad = 6
+                x = max(margin, image.width - text_width - margin)
+                y = max(margin, image.height - text_height - margin)
+                draw.rectangle(
+                    [x - pad, y - pad, x + text_width + pad, y + text_height + pad],
+                    fill=(255, 255, 255),
+                    outline=(30, 30, 30),
+                )
+                draw.text((x, y), text, fill=(30, 30, 30))
 
-            output = io.BytesIO()
-            image.save(
-                output,
-                format="JPEG",
-                quality=NO_DOWNLOAD_PREVIEW_JPEG_QUALITY,
-                optimize=True,
-            )
-            return output.getvalue(), "image/jpeg"
-    except (UnidentifiedImageError, OSError, ValueError, KeyError) as exc:
-        logger.warning("Could not build no-download image preview: %s", exc)
+                output = io.BytesIO()
+                image.save(
+                    output,
+                    format="JPEG",
+                    quality=NO_DOWNLOAD_PREVIEW_JPEG_QUALITY,
+                    optimize=True,
+                )
+                return output.getvalue(), "image/jpeg"
+    except (
+        ImageSafetyError,
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+        UnidentifiedImageError,
+        OSError,
+        ValueError,
+        KeyError,
+    ):
+        logger.warning("No-download image preview rejected during sanitization.")
         return None
 
 
