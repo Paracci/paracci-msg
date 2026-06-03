@@ -40,6 +40,9 @@ def make_api(path: Path) -> UIApi:
     path.mkdir(parents=True, exist_ok=True)
     os.environ["DATA_DIR"] = str(path)
     svc = NativeServices(path, "en")
+    downloads = path / "downloads"
+    downloads.mkdir(parents=True, exist_ok=True)
+    svc.settings.config.full_downloads_path = str(downloads)
     return UIApi(svc)
 
 
@@ -82,6 +85,14 @@ def png_bytes(size=(1400, 900), color=(14, 80, 130, 255)):
     return output.getvalue()
 
 
+def save_grant(api: UIApi, result: dict) -> Path:
+    saved = api.dispatch(
+        "save_grant_to_downloads",
+        {"native_save_token": result["native_save_token"]},
+    )
+    return Path(saved["output_path"])
+
+
 def test_ui_api_device_settings_and_profile(tmp_path):
     api = make_api(tmp_path / "device")
 
@@ -108,21 +119,22 @@ def test_ui_api_session_roundtrip_and_attachment_cache(tmp_path):
     x.dispatch("device_init", {"pin": "Correct-Horse-95175328"})
     y.dispatch("device_init", {"pin": "Correct-Horse-95175328"})
 
-    init_path = tmp_path / "init.paracci"
-    resp_path = tmp_path / "resp.paracci"
-    msg_path = tmp_path / "msg.paracci"
     attachment_path = tmp_path / "note.txt"
     attachment_path.write_text("attachment text", encoding="utf-8")
 
     created = x.dispatch(
         "session_create",
-        {"label": "X", "export_path": str(init_path)},
+        {"label": "X"},
     )
+    init_path = save_grant(x, created)
+    init_ref = y.register_trusted_file_path(init_path, "session_import")
     imported = y.dispatch(
         "session_import",
-        {"import_path": str(init_path), "local_label": "Y", "auto_export_path": str(resp_path)},
+        {"import_ref": init_ref["id"], "local_label": "Y"},
     )
-    finalized = x.dispatch("session_import", {"import_path": str(resp_path), "local_label": "unused"})
+    resp_path = save_grant(y, imported)
+    resp_ref = x.register_trusted_file_path(resp_path, "session_import")
+    finalized = x.dispatch("session_import", {"import_ref": resp_ref["id"], "local_label": "unused"})
     x.dispatch("session_confirm_safety", {
         "session_id_hex": finalized["session_id_hex"],
         "safety_code": finalized["safety_code"],
@@ -136,23 +148,25 @@ def test_ui_api_session_roundtrip_and_attachment_cache(tmp_path):
     assert resp_path.exists()
     assert created["session_id_hex"] == imported["session_id_hex"] == finalized["session_id_hex"]
 
+    staged = x.stage_trusted_attachment_paths([attachment_path])
     sealed = x.dispatch(
         "message_seal",
         {
             "session_id_hex": finalized["session_id_hex"],
             "text": "Hello **Y**",
-            "output_path": str(msg_path),
-            "attachment_paths": [str(attachment_path)],
+            "attachment_ids": [staged[0]["id"]],
             "allow_download": True,
         },
     )
+    msg_path = save_grant(x, sealed)
     assert msg_path.exists()
     assert sealed["filename"].startswith("msg_step_000000_")
     assert sealed["filename"].endswith(".paracci")
 
+    msg_ref = y.register_trusted_file_path(msg_path, "message_open")
     opened = y.dispatch(
         "message_open",
-        {"session_id_hex": imported["session_id_hex"], "message_path": str(msg_path), "burn_source": False},
+        {"session_id_hex": imported["session_id_hex"], "message_ref": msg_ref["id"], "burn_source": False},
     )
     assert opened["text"] == "Hello **Y**"
     assert opened["attachments"][0]["filename"] == "note.txt"
@@ -165,12 +179,12 @@ def test_ui_api_session_roundtrip_and_attachment_cache(tmp_path):
     assert preview["preview_kind"] == "text"
     assert "attachment text" in preview["text"]
 
-    saved_path = tmp_path / "saved-note.txt"
     saved = y.dispatch(
         "attachment_save",
-        {"open_id": opened["open_id"], "attachment_id": "0", "output_path": str(saved_path)},
+        {"open_id": opened["open_id"], "attachment_id": "0"},
     )
-    assert Path(saved["output_path"]).read_text(encoding="utf-8") == "attachment text"
+    saved_path = save_grant(y, saved)
+    assert saved_path.read_text(encoding="utf-8") == "attachment text"
 
     y.dispatch("open_clear", {"open_id": opened["open_id"]})
     assert opened["open_id"] not in y._opened
@@ -253,13 +267,252 @@ def test_ui_api_session_import_rejects_oversized_path_before_service_import(tmp_
         lambda *_args, **_kwargs: pytest.fail("oversized setup reached service import"),
     )
 
+    import_ref = api.register_trusted_file_path(setup_path, "session_import")
+
     with pytest.raises(UIApiError) as exc_info:
-        api.dispatch("session_import", {"import_path": str(setup_path), "local_label": "Y"})
+        api.dispatch("session_import", {"import_ref": import_ref["id"], "local_label": "Y"})
 
     assert exc_info.value.code == "session_service_error"
     assert "too large" in exc_info.value.message
     assert sentinel not in exc_info.value.message
     assert str(setup_path) not in exc_info.value.message
+
+
+@pytest.mark.parametrize(
+    "method,params",
+    [
+        ("session_create", {"label": "X", "export_path": "C:/private/init.paracci"}),
+        ("session_import", {"import_ref": "opaque", "import_path": "C:/private/init.paracci"}),
+        ("session_import", {"import_ref": "opaque", "auto_export_path": "C:/private/resp.paracci"}),
+        ("session_export", {"session_id_hex": "00", "export_path": "C:/private/export.paracci"}),
+        (
+            "message_seal",
+            {
+                "session_id_hex": "00",
+                "text": "secret",
+                "output_path": "C:/private/msg.paracci",
+            },
+        ),
+        (
+            "message_seal",
+            {
+                "session_id_hex": "00",
+                "text": "secret",
+                "attachment_paths": ["C:/private/secret.txt"],
+            },
+        ),
+        ("message_open", {"session_id_hex": "00", "message_path": "C:/private/msg.paracci"}),
+        ("attachment_save", {"open_id": "open-id", "attachment_id": "0", "output_path": "C:/private/out.txt"}),
+    ],
+)
+def test_ui_api_rejects_raw_path_params_before_handler(tmp_path, monkeypatch, caplog, method, params):
+    api = make_api(tmp_path / "raw-path-reject")
+    sentinel = "C:/private/path-secret-sentinel.paracci"
+    params = {
+        key: (
+            sentinel
+            if isinstance(value, str) and value.startswith("C:/private")
+            else [sentinel] if isinstance(value, list) else value
+        )
+        for key, value in params.items()
+    }
+
+    monkeypatch.setattr(
+        api,
+        f"cmd_{method}",
+        lambda **_kwargs: pytest.fail("raw path reached command handler"),
+    )
+
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG), pytest.raises(UIApiError) as exc_info:
+        api.dispatch(method, params)
+
+    serialized_error = json.dumps(exc_info.value.to_dict())
+    assert exc_info.value.code == "raw_path_rejected"
+    assert sentinel not in serialized_error
+    assert sentinel not in caplog.text
+
+
+def test_ui_api_rejects_raw_attachment_paths_before_service_call(tmp_path, monkeypatch):
+    api = make_api(tmp_path / "raw-attachment-path")
+    secret_path = tmp_path / "private-secret.txt"
+    secret_path.write_text("secret attachment", encoding="utf-8")
+    monkeypatch.setattr(
+        api.services.messages,
+        "seal_message",
+        lambda *_args, **_kwargs: pytest.fail("raw attachment path reached message service"),
+    )
+
+    with pytest.raises(UIApiError) as exc_info:
+        api.dispatch(
+            "message_seal",
+            {
+                "session_id_hex": "00",
+                "text": "secret",
+                "attachment_paths": [str(secret_path)],
+            },
+        )
+
+    serialized_error = json.dumps(exc_info.value.to_dict())
+    assert exc_info.value.code == "raw_path_rejected"
+    assert str(secret_path) not in serialized_error
+
+
+def test_ui_api_file_refs_are_purpose_scoped_one_shot_and_sanitized(tmp_path):
+    api = make_api(tmp_path / "file-refs")
+    selected = tmp_path / "selected-secret-name.paracci"
+    selected.write_bytes(b"not a real paracci file")
+    ref = api.register_trusted_file_path(selected, "session_import")
+
+    with pytest.raises(UIApiError) as wrong_purpose:
+        api.dispatch(
+            "message_open",
+            {"session_id_hex": "00", "message_ref": ref["id"], "burn_source": False},
+        )
+    assert wrong_purpose.value.code == "file_ref_invalid"
+    assert str(selected) not in json.dumps(wrong_purpose.value.to_dict())
+
+    with pytest.raises(UIApiError) as consumed:
+        api.dispatch("session_import", {"import_ref": ref["id"], "local_label": "Y"})
+    assert consumed.value.code == "file_ref_invalid"
+
+    stale_ref = api.register_trusted_file_path(selected, "session_import")
+    api._file_refs[stale_ref["id"]] = facade_module.TrustedFileRef(
+        path=selected,
+        purpose="session_import",
+        expires_at=time.time() - 1,
+    )
+    with pytest.raises(UIApiError) as expired:
+        api.dispatch("session_import", {"import_ref": stale_ref["id"], "local_label": "Y"})
+    assert expired.value.code == "file_ref_invalid"
+    assert str(selected) not in json.dumps(expired.value.to_dict())
+
+
+def test_ui_api_save_grant_to_downloads_is_one_shot_and_no_clobber(tmp_path):
+    api = make_api(tmp_path / "save-grant-no-clobber")
+    downloads = Path(api.services.settings.downloads_dir)
+    existing = downloads / "payload.bin"
+    existing.write_bytes(b"existing")
+    open_id = cache_open_attachment(
+        api,
+        AttachmentPayload(
+            filename="payload.bin",
+            content=b"payload",
+            mime_type="application/octet-stream",
+            allow_download=True,
+        ),
+    )
+
+    grant = api.dispatch("attachment_save", {"open_id": open_id, "attachment_id": "0"})
+    saved = api.dispatch(
+        "save_grant_to_downloads",
+        {"native_save_token": grant["native_save_token"]},
+    )
+
+    saved_path = Path(saved["output_path"])
+    assert saved_path == downloads / "payload_1.bin"
+    assert saved_path.read_bytes() == b"payload"
+    assert existing.read_bytes() == b"existing"
+
+    with pytest.raises(UIApiError) as reused:
+        api.dispatch(
+            "save_grant_to_downloads",
+            {"native_save_token": grant["native_save_token"]},
+        )
+    assert reused.value.code == "save_grant_invalid"
+
+
+def test_ui_api_save_grant_to_downloads_does_not_follow_existing_symlink(tmp_path):
+    api = make_api(tmp_path / "save-grant-symlink")
+    downloads = Path(api.services.settings.downloads_dir)
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes(b"outside")
+    symlink = downloads / "payload.bin"
+    try:
+        symlink.symlink_to(outside)
+    except OSError:
+        pytest.skip("Symlink creation is not available on this platform.")
+    open_id = cache_open_attachment(
+        api,
+        AttachmentPayload(
+            filename="payload.bin",
+            content=b"payload",
+            mime_type="application/octet-stream",
+            allow_download=True,
+        ),
+    )
+
+    grant = api.dispatch("attachment_save", {"open_id": open_id, "attachment_id": "0"})
+    saved = api.dispatch(
+        "save_grant_to_downloads",
+        {"native_save_token": grant["native_save_token"]},
+    )
+
+    saved_path = Path(saved["output_path"])
+    assert saved_path == downloads / "payload_1.bin"
+    assert saved_path.read_bytes() == b"payload"
+    assert outside.read_bytes() == b"outside"
+
+
+def test_ui_api_attachment_save_rejects_unsafe_filename_without_parent_creation(tmp_path):
+    api = make_api(tmp_path / "save-grant-unsafe-name")
+    downloads = Path(api.services.settings.downloads_dir)
+    open_id = cache_open_attachment(
+        api,
+        AttachmentPayload(
+            filename="../payload.bin",
+            content=b"payload",
+            mime_type="application/octet-stream",
+            allow_download=True,
+        ),
+    )
+
+    with pytest.raises(UIApiError) as exc_info:
+        api.dispatch("attachment_save", {"open_id": open_id, "attachment_id": "0"})
+
+    serialized_error = json.dumps(exc_info.value.to_dict())
+    assert exc_info.value.code == "save_failed"
+    assert "../payload.bin" not in serialized_error
+    assert not (downloads / "payload.bin").exists()
+    assert not (downloads / "nested").exists()
+
+
+def test_ui_api_staged_attachment_count_and_size_limits_remain_enforced(tmp_path, monkeypatch):
+    api = make_api(tmp_path / "staged-limits")
+    too_many = []
+    for index in range(facade_module.MAX_ATTACHMENT_COUNT + 1):
+        candidate = tmp_path / f"note-{index}.txt"
+        candidate.write_text("x", encoding="utf-8")
+        too_many.append(candidate)
+
+    with pytest.raises(UIApiError) as count_error:
+        api.stage_trusted_attachment_paths(too_many)
+    assert count_error.value.code == "attachment_limit"
+
+    oversized = tmp_path / "oversized.txt"
+    oversized.write_bytes(b"x" * 16)
+    monkeypatch.setattr(facade_module, "MAX_ATTACHMENT_SIZE", 8)
+
+    with pytest.raises(UIApiError) as size_error:
+        api.stage_trusted_attachment_paths([oversized])
+    assert size_error.value.code == "attachment_limit"
+    assert api._staged_attachments == {}
+
+
+def test_worker_unexpected_errors_are_sanitized():
+    from bridge.worker import handle_line
+
+    class FailingApi:
+        def dispatch(self, _method, _params):
+            raise RuntimeError("C:/private/path-secret-sentinel.paracci")
+
+    response = handle_line(FailingApi(), json.dumps({"id": "1", "method": "boom", "params": {}}))
+
+    serialized = json.dumps(response)
+    assert response["ok"] is False
+    assert response["error"]["code"] == "unexpected_error"
+    assert response["error"]["message"] == "Unexpected error."
+    assert "path-secret-sentinel" not in serialized
 
 
 def test_ui_api_2fa_unlock_stays_pending_until_totp_verification(tmp_path):

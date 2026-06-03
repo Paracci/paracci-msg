@@ -813,53 +813,64 @@ class MessageService:
         self,
         session_id_hex: str,
         text: str,
-        attachment_paths: list[Path],
+        attachment_paths: list[Path] | None,
         allow_download: bool,
         ttl_seconds: int = 0,
         output_path: str | Path | None = None,
+        staged_attachments: list[tuple[str, Path]] | None = None,
     ) -> tuple[bytes | None, str]:
-        meta = self.sessions.load(session_id_hex)
+        files: list[tuple[str, Path]] = []
+        temp_zip_path: Path | None = None
         try:
-            require_transcript_bound_session(meta)
-        except HybridKEMError as exc:
-            raise MessageServiceError(exc.i18n_key) from exc
-        if not meta.can_send:
-            raise MessageServiceError("Session safety code has not been confirmed.")
+            meta = self.sessions.load(session_id_hex)
+            try:
+                require_transcript_bound_session(meta)
+            except HybridKEMError as exc:
+                raise MessageServiceError(exc.i18n_key) from exc
+            if not meta.can_send:
+                raise MessageServiceError("Session safety code has not been confirmed.")
 
-        normalized_text = unicodedata.normalize("NFC", text.strip())
-        files = self._read_attachments(attachment_paths)
-        
-        # Write ZIP directly to disk to minimize memory usage
-        temp_dir = Path(os.environ.get("DATA_DIR", "data")) / "temp"
-        temp_dir.mkdir(parents=True, exist_ok=True)
-        _secure_dir_permissions(temp_dir)
-        token = secrets.token_hex(16)
-        temp_zip_path = temp_dir / f"package_{token}.zip"
-        
-        try:
-            import inspect
-            sig = inspect.signature(create_package)
-            if "output_path" in sig.parameters:
-                create_package(normalized_text, files, allow_download=allow_download, output_path=temp_zip_path)
+            normalized_text = unicodedata.normalize("NFC", text.strip())
+            if staged_attachments is not None:
+                if attachment_paths:
+                    raise MessageServiceError("Attachment paths cannot be combined with staged attachments.")
+                files = list(staged_attachments)
+                self._validate_prepared_attachments(files)
             else:
-                pkg_bytes = create_package(normalized_text, files, allow_download)
-                with open(temp_zip_path, "wb") as f:
-                    f.write(pkg_bytes)
-            
-            sealed = seal_envelope(
-                temp_zip_path,
-                meta,
-                single_use=True,
-                ttl_seconds=ttl_seconds,
-                allow_download=allow_download,
-                output_path=output_path,
-            )
+                files = self._read_attachments(attachment_paths or [])
+
+            # Write ZIP directly to disk to minimize memory usage
+            temp_dir = Path(os.environ.get("DATA_DIR", "data")) / "temp"
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            _secure_dir_permissions(temp_dir)
+            token = secrets.token_hex(16)
+            temp_zip_path = temp_dir / f"package_{token}.zip"
+
+            try:
+                import inspect
+                sig = inspect.signature(create_package)
+                if "output_path" in sig.parameters:
+                    create_package(normalized_text, files, allow_download=allow_download, output_path=temp_zip_path)
+                else:
+                    pkg_bytes = create_package(normalized_text, files, allow_download)
+                    with open(temp_zip_path, "wb") as f:
+                        f.write(pkg_bytes)
+
+                sealed = seal_envelope(
+                    temp_zip_path,
+                    meta,
+                    single_use=True,
+                    ttl_seconds=ttl_seconds,
+                    allow_download=allow_download,
+                    output_path=output_path,
+                )
+            finally:
+                if temp_zip_path and temp_zip_path.exists():
+                    try:
+                        secure_delete(temp_zip_path)
+                    except Exception:
+                        pass
         finally:
-            if temp_zip_path.exists():
-                try:
-                    secure_delete(temp_zip_path)
-                except Exception:
-                    pass
             for name, temp_file_path in files:
                 if isinstance(temp_file_path, (str, Path)) and os.path.exists(temp_file_path):
                     try:
@@ -1062,6 +1073,21 @@ class MessageService:
                     except Exception:
                         pass
             raise
+
+    def _validate_prepared_attachments(self, files: list[tuple[str, Path]]) -> None:
+        if len(files) > MAX_ATTACHMENT_COUNT:
+            raise MessageServiceError(f"Maximum {MAX_ATTACHMENT_COUNT} files can be attached.")
+        total_size = 0
+        for _name, path in files:
+            try:
+                file_size = os.path.getsize(path)
+            except OSError as exc:
+                raise MessageServiceError("A staged attachment could not be read.") from exc
+            total_size += file_size
+            if total_size > MAX_ATTACHMENT_SIZE:
+                raise MessageServiceError(
+                    f"Total attachment size exceeds {MAX_ATTACHMENT_SIZE // (1024 * 1024)}MB."
+                )
 
 
 class I18nService:

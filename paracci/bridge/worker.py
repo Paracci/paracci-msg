@@ -60,7 +60,7 @@ def handle_line(api: UIApi, line: str) -> dict:
         return make_response(
             request_id,
             False,
-            error={"code": exc.__class__.__name__, "message": str(exc), "details": None},
+            error={"code": "unexpected_error", "message": "Unexpected error.", "details": None},
         )
 
 
