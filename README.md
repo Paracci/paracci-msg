@@ -89,14 +89,26 @@ Install these tools before running KEM tests or packaging builds:
 - CMake.
 - A C compiler. On Windows, use Visual Studio Build Tools/MSVC from a Developer PowerShell so CMake can discover the compiler.
 
-For a manual Windows `liboqs` install, build a shared library and export symbols:
+For a manual Windows `liboqs` install, build the same pinned source used by CI.
+The tag is retained for readability; the expected commit is the integrity
+boundary and must match before CMake runs:
 
 ```powershell
-git clone --depth=1 https://github.com/open-quantum-safe/liboqs
+$env:LIBOQS_VERSION = "0.15.0"
+$env:LIBOQS_EXPECTED_COMMIT = "97f6b86b1b6d109cfd43cf276ae39c2e776aed80"
+git clone --branch $env:LIBOQS_VERSION --depth=1 https://github.com/open-quantum-safe/liboqs
+$actualCommit = git -C liboqs rev-parse HEAD
+if ($actualCommit -ne $env:LIBOQS_EXPECTED_COMMIT) {
+    throw "liboqs source mismatch: expected $env:LIBOQS_EXPECTED_COMMIT, got $actualCommit"
+}
 cmake -S liboqs -B liboqs\build -DCMAKE_INSTALL_PREFIX="<liboqs-install-prefix>" -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=TRUE -DBUILD_SHARED_LIBS=ON
 cmake --build liboqs\build --parallel 8
 cmake --build liboqs\build --target install
 ```
+
+Automated release and native verification builds use the same expected commit
+in their cache key and fail closed if the checked-out source resolves to any
+other commit.
 
 Then make the native library visible by adding the install prefix's `bin` directory to `PATH`, or set:
 

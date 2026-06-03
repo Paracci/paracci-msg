@@ -5,6 +5,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SQLCIPHER_VERSION = "0.5.7"
 PYTEST_TIMEOUT_VERSION = "2.4.0"
+LIBOQS_VERSION = "0.15.0"
+LIBOQS_EXPECTED_COMMIT = "97f6b86b1b6d109cfd43cf276ae39c2e776aed80"
 
 
 def _read(relative_path: str) -> str:
@@ -73,3 +75,52 @@ def test_ci_and_docker_install_python_dependencies_with_hashes():
 
     assert "python -m pip install --ignore-installed --break-system-packages --require-hashes -r requirements.lock" in dockerfile
     assert "python -m pip install --ignore-installed --break-system-packages --require-hashes -r requirements-dev.lock" in dockerfile
+
+
+def test_liboqs_native_action_requires_immutable_source_pin():
+    action = _read(".github/actions/install-liboqs/action.yml")
+
+    assert re.search(
+        r"(?m)^  expected-commit:\n(?:    [^\n]*\n)*?    required: true",
+        action,
+    )
+    assert "^[0-9a-f]{40}$" in action
+    assert "LIBOQS_EXPECTED_COMMIT: ${{ inputs.expected-commit }}" in action
+    assert "key: liboqs-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}-${{ inputs.expected-commit }}" in action
+
+    clone_step = action.index('git clone --branch "$LIBOQS_VERSION" --depth 1 https://github.com/open-quantum-safe/liboqs.git')
+    resolve_step = action.index('actual_commit="$(git -C liboqs rev-parse HEAD)"')
+    mismatch_step = action.index("does not match expected commit")
+    cmake_step = action.index("cmake -S liboqs -B liboqs/build")
+    assert clone_step < resolve_step < mismatch_step < cmake_step
+
+    assert ".paracci-liboqs-source" in action
+    assert "marker_values.get(\"actual_commit\") != expected_commit" in action
+
+
+def test_release_and_native_workflows_pin_liboqs_source_commit():
+    expected_env = f'LIBOQS_EXPECTED_COMMIT: "{LIBOQS_EXPECTED_COMMIT}"'
+    expected_version_env = f'LIBOQS_VERSION: "{LIBOQS_VERSION}"'
+
+    for relative_path, expected_calls in (
+        (".github/workflows/release.yml", 2),
+        (".github/workflows/native_verify.yml", 1),
+    ):
+        workflow = _read(relative_path)
+        assert expected_version_env in workflow
+        assert expected_env in workflow
+        assert workflow.count("uses: ./.github/actions/install-liboqs") == expected_calls
+        assert workflow.count("version: ${{ env.LIBOQS_VERSION }}") == expected_calls
+        assert workflow.count("expected-commit: ${{ env.LIBOQS_EXPECTED_COMMIT }}") == expected_calls
+        assert 'version: "0.15.0"' not in workflow
+
+
+def test_readme_documents_verified_liboqs_source_pin():
+    readme = _read("README.md")
+
+    assert f'$env:LIBOQS_VERSION = "{LIBOQS_VERSION}"' in readme
+    assert f'$env:LIBOQS_EXPECTED_COMMIT = "{LIBOQS_EXPECTED_COMMIT}"' in readme
+    assert "git clone --branch $env:LIBOQS_VERSION --depth=1 https://github.com/open-quantum-safe/liboqs" in readme
+    assert "$actualCommit = git -C liboqs rev-parse HEAD" in readme
+    assert "the expected commit is the integrity" in readme
+    assert "git clone --depth=1 https://github.com/open-quantum-safe/liboqs" not in readme

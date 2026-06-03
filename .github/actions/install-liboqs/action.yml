@@ -3,9 +3,12 @@ description: Build and install the native liboqs shared library for Paracci CI.
 
 inputs:
   version:
-    description: liboqs release tag to build.
+    description: Human-readable liboqs release tag to build. The expected commit is the integrity boundary.
     required: false
     default: "0.15.0"
+  expected-commit:
+    description: Expected immutable liboqs commit SHA for the release tag.
+    required: true
   install-prefix:
     description: Directory where liboqs will be installed.
     required: true
@@ -24,6 +27,22 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Validate liboqs source pin
+      shell: bash
+      env:
+        LIBOQS_VERSION: ${{ inputs.version }}
+        LIBOQS_EXPECTED_COMMIT: ${{ inputs.expected-commit }}
+      run: |
+        set -euo pipefail
+        if [ -z "$LIBOQS_VERSION" ]; then
+          echo "liboqs version tag must not be empty." >&2
+          exit 1
+        fi
+        if [[ ! "$LIBOQS_EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+          echo "liboqs expected commit must be a 40-character lowercase hex SHA." >&2
+          exit 1
+        fi
+
     - name: Install cmake and ninja
       uses: lukka/get-cmake@7bfc9baacbbdcb5e37957ad05c3546b3e222be3c  # v4.3.2
 
@@ -32,7 +51,7 @@ runs:
       uses: actions/cache@v4
       with:
         path: ${{ inputs.install-prefix }}
-        key: liboqs-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}
+        key: liboqs-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}-${{ inputs.expected-commit }}
 
     - name: Install OpenSSL headers (Linux)
       if: runner.os == 'Linux' && steps.cache-liboqs.outputs.cache-hit != 'true'
@@ -52,6 +71,7 @@ runs:
       shell: bash
       env:
         LIBOQS_VERSION: ${{ inputs.version }}
+        LIBOQS_EXPECTED_COMMIT: ${{ inputs.expected-commit }}
         LIBOQS_INSTALL_PREFIX: ${{ inputs.install-prefix }}
       run: |
         set -euo pipefail
@@ -59,6 +79,12 @@ runs:
         rm -rf liboqs
         trap 'rm -rf liboqs' EXIT
         git clone --branch "$LIBOQS_VERSION" --depth 1 https://github.com/open-quantum-safe/liboqs.git
+        actual_commit="$(git -C liboqs rev-parse HEAD)"
+        if [ "$actual_commit" != "$LIBOQS_EXPECTED_COMMIT" ]; then
+          echo "liboqs $LIBOQS_VERSION resolved to $actual_commit, which does not match expected commit $LIBOQS_EXPECTED_COMMIT." >&2
+          exit 1
+        fi
+        echo "Verified liboqs $LIBOQS_VERSION at $actual_commit."
 
         cmake_extra_flags=""
         if [ "$RUNNER_OS" = "Windows" ]; then
@@ -74,6 +100,11 @@ runs:
           $cmake_extra_flags
         cmake --build liboqs/build --parallel 4
         cmake --build liboqs/build --target install
+        printf '%s\n' \
+          "version=$LIBOQS_VERSION" \
+          "expected_commit=$LIBOQS_EXPECTED_COMMIT" \
+          "actual_commit=$actual_commit" \
+          > "$LIBOQS_INSTALL_PREFIX/.paracci-liboqs-source"
         rm -rf liboqs
         trap - EXIT
 
@@ -81,6 +112,8 @@ runs:
       id: export
       shell: bash
       env:
+        LIBOQS_VERSION: ${{ inputs.version }}
+        LIBOQS_EXPECTED_COMMIT: ${{ inputs.expected-commit }}
         LIBOQS_INSTALL_PREFIX: ${{ inputs.install-prefix }}
       run: |
         set -euo pipefail
@@ -90,7 +123,32 @@ runs:
         from pathlib import Path
 
         install_prefix = Path(os.environ["LIBOQS_INSTALL_PREFIX"])
+        expected_version = os.environ["LIBOQS_VERSION"]
+        expected_commit = os.environ["LIBOQS_EXPECTED_COMMIT"]
         runner_os = os.environ["RUNNER_OS"]
+
+        marker = install_prefix / ".paracci-liboqs-source"
+        if not marker.is_file():
+            print(f"liboqs source marker was not found under {install_prefix}", file=sys.stderr)
+            raise SystemExit(1)
+        marker_values = {}
+        for line in marker.read_text(encoding="ascii").splitlines():
+            key, separator, value = line.partition("=")
+            if separator:
+                marker_values[key] = value
+        if (
+            marker_values.get("version") != expected_version
+            or marker_values.get("expected_commit") != expected_commit
+            or marker_values.get("actual_commit") != expected_commit
+        ):
+            print(
+                "liboqs source marker does not match the expected immutable source pin.",
+                file=sys.stderr,
+            )
+            print(f"expected version: {expected_version}", file=sys.stderr)
+            print(f"expected commit: {expected_commit}", file=sys.stderr)
+            print(f"marker values: {marker_values}", file=sys.stderr)
+            raise SystemExit(1)
 
         if runner_os == "Windows":
             candidates = [

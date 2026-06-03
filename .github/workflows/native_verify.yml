@@ -2,6 +2,8 @@ name: Native Verification
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  LIBOQS_VERSION: "0.15.0"
+  LIBOQS_EXPECTED_COMMIT: "97f6b86b1b6d109cfd43cf276ae39c2e776aed80"
 
 on:
   push:
@@ -48,7 +50,8 @@ jobs:
       - name: Install liboqs C library
         uses: ./.github/actions/install-liboqs
         with:
-          version: "0.15.0"
+          version: ${{ env.LIBOQS_VERSION }}
+          expected-commit: ${{ env.LIBOQS_EXPECTED_COMMIT }}
           install-prefix: ${{ runner.temp }}/_oqs
 
       - name: Install Ubuntu dependencies
