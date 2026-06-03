@@ -80,10 +80,8 @@ RUN npm ci
 
 RUN python -m pip install --upgrade pip --break-system-packages \
     && python -m pip install --ignore-installed --break-system-packages --require-hashes -r requirements.lock \
-    && python -m pip install --ignore-installed --break-system-packages --require-hashes -r requirements-dev.lock \
-    && python -m pip install --break-system-packages sqlcipher3-wheels
+    && python -m pip install --ignore-installed --break-system-packages --require-hashes -r requirements-dev.lock
 
 
 # Çalıştırılacak varsayılan komut (Derleme + Pytest + JS Testleri)
 CMD ["sh", "-c", "npm run build && python -m pytest paracci/tests -q && node --test paracci/tests/test_session_clipboard.mjs"]
-

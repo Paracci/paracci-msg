@@ -26,6 +26,7 @@ CRITICAL_DEPS = {
     "pywebview": "5.0.0",
     "qrcode": "7.4.2",
     "packaging": "24.0",
+    "sqlcipher3-wheels": "0.5.7",
 }
 
 OPTIONAL_CRITICAL_DEPS = {

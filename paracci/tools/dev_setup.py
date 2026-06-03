@@ -66,11 +66,6 @@ except ImportError:
                 if (ROOT_DIR / "requirements-dev.lock").exists():
                     req_args.extend(["-r", str(ROOT_DIR / "requirements-dev.lock")])
                 subprocess.run(req_args, check=True)
-
-                # If on Windows, also install sqlcipher3-wheels to prevent build failures/DatabaseErrors
-                if sys.platform == "win32":
-                    print("[*] Installing sqlcipher3-wheels for Windows SQLCipher support...", flush=True)
-                    subprocess.run([str(py_exe), "-m", "pip", "install", "sqlcipher3-wheels"], check=True)
                 
                 target_python = py_exe
         except Exception as e:
