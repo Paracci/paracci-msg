@@ -61,6 +61,7 @@ def assert_forced_preview_attachment(response, filename, *, token=None, body=Non
     assert response.status_code == 200
     assert response.mimetype == "application/octet-stream"
     assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert response.headers["Referrer-Policy"] == "no-referrer"
     assert "attachment" in response.headers["Content-Disposition"].lower()
     assert filename in response.headers["Content-Disposition"]
     assert "default-src 'none'" in response.headers["Content-Security-Policy"]
@@ -232,6 +233,7 @@ def test_preview_content_returns_safe_markdown_inline(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.data == file_bytes
     assert response.mimetype == "text/markdown"
+    assert response.headers["Referrer-Policy"] == "no-referrer"
     assert "attachment" not in response.headers.get("Content-Disposition", "").lower()
 
 

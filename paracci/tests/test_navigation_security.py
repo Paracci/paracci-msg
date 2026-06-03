@@ -98,13 +98,23 @@ def test_main_navigation_guard_script_blocks_external_links():
         "target.password === ''",
         "event.preventDefault();",
         "event.stopImmediatePropagation();",
-        "console.warn('Paracci blocked external navigation:', href);",
+        "console.warn('Paracci blocked external navigation.');",
+        "console.warn('Paracci blocked external window.open.');",
     ],
 )
 def test_main_navigation_guard_script_contains_loopback_policy(needle):
     script = run._build_main_navigation_guard_script("127.0.0.1", 18080)
 
     assert needle in script
+
+
+def test_main_navigation_guard_script_uses_generic_block_logs():
+    script = run._build_main_navigation_guard_script("127.0.0.1", 18080)
+
+    assert "console.warn('Paracci blocked external navigation:', href);" not in script
+    assert "console.warn('Paracci blocked external window.open:', url);" not in script
+    assert "blocked external navigation:'," not in script
+    assert "blocked external window.open:'," not in script
 
 
 def test_browser_bootstrap_seeds_memory_only_service_worker_before_navigation():

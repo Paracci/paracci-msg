@@ -363,6 +363,13 @@ def open_preview_window(token: str, filename: str, mime_type: str, file_size: in
     with _preview_windows_lock:
         _preview_windows[token] = preview_win
 
+    navigation_guard_script = _build_main_navigation_guard_script(_preview_loopback_host, _preview_loopback_port)
+    _install_navigation_guard_or_exit(
+        preview_win,
+        navigation_guard_script,
+        skip_during_preview_close=False,
+    )
+
     try:
         if hasattr(preview_win.events, 'closed'):
             preview_win.events.closed += lambda *_args, _token=token: _on_preview_window_closed(_token)
@@ -674,7 +681,7 @@ def _build_main_navigation_guard_script(loopback_host: str, port: int) -> str:
             }}
             event.preventDefault();
             event.stopImmediatePropagation();
-            console.warn('Paracci blocked external navigation:', href);
+            console.warn('Paracci blocked external navigation.');
             return true;
         }}
 
@@ -699,7 +706,7 @@ def _build_main_navigation_guard_script(loopback_host: str, port: int) -> str:
         const originalOpen = window.open;
         window.open = function(url) {{
             if (url && !isAllowedHref(String(url))) {{
-                console.warn('Paracci blocked external window.open:', url);
+                console.warn('Paracci blocked external window.open.');
                 return null;
             }}
             return originalOpen.apply(window, arguments);
@@ -708,9 +715,9 @@ def _build_main_navigation_guard_script(loopback_host: str, port: int) -> str:
     """
 
 
-def _install_navigation_guard_or_exit(window, script) -> None:
+def _install_navigation_guard_or_exit(window, script, *, skip_during_preview_close: bool = True) -> None:
     def inject_navigation_guard(*_args):
-        if _preview_close_guard_active():
+        if skip_during_preview_close and _preview_close_guard_active():
             return
         try:
             window.evaluate_js(script)

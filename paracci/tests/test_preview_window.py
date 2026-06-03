@@ -38,7 +38,7 @@ class FakeWindow:
         self.confirmation_result = True
         self.confirmations = []
         self.evaluated_js = []
-        self.events = SimpleNamespace(closed=EventHook())
+        self.events = SimpleNamespace(closed=EventHook(), loaded=EventHook())
 
     def destroy(self):
         self.destroyed = True
@@ -104,6 +104,38 @@ def test_open_preview_window_registers_window_and_token_url(reset_preview_window
     assert created[0].kwargs["js_api"].token == TOKEN_A
     assert hasattr(created[0].kwargs["js_api"], "close_preview_window")
     assert hasattr(created[0].kwargs["js_api"], "download_preview_file")
+
+
+def test_open_preview_window_installs_loopback_navigation_guard(reset_preview_window_state):
+    created, _store = reset_preview_window_state
+
+    run.open_preview_window(TOKEN_A, "note.md", "text/markdown", 123)
+
+    assert len(created[0].events.loaded.handlers) == 1
+    created[0].events.loaded.fire()
+    assert len(created[0].evaluated_js) == 1
+    script = created[0].evaluated_js[0]
+    assert "window.__PARACCI_NAVIGATION_GUARD_INSTALLED__" in script
+    assert "document.addEventListener('click'" in script
+    assert "document.addEventListener('auxclick'" in script
+    assert "document.addEventListener('submit'" in script
+    assert "window.open = function(url)" in script
+    assert '"127.0.0.1"' in script
+    assert '"18080"' in script
+    assert TOKEN_A not in script
+
+
+def test_preview_navigation_guard_injects_during_preview_close_guard(
+    reset_preview_window_state,
+    monkeypatch,
+):
+    created, _store = reset_preview_window_state
+    monkeypatch.setattr(run, "_preview_close_guard_active", lambda: True)
+
+    run.open_preview_window(TOKEN_A, "note.md", "text/markdown", 123)
+    created[0].events.loaded.fire()
+
+    assert len(created[0].evaluated_js) == 1
 
 
 @pytest.mark.parametrize(

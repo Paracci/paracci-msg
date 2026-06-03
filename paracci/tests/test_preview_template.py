@@ -51,6 +51,7 @@ def test_preview_template_is_standalone_and_receives_metadata(tmp_path, monkeypa
     html = response.data.decode("utf-8")
     assert response.status_code == 200
     assert response.mimetype == "text/html"
+    assert response.headers["Referrer-Policy"] == "no-referrer"
     assert "note.txt" in html
     assert token in html
     assert f"/preview/{token}/content" in html
@@ -89,6 +90,7 @@ def test_preview_template_csp_allows_standalone_preview_runtime(tmp_path, monkey
 
     csp = response.headers["Content-Security-Policy"]
     assert response.status_code == 200
+    assert response.headers["Referrer-Policy"] == "no-referrer"
     assert "script-src 'self';" in csp
     assert "style-src 'self';" in csp
     assert "'unsafe-inline'" not in csp
@@ -242,6 +244,7 @@ def test_preview_template_returns_404_for_expired_token(tmp_path, monkeypatch):
     assert "static/css/standalone-preview.css" in html
     assert "static/js/preview.js" in html
     assert token not in html
+    assert response.headers["Referrer-Policy"] == "no-referrer"
     assert "cdn.jsdelivr.net" not in html
     assert "cdnjs.cloudflare.com" not in html
     assert "<style>" not in html
