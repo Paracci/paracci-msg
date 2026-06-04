@@ -4,6 +4,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
+    assertNoPackagedVenvBootstrapOutput,
     parseBootstrapEntrypoint,
     parseArgs,
     redactSensitive,
@@ -114,6 +115,25 @@ test('parseArgs accepts portable ZIP runtime arguments', () => {
 
     assert.equal(parsed.runtime, 'portable-zip');
     assert.equal(parsed.zipPath, path.resolve(zipPath));
+});
+
+test('packaged runtimes reject source virtualenv bootstrap output', () => {
+    const output = '[*] Virtual environment (.venv) not found. Creating a new virtual environment...';
+
+    assert.throws(
+        () => assertNoPackagedVenvBootstrapOutput('executable', output),
+        /source virtual environment bootstrap/
+    );
+    assert.throws(
+        () => assertNoPackagedVenvBootstrapOutput('portable-zip', '[*] Re-running script inside virtual environment: <local-path>'),
+        /source virtual environment bootstrap/
+    );
+});
+
+test('python runtime allows source virtualenv bootstrap output', () => {
+    const output = '[*] Virtual environment (.venv) not found. Creating a new virtual environment...';
+
+    assert.doesNotThrow(() => assertNoPackagedVenvBootstrapOutput('python', output));
 });
 
 test('packaged runtime input validation fails clearly for missing executable', async () => {

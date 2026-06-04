@@ -45,6 +45,31 @@ def test_package_build_receives_canonical_version(tmp_path, monkeypatch):
     assert called == [["bash", str(script), "1.6.0"]]
 
 
+def test_pyinstaller_runs_under_the_invoking_python(monkeypatch):
+    build = load_build_module()
+    called = []
+    monkeypatch.setattr(build.sys, "executable", "invoking-python")
+    monkeypatch.setattr(build, "run", lambda cmd, **kwargs: called.append((cmd, kwargs)) or 0)
+
+    assert build.run_pyinstaller() == 0
+
+    assert called
+    assert called[0][0][:3] == ["invoking-python", "-m", "PyInstaller"]
+    assert called[0][1]["cwd"] == str(build.ROOT)
+
+
+def test_pyinstaller_does_not_use_path_executable(monkeypatch):
+    build = load_build_module()
+    called = []
+    monkeypatch.setattr(build.sys, "executable", "invoking-python")
+    monkeypatch.setattr(build.shutil, "which", lambda _name: (_ for _ in ()).throw(AssertionError("PATH used")))
+    monkeypatch.setattr(build, "run", lambda cmd, **kwargs: called.append(cmd) or 0)
+
+    assert build.run_pyinstaller() == 0
+
+    assert called[0][:3] == ["invoking-python", "-m", "PyInstaller"]
+
+
 def test_spec_and_release_workflow_consume_version_without_rewriting_sources():
     spec_text = (REPO_ROOT / "paracci.spec").read_text(encoding="utf-8")
     workflow = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")

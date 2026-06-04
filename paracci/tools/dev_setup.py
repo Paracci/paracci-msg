@@ -20,76 +20,15 @@ from pathlib import Path
 
 # Add project root directory
 ROOT_DIR = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(ROOT_DIR))
 
-# Check dependencies and auto-re-execute in virtual environment if available
-try:
-    import yoyo
-except ImportError:
-    if os.environ.get("PARACCI_VENV_BOOTSTRAPPED"):
-        print("[ERROR] Running inside virtual environment but 'yoyo' dependency is still missing.", file=sys.stderr)
-        print("[ERROR] Please install dependencies by running: pip install -r requirements.lock", file=sys.stderr)
-        sys.exit(1)
+from paracci.tools.runtime_bootstrap import ensure_runtime_dependencies
 
-    # Look for local workspace virtual environment (.venv)
-    venv_dir = ROOT_DIR / ".venv"
-    appdata_local = os.environ.get("LOCALAPPDATA")
-    appdata_venv = Path(appdata_local) / "Paracci" / ".venv" if appdata_local else None
-
-    target_python = None
-    if venv_dir.exists():
-        py_exe = venv_dir / "Scripts" / "python.exe" if sys.platform == "win32" else venv_dir / "bin" / "python"
-        if py_exe.exists():
-            target_python = py_exe
-    elif appdata_venv and appdata_venv.exists():
-        py_exe = appdata_venv / "Scripts" / "python.exe" if sys.platform == "win32" else appdata_venv / "bin" / "python"
-        if py_exe.exists():
-            target_python = py_exe
-
-    # If no virtual environment is found, automatically create one in the workspace
-    if not target_python:
-        print("[*] Virtual environment (.venv) not found. Creating a new virtual environment...", flush=True)
-        import subprocess
-        try:
-            subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
-            
-            # Locate python in the new venv
-            if sys.platform == "win32":
-                py_exe = venv_dir / "Scripts" / "python.exe"
-            else:
-                py_exe = venv_dir / "bin" / "python"
-
-            if py_exe.exists():
-                print("[*] Installing dependencies into the virtual environment...", flush=True)
-                
-                # Install lock files using python -m pip to prevent lock errors when upgrading pip
-                req_args = [str(py_exe), "-m", "pip", "install", "--require-hashes", "-r", str(ROOT_DIR / "requirements.lock")]
-                if (ROOT_DIR / "requirements-dev.lock").exists():
-                    req_args.extend(["-r", str(ROOT_DIR / "requirements-dev.lock")])
-                subprocess.run(req_args, check=True)
-                
-                target_python = py_exe
-        except Exception as e:
-            print(f"[ERROR] Failed to automatically create virtual environment and install dependencies: {e}", file=sys.stderr)
-            print("[ERROR] Please create a virtual environment manually:", file=sys.stderr)
-            if sys.platform == "win32":
-                print("    python -m venv .venv\n    .\\.venv\\Scripts\\activate\n    pip install -r requirements.lock", file=sys.stderr)
-            else:
-                print("    python -m venv .venv\n    source .venv/bin/activate\n    pip install -r requirements.lock", file=sys.stderr)
-            sys.exit(1)
-
-    if target_python:
-        print(f"[*] Re-running script inside virtual environment: {target_python}", flush=True)
-        import subprocess
-        env = os.environ.copy()
-        env["PARACCI_VENV_BOOTSTRAPPED"] = "1"
-        try:
-            result = subprocess.run([str(target_python), str(Path(__file__).resolve())] + sys.argv[1:], env=env)
-            sys.exit(result.returncode)
-        except KeyboardInterrupt:
-            sys.exit(130)
-        except Exception as e:
-            print(f"[ERROR] Failed to execute script within virtual environment: {e}", file=sys.stderr)
-            sys.exit(1)
+ensure_runtime_dependencies(
+    ROOT_DIR,
+    script_path=Path(__file__).resolve(),
+    argv=sys.argv[1:],
+)
 
 sys.path.insert(0, str(ROOT_DIR / "paracci"))
 

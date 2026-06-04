@@ -17,6 +17,13 @@ const RUNTIME_PYTHON = 'python';
 const RUNTIME_EXECUTABLE = 'executable';
 const RUNTIME_PORTABLE_ZIP = 'portable-zip';
 const SUPPORTED_RUNTIMES = new Set([RUNTIME_PYTHON, RUNTIME_EXECUTABLE, RUNTIME_PORTABLE_ZIP]);
+const PACKAGED_VENV_BOOTSTRAP_PATTERNS = [
+    /Virtual environment\s+\(\.venv\)\s+not found/i,
+    /Creating a new virtual environment/i,
+    /Installing dependencies into the virtual environment/i,
+    /Re-running script inside virtual environment/i,
+    /Failed to automatically create virtual environment/i,
+];
 
 export class SmokeFailure extends Error {
     constructor(message) {
@@ -182,12 +189,19 @@ async function waitForPort(port, timeoutMs) {
     throw new SmokeFailure('Timed out waiting for Paracci to listen on loopback.');
 }
 
-async function waitForBootstrapEntrypoint(proc, output, port, timeoutMs, runtimeLabel) {
+export function assertNoPackagedVenvBootstrapOutput(runtime, text) {
+    if (runtime !== RUNTIME_EXECUTABLE && runtime !== RUNTIME_PORTABLE_ZIP) return;
+    if (!PACKAGED_VENV_BOOTSTRAP_PATTERNS.some(pattern => pattern.test(String(text ?? '')))) return;
+    throw new SmokeFailure('Packaged runtime attempted to enter source virtual environment bootstrap.');
+}
+
+async function waitForBootstrapEntrypoint(proc, output, port, timeoutMs, runtimeLabel, runtime) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
         if (output.spawnError) {
             throw new SmokeFailure(`${runtimeLabel} process failed to start: ${formatError(output.spawnError)}`);
         }
+        assertNoPackagedVenvBootstrapOutput(runtime, output.text);
         if (proc.exitCode !== null) {
             throw new SmokeFailure(`${runtimeLabel} exited early with code ${proc.exitCode}.`);
         }
@@ -557,7 +571,7 @@ export async function runBrowserConsoleSmoke(options = {}) {
         proc = runtime.proc;
         runtimeLabel = runtime.runtimeLabel;
 
-        const entrypoint = await waitForBootstrapEntrypoint(proc, output, port, timeoutMs, runtimeLabel);
+        const entrypoint = await waitForBootstrapEntrypoint(proc, output, port, timeoutMs, runtimeLabel, config.runtime);
         redaction.token = entrypoint.token;
         await waitForPort(port, timeoutMs);
 

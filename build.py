@@ -121,21 +121,12 @@ def build_frontend() -> int:
     return 0
 
 
-def find_pyinstaller() -> str:
-    """Return the path to the pyinstaller executable."""
-    exe = shutil.which("pyinstaller")
-    if exe:
-        return exe
-    # Fallback: use python -m PyInstaller
-    return None
-
-
 def run_pyinstaller() -> int:
-    """Run PyInstaller against the spec file and return the exit code."""
-    pyi = find_pyinstaller()
-
-    base_cmd = [pyi] if pyi else [sys.executable, "-m", "PyInstaller"]
-    cmd = base_cmd + [
+    """Run PyInstaller from the invoking Python environment."""
+    cmd = [
+        sys.executable,
+        "-m",
+        "PyInstaller",
         str(SPEC_FILE),
         "--distpath", str(DIST_DIR),
         "--workpath", str(WORK_DIR),
