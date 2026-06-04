@@ -50,8 +50,15 @@ def make_api(path: Path) -> UIApi:
     return UIApi(svc)
 
 
+def initialize_api(api: UIApi, pin: str = PIN) -> dict:
+    params = {"pin": pin}
+    if sys.platform.startswith("linux"):
+        params["allow_linux_passphrase_fallback"] = True
+    return api.dispatch("device_init", params)
+
+
 def enable_2fa_and_lock(api: UIApi, pin: str = PIN, secret: str = TOTP_SECRET) -> str:
-    api.dispatch("device_init", {"pin": pin})
+    initialize_api(api, pin)
     api.dispatch(
         "2fa_enable",
         {"secret": secret, "code": pyotp.TOTP(secret).now()},
@@ -106,7 +113,7 @@ def test_ui_api_device_settings_and_profile(tmp_path):
     assert status["two_factor_enabled"] is None
     assert "device_binding" in status
 
-    initialized = api.dispatch("device_init", {"pin": "Correct-Horse-95175328"})
+    initialized = initialize_api(api)
     assert initialized["initialized"] is True
     assert initialized["unlocked"] is True
 
@@ -189,8 +196,8 @@ def test_ui_api_linux_fallback_error_and_logs_are_sanitized(tmp_path, monkeypatc
 def test_ui_api_session_roundtrip_and_attachment_cache(tmp_path):
     x = make_api(tmp_path / "x")
     y = make_api(tmp_path / "y")
-    x.dispatch("device_init", {"pin": "Correct-Horse-95175328"})
-    y.dispatch("device_init", {"pin": "Correct-Horse-95175328"})
+    initialize_api(x)
+    initialize_api(y)
 
     attachment_path = tmp_path / "note.txt"
     attachment_path.write_text("attachment text", encoding="utf-8")
@@ -291,7 +298,7 @@ def test_ui_api_surfaces_secure_delete_warning(tmp_path):
 
 def test_ui_api_device_lock_drops_open_cache_and_windows_status_is_best_effort(tmp_path):
     api = make_api(tmp_path / "device-lock")
-    api.dispatch("device_init", {"pin": "Correct-Horse-95175328"})
+    initialize_api(api)
     retained_device_key = api.services.device.device_key
     assert isinstance(retained_device_key, bytearray)
     api.services.shield.get_os_name = lambda: "Windows"
@@ -669,7 +676,7 @@ def test_ui_api_lock_and_expiry_clear_pending_unlock_material(tmp_path):
 
 def test_ui_api_non_2fa_unlock_still_activates_device(tmp_path):
     api = make_api(tmp_path / "native-non-2fa-unlock")
-    api.dispatch("device_init", {"pin": PIN})
+    initialize_api(api)
     api.dispatch("device_lock")
 
     unlocked_status = api.dispatch("device_unlock", {"pin": PIN})
@@ -683,7 +690,7 @@ def test_ui_api_non_2fa_unlock_still_activates_device(tmp_path):
 
 def test_ui_api_2fa_reunlock_while_active_does_not_create_pending_state(tmp_path):
     api = make_api(tmp_path / "native-2fa-active-reunlock")
-    api.dispatch("device_init", {"pin": PIN})
+    initialize_api(api)
     api.dispatch(
         "2fa_enable",
         {"secret": TOTP_SECRET, "code": pyotp.TOTP(TOTP_SECRET).now()},
@@ -706,7 +713,7 @@ def test_ui_api_2fa_unlock_does_not_log_sensitive_values(tmp_path, caplog):
     token_sentinel = "session-token-log-sentinel"
 
     with caplog.at_level(logging.DEBUG):
-        api.dispatch("device_init", {"pin": pin})
+        initialize_api(api, pin)
         active_device_key_hex = bytes(api.services.device.device_key or b"").hex()
         valid_code = pyotp.TOTP(secret).now()
         api.dispatch("2fa_enable", {"secret": secret, "code": valid_code})
