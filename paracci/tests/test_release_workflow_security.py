@@ -50,6 +50,24 @@ def test_python_runtime_browser_console_smoke_runs_in_ci_gates():
         assert "node tools/ci/browser_console_smoke.mjs --python python" in workflow
 
 
+def test_release_workflow_runs_windows_packaged_browser_console_smoke_before_upload():
+    workflow = _workflow("release.yml")
+
+    build_step = workflow.index("- name: Build executable and installer (Windows)")
+    install_browser_step = workflow.index("- name: Install Playwright Chromium for Windows packaged browser smoke")
+    executable_smoke_step = workflow.index("- name: Smoke test packaged browser console (Windows executable)")
+    prepare_step = workflow.index("- name: Prepare asset (Windows)")
+    zip_smoke_step = workflow.index("- name: Smoke test packaged browser console (Windows portable ZIP)")
+    attest_step = workflow.index("- name: Attest Windows installer provenance")
+    upload_step = workflow.index("- name: Upload artifact (Windows)")
+
+    assert build_step < install_browser_step < executable_smoke_step < prepare_step < zip_smoke_step
+    assert zip_smoke_step < attest_step < upload_step
+    assert "--runtime executable --executable builds/windows/Paracci/Paracci.exe" in workflow
+    assert "--runtime portable-zip --zip $zip.FullName --python python" in workflow
+    assert "if: runner.os == 'Windows'" in workflow
+
+
 def test_publish_workflow_recomputes_hashes_before_accepting_signature_or_publish():
     workflow = _workflow("publish_signed_release.yml")
 

@@ -145,6 +145,13 @@ jobs:
           cache: "pip"
 
       # ── 3. Linux: GTK3 + WebKit2GTK system packages ────────────────────────
+      - name: Set up Node.js for Windows packaged browser smoke
+        if: runner.os == 'Windows'
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af  # v4.1.0
+        with:
+          node-version: "22"
+          cache: "npm"
+
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
         run: |
@@ -256,6 +263,17 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen   # suppress headless Qt warnings on Linux CI
 
+      - name: Install Playwright Chromium for Windows packaged browser smoke
+        if: runner.os == 'Windows'
+        run: npx playwright install chromium
+
+      - name: Smoke test packaged browser console (Windows executable)
+        if: runner.os == 'Windows'
+        run: node tools/ci/browser_console_smoke.mjs --runtime executable --executable builds/windows/Paracci/Paracci.exe
+        env:
+          QT_QPA_PLATFORM: offscreen
+          CI: "true"
+
       - name: Smoke test packaged ML-KEM
         shell: bash
         run: python tools/ci/packaged_runtime_smoke.py --platform "$RUNNER_OS"
@@ -278,6 +296,17 @@ jobs:
       - name: Prepare asset (Windows)
         if: runner.os == 'Windows'
         run: python tools/ci/release_artifact_validation.py prepare-build-assets --platform windows
+
+      - name: Smoke test packaged browser console (Windows portable ZIP)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem -LiteralPath builds/windows -Filter 'Paracci-Portable-v*.zip' | Select-Object -First 1
+          if (-not $zip) { throw "Windows portable ZIP not found." }
+          node tools/ci/browser_console_smoke.mjs --runtime portable-zip --zip $zip.FullName --python python
+        env:
+          QT_QPA_PLATFORM: offscreen
+          CI: "true"
 
       - name: Prepare asset (macOS)
         if: runner.os == 'macOS'

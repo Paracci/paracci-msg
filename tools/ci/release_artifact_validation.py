@@ -117,6 +117,24 @@ def require_deb_ar(path: Path) -> None:
         raise ReleaseValidationError(f"Linux Debian package is not a plausible ar archive: {path}")
 
 
+def safe_zip_entry_name(filename: str, description: str) -> str:
+    normalized = filename.replace("\\", "/").rstrip("/")
+    if not normalized:
+        raise ReleaseValidationError(f"{description} contains an empty ZIP entry name.")
+    if normalized.startswith("/") or re.match(r"^[A-Za-z]:", normalized):
+        raise ReleaseValidationError(f"{description} contains an absolute ZIP entry: {filename}")
+    parts = [part for part in normalized.split("/") if part]
+    if any(part in {".", ".."} for part in parts):
+        raise ReleaseValidationError(f"{description} contains an unsafe ZIP entry: {filename}")
+    return "/".join(parts)
+
+
+def reject_zip_symlink(entry: zipfile.ZipInfo, description: str) -> None:
+    mode = entry.external_attr >> 16
+    if stat.S_IFMT(mode) == stat.S_IFLNK:
+        raise ReleaseValidationError(f"{description} contains a symlink ZIP entry: {entry.filename}")
+
+
 def require_zip(path: Path, description: str, required_entries: tuple[str, ...] = ()) -> None:
     require_file(path, description)
     if not zipfile.is_zipfile(path):
@@ -125,7 +143,10 @@ def require_zip(path: Path, description: str, required_entries: tuple[str, ...] 
         bad_entry = archive.testzip()
         if bad_entry:
             raise ReleaseValidationError(f"{description} has a corrupt ZIP entry: {bad_entry}")
-        names = {entry.filename.replace("\\", "/").rstrip("/") for entry in archive.infolist()}
+        names = set()
+        for entry in archive.infolist():
+            reject_zip_symlink(entry, description)
+            names.add(safe_zip_entry_name(entry.filename, description))
     for entry in required_entries:
         if entry.rstrip("/") not in names:
             raise ReleaseValidationError(f"{description} is missing required ZIP entry: {entry}")
@@ -205,6 +226,44 @@ def validate_windows_portable_zip(zip_path: Path, version: str) -> None:
             f"{root}/data",
         ),
     )
+
+
+def windows_portable_version_from_name(zip_path: Path) -> str:
+    portable_match = re.fullmatch(r"Paracci-Portable-v(?P<version>\d+\.\d+\.\d+)\.zip", zip_path.name)
+    if not portable_match:
+        raise ReleaseValidationError(f"Unexpected Windows portable archive name: {zip_path.name}")
+    return portable_match.group("version")
+
+
+def safe_extract_zip(zip_path: Path, destination: Path, description: str) -> None:
+    if destination.exists() and any(destination.iterdir()):
+        raise ReleaseValidationError(f"Refusing to extract into a non-empty directory: {destination}")
+    destination.mkdir(parents=True, exist_ok=True)
+    destination_resolved = destination.resolve()
+    with zipfile.ZipFile(zip_path) as archive:
+        for entry in archive.infolist():
+            reject_zip_symlink(entry, description)
+            relative_name = safe_zip_entry_name(entry.filename, description)
+            target = ensure_within(destination_resolved, destination_resolved / relative_name)
+            if entry.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(entry) as source, target.open("wb") as output:
+                shutil.copyfileobj(source, output)
+
+
+def extract_windows_portable_zip(zip_path: Path, destination: Path, version: str | None = None) -> Path:
+    version = version or windows_portable_version_from_name(zip_path)
+    validate_windows_portable_zip(zip_path, version)
+    safe_extract_zip(zip_path, destination, "Windows portable archive")
+    root_dir = require_dir(destination / f"Paracci-Portable-v{version}", "Extracted Windows portable root")
+    executable = root_dir / "Paracci.exe"
+    runtime_dll = root_dir / "_internal" / "python312.dll"
+    require_mz(executable, "Extracted Windows packaged executable")
+    require_mz(runtime_dll, "Extracted Windows Python runtime DLL")
+    require_dir(root_dir / "data", "Extracted Windows portable data directory")
+    return executable
 
 
 def validate_linux_build(repo_root: Path, native_ci_checks: bool, messages: list[str]) -> tuple[Path, Path, Path]:
@@ -560,6 +619,11 @@ def main(argv: list[str] | None = None) -> int:
     manifest_parser.add_argument("--manifest", type=Path, required=True)
     manifest_parser.add_argument("--file", dest="files", action="append", default=[])
 
+    extract_parser = subparsers.add_parser("extract-windows-portable-zip")
+    extract_parser.add_argument("--zip", dest="zip_path", type=Path, required=True)
+    extract_parser.add_argument("--destination", type=Path, required=True)
+    extract_parser.add_argument("--version")
+
     args = parser.parse_args(argv)
     repo_root = args.repo_root.resolve()
 
@@ -572,6 +636,13 @@ def main(argv: list[str] | None = None) -> int:
             resolve_release_assets(repo_root, args.release_assets, args.release_tag, args.github_output)
         elif args.command == "write-manifest":
             write_manifest(args.manifest, [Path(path) for path in args.files if path])
+        elif args.command == "extract-windows-portable-zip":
+            executable = extract_windows_portable_zip(
+                args.zip_path.resolve(),
+                args.destination.resolve(),
+                args.version,
+            )
+            print(executable)
         else:
             raise AssertionError(args.command)
         return 0

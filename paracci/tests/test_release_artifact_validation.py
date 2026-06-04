@@ -81,7 +81,7 @@ def make_release_assets(root: Path, *, portable_zip: bool = True) -> Path:
             {
                 "Paracci-Portable-v1.6.0/Paracci.exe": b"MZexe",
                 "Paracci-Portable-v1.6.0/_internal/python312.dll": b"MZpython",
-                "Paracci-Portable-v1.6.0/data": b"",
+                "Paracci-Portable-v1.6.0/data/": b"",
             },
         )
     else:
@@ -106,6 +106,71 @@ def test_windows_prepare_creates_portable_zip_and_manifest(tmp_path):
     manifest = (root / "builds" / "windows" / "SHA256SUMS.txt").read_text(encoding="utf-8")
     assert "Paracci-Setup-v1.6.0.exe" in manifest
     assert "Paracci-Portable-v1.6.0.zip" in manifest
+
+
+def test_windows_portable_zip_extracts_to_temp_and_returns_executable(tmp_path):
+    validation = load_validation_module()
+    root = make_repo_root(tmp_path)
+    assets = make_release_assets(root)
+    destination = tmp_path / "extract"
+
+    executable = validation.extract_windows_portable_zip(
+        assets / "windows" / "Paracci-Portable-v1.6.0.zip",
+        destination,
+    )
+
+    assert executable == destination / "Paracci-Portable-v1.6.0" / "Paracci.exe"
+    assert executable.read_bytes().startswith(b"MZ")
+    assert (destination / "Paracci-Portable-v1.6.0" / "data").is_dir()
+
+
+def test_windows_portable_zip_rejects_empty_archive(tmp_path):
+    validation = load_validation_module()
+    portable = write_zip(tmp_path / "Paracci-Portable-v1.6.0.zip", {})
+
+    with pytest.raises(validation.ReleaseValidationError, match="missing required ZIP entry"):
+        validation.extract_windows_portable_zip(portable, tmp_path / "extract")
+
+
+def test_windows_portable_zip_rejects_missing_executable_or_runtime(tmp_path):
+    validation = load_validation_module()
+    missing_exe = write_zip(
+        tmp_path / "Paracci-Portable-v1.6.0.zip",
+        {
+            "Paracci-Portable-v1.6.0/_internal/python312.dll": b"MZpython",
+            "Paracci-Portable-v1.6.0/data/": b"",
+        },
+    )
+
+    with pytest.raises(validation.ReleaseValidationError, match="Paracci.exe"):
+        validation.extract_windows_portable_zip(missing_exe, tmp_path / "missing-exe")
+
+    missing_runtime = write_zip(
+        tmp_path / "Paracci-Portable-v1.6.0.zip",
+        {
+            "Paracci-Portable-v1.6.0/Paracci.exe": b"MZexe",
+            "Paracci-Portable-v1.6.0/data/": b"",
+        },
+    )
+
+    with pytest.raises(validation.ReleaseValidationError, match="python312.dll"):
+        validation.extract_windows_portable_zip(missing_runtime, tmp_path / "missing-runtime")
+
+
+def test_windows_portable_zip_rejects_path_traversal_entries(tmp_path):
+    validation = load_validation_module()
+    portable = write_zip(
+        tmp_path / "Paracci-Portable-v1.6.0.zip",
+        {
+            "Paracci-Portable-v1.6.0/Paracci.exe": b"MZexe",
+            "Paracci-Portable-v1.6.0/_internal/python312.dll": b"MZpython",
+            "Paracci-Portable-v1.6.0/data/": b"",
+            "../outside.txt": b"nope",
+        },
+    )
+
+    with pytest.raises(validation.ReleaseValidationError, match="unsafe ZIP entry"):
+        validation.extract_windows_portable_zip(portable, tmp_path / "extract")
 
 
 def test_linux_build_validation_reports_skipped_native_ci_checks(tmp_path, capsys):

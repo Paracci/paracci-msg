@@ -36,12 +36,18 @@ unit-test loop because it launches Paracci plus a real Chromium browser:
 
 ```powershell
 npx playwright install chromium
-node tools/ci/browser_console_smoke.mjs --python .venv\Scripts\python.exe
+node tools/ci/browser_console_smoke.mjs --runtime python --python .venv\Scripts\python.exe
 ```
 
 ```bash
 npx playwright install chromium
-node tools/ci/browser_console_smoke.mjs --python python
+node tools/ci/browser_console_smoke.mjs --runtime python --python python
+```
+
+The legacy shorthand remains supported:
+
+```powershell
+node tools/ci/browser_console_smoke.mjs --python .venv\Scripts\python.exe
 ```
 
 The smoke starts `run.py --no-gui` on a random loopback port with an isolated
@@ -53,13 +59,34 @@ asset failures, or app/static 4xx/5xx responses needed for page load. Failure
 output is redacted and must not include bearer tokens, CSRF tokens, local paths,
 or temporary profile/data directories.
 
+After building a Windows release candidate, run the same browser-console policy
+against the frozen executable before preparing release assets:
+
+```powershell
+npx playwright install chromium
+node tools/ci/browser_console_smoke.mjs --runtime executable --executable builds\windows\Paracci\Paracci.exe --python .venv\Scripts\python.exe
+```
+
+After `prepare-build-assets` creates the Windows portable archive, run the
+portable ZIP smoke. The command extracts the ZIP into a temporary directory,
+validates the expected portable layout, runs the extracted `Paracci.exe`, and
+lets the extracted portable `data` directory isolate runtime data:
+
+```powershell
+$zip = Get-ChildItem -LiteralPath builds\windows -Filter 'Paracci-Portable-v*.zip' | Select-Object -First 1
+node tools/ci/browser_console_smoke.mjs --runtime portable-zip --zip $zip.FullName --python .venv\Scripts\python.exe
+```
+
 After building a release candidate for the current platform, run the local packaged smoke and artifact checks before pushing a tag:
 
 ```powershell
 # Windows after: python build.py --clean --installer
+node tools/ci/browser_console_smoke.mjs --runtime executable --executable builds\windows\Paracci\Paracci.exe --python .venv\Scripts\python.exe
 .venv\Scripts\python.exe tools/ci/packaged_runtime_smoke.py --platform windows
 .venv\Scripts\python.exe tools/ci/release_artifact_validation.py validate-build --platform windows
 .venv\Scripts\python.exe tools/ci/release_artifact_validation.py prepare-build-assets --platform windows
+$zip = Get-ChildItem -LiteralPath builds\windows -Filter 'Paracci-Portable-v*.zip' | Select-Object -First 1
+node tools/ci/browser_console_smoke.mjs --runtime portable-zip --zip $zip.FullName --python .venv\Scripts\python.exe
 ```
 
 ```bash
@@ -69,7 +96,7 @@ python tools/ci/release_artifact_validation.py validate-build --platform linux
 python tools/ci/release_artifact_validation.py prepare-build-assets --platform linux
 ```
 
-The `Build & Release` workflow still owns CI-only release steps: Linux AppImage extraction, Debian install/remove checks, AppImage GUI timeout smoke, artifact upload, Sigstore attestation, VirusTotal scanning, and draft GitHub Release creation. The publish workflow remains the only place that verifies the offline manifest signature and publishes the draft.
+The `Build & Release` workflow still owns CI-only release steps: Windows packaged executable and portable ZIP browser-console smoke, Linux AppImage extraction, Debian install/remove checks, AppImage GUI timeout smoke, artifact upload, Sigstore attestation, VirusTotal scanning, and draft GitHub Release creation. The publish workflow remains the only place that verifies the offline manifest signature and publishes the draft.
 
 ---
 
