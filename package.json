@@ -12,6 +12,7 @@
     "marked": "^9.1.2"
   },
   "devDependencies": {
-    "esbuild": "^0.21.4"
+    "esbuild": "^0.21.4",
+    "playwright": "^1.60.0"
   }
 }

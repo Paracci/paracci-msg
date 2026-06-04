@@ -41,6 +41,15 @@ def test_release_workflow_recomputes_manifest_and_creates_draft_release():
     assert "draft: false" not in workflow
 
 
+def test_python_runtime_browser_console_smoke_runs_in_ci_gates():
+    for workflow_name in ("release.yml", "native_verify.yml"):
+        workflow = _workflow(workflow_name)
+
+        assert "npx playwright install" in workflow
+        assert "chromium" in workflow
+        assert "node tools/ci/browser_console_smoke.mjs --python python" in workflow
+
+
 def test_publish_workflow_recomputes_hashes_before_accepting_signature_or_publish():
     workflow = _workflow("publish_signed_release.yml")
 

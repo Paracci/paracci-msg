@@ -82,6 +82,21 @@ jobs:
       - name: Run clipboard JavaScript tests
         run: node --test paracci/tests/test_session_clipboard.mjs
 
+      - name: Install Playwright Chromium
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            npx playwright install --with-deps chromium
+          else
+            npx playwright install chromium
+          fi
+
+      - name: Run Python runtime browser console smoke
+        run: node tools/ci/browser_console_smoke.mjs --python python
+        env:
+          QT_QPA_PLATFORM: offscreen
+          CI: "true"
+
       - name: Run Guardian audit
         run: python paracci/audits/guardian.py
 

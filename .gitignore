@@ -48,6 +48,11 @@ paracci_startup_success.tmp
 htmlcov/
 *.paracci
 logs_*/
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+playwright/.cache/
 
 # --- macOS / Swift ---
 .build/

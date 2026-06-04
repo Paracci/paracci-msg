@@ -187,8 +187,10 @@ def test_new_release_validation_sources_do_not_commit_local_machine_paths():
         + rb"/)"
     )
     for relative_path in (
+        "tools/ci/browser_console_smoke.mjs",
         "tools/ci/packaged_runtime_smoke.py",
         "tools/ci/release_artifact_validation.py",
+        "paracci/tests/test_browser_console_smoke.mjs",
         "paracci/docs/TESTS.md",
     ):
         data = (REPO_ROOT / relative_path).read_bytes()

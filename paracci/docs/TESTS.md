@@ -30,6 +30,29 @@ Run the focused pre-push release validation contract tests:
 .venv\Scripts\python.exe -m pytest paracci/tests/test_security_docs.py -q
 ```
 
+Run the Python-runtime browser console smoke before release candidates or when
+frontend/bootstrap/runtime validation changes. This is not part of the quick
+unit-test loop because it launches Paracci plus a real Chromium browser:
+
+```powershell
+npx playwright install chromium
+node tools/ci/browser_console_smoke.mjs --python .venv\Scripts\python.exe
+```
+
+```bash
+npx playwright install chromium
+node tools/ci/browser_console_smoke.mjs --python python
+```
+
+The smoke starts `run.py --no-gui` on a random loopback port with an isolated
+temporary `DATA_DIR` and browser profile. It opens the authenticated bootstrap
+URL printed by the Python runtime, follows the normal service-worker bearer
+flow to the Flask-rendered setup/unlock page, and fails on unexpected browser
+`pageerror`, unhandled promise rejection, `console.error`, same-origin static
+asset failures, or app/static 4xx/5xx responses needed for page load. Failure
+output is redacted and must not include bearer tokens, CSRF tokens, local paths,
+or temporary profile/data directories.
+
 After building a release candidate for the current platform, run the local packaged smoke and artifact checks before pushing a tag:
 
 ```powershell
