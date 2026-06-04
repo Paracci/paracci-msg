@@ -64,11 +64,15 @@ def test_bootstrap_and_ci_do_not_install_sqlcipher_outside_runtime_lock():
 def test_ci_and_docker_install_python_dependencies_with_hashes():
     release = _read(".github/workflows/release.yml")
     native = _read(".github/workflows/native_verify.yml")
+    native_runner = _read("tools/ci/native_verify.py")
     dockerfile = _read("Dockerfile.test")
 
-    for workflow in (release, native):
-        assert "python -m pip install --require-hashes -r requirements.lock" in workflow
-        assert "python -m pip install --require-hashes -r requirements-dev.lock" in workflow
+    assert "python -m pip install --require-hashes -r requirements.lock" in release
+    assert "python -m pip install --require-hashes -r requirements-dev.lock" in release
+    assert '"--require-hashes", "-r", "requirements.lock"' in native_runner
+    assert '"--require-hashes", "-r", "requirements-dev.lock"' in native_runner
+    assert "tools/ci/native_verify.py --profile windows-ci" in native
+    assert "tools/ci/native_verify.py --profile linux-ci" in native
 
     assert "pip install pytest-timeout" not in native
     assert "pytest-timeout" not in native
@@ -113,6 +117,19 @@ def test_release_and_native_workflows_pin_liboqs_source_commit():
         assert workflow.count("version: ${{ env.LIBOQS_VERSION }}") == expected_calls
         assert workflow.count("expected-commit: ${{ env.LIBOQS_EXPECTED_COMMIT }}") == expected_calls
         assert 'version: "0.15.0"' not in workflow
+
+
+def test_docker_native_profile_pins_liboqs_source_commit():
+    dockerfile = _read("Dockerfile.test")
+
+    assert f"ENV LIBOQS_VERSION={LIBOQS_VERSION}" in dockerfile
+    assert f"ENV LIBOQS_EXPECTED_COMMIT={LIBOQS_EXPECTED_COMMIT}" in dockerfile
+    assert 'git clone --branch "$LIBOQS_VERSION" --depth 1 https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs' in dockerfile
+    assert 'actual_commit="$(git -C /tmp/liboqs rev-parse HEAD)"' in dockerfile
+    assert 'if [ "$actual_commit" != "$LIBOQS_EXPECTED_COMMIT" ]; then' in dockerfile
+    assert "liboqs source mismatch" in dockerfile
+    assert ".paracci-liboqs-source" in dockerfile
+    assert "python tools/ci/native_verify.py --profile linux-docker" in dockerfile
 
 
 def test_readme_documents_verified_liboqs_source_pin():

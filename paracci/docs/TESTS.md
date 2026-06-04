@@ -4,7 +4,7 @@ Paracci maintains automated test coverage across its core cryptography engine, s
 
 ## Running Tests
 
-Run all unit and integration tests from the repository root:
+Run quick local unit and integration tests from the repository root:
 
 ```powershell
 python -m pytest paracci/tests -q
@@ -22,6 +22,40 @@ Run dependency vulnerability scanning:
 ```powershell
 python -m pip_audit -r requirements.lock -r requirements-dev.lock
 ```
+
+Run the Native Verification parity gate before pushing CI/release changes. This
+is intentionally separate from the quick test loop because it installs locked
+dependencies, builds frontend assets, runs the full pytest timeout gate, runs
+Guardian, runs the Node tests, installs Playwright Chromium, and launches the
+Python-runtime browser-console smoke:
+
+```powershell
+$env:LIBOQS_VERSION = "0.15.0"
+$env:LIBOQS_EXPECTED_COMMIT = "97f6b86b1b6d109cfd43cf276ae39c2e776aed80"
+$env:OQS_INSTALL_PATH = "<liboqs-install-prefix>"
+$env:LIBOQS_LIB_DIR = "<liboqs-install-prefix>\bin"
+.venv\Scripts\python.exe tools\ci\native_verify.py --profile windows-local --python .venv\Scripts\python.exe
+```
+
+The local parity profile requires the same pinned liboqs source marker that CI
+uses: `<liboqs-install-prefix>\.paracci-liboqs-source` with `version`,
+`expected_commit`, and `actual_commit` values matching the expected immutable
+source pin. Missing Python, Node, npm, npx, Playwright, pip-audit, Guardian, or
+liboqs prerequisites fail the parity command instead of being silently skipped.
+
+Run the Docker/Linux parity path with the test image when validating Linux
+behavior from Windows:
+
+```powershell
+docker build -f Dockerfile.test -t paracci-linux-test .
+docker run --rm -v "${PWD}:/workspace" -v "/workspace/node_modules" paracci-linux-test
+```
+
+GitHub Actions still owns runner-only setup for Native Verification: repository
+checkout, pinned Node/Python setup actions, Ubuntu apt packages, and the
+`.github/actions/install-liboqs` composite action that builds and exports the
+pinned native liboqs library. The shared runner owns validation orchestration
+after that setup is complete.
 
 Run the focused pre-push release validation contract tests:
 

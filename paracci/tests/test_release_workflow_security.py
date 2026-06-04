@@ -42,12 +42,39 @@ def test_release_workflow_recomputes_manifest_and_creates_draft_release():
 
 
 def test_python_runtime_browser_console_smoke_runs_in_ci_gates():
-    for workflow_name in ("release.yml", "native_verify.yml"):
-        workflow = _workflow(workflow_name)
+    release_workflow = _workflow("release.yml")
+    native_workflow = _workflow("native_verify.yml")
+    native_runner = (REPO_ROOT / "tools" / "ci" / "native_verify.py").read_text(encoding="utf-8")
 
-        assert "npx playwright install" in workflow
-        assert "chromium" in workflow
-        assert "node tools/ci/browser_console_smoke.mjs --python python" in workflow
+    assert "npx playwright install" in release_workflow
+    assert "chromium" in release_workflow
+    assert "node tools/ci/browser_console_smoke.mjs --python python" in release_workflow
+
+    assert "tools/ci/native_verify.py --profile windows-ci" in native_workflow
+    assert "tools/ci/native_verify.py --profile linux-ci" in native_workflow
+    assert '"playwright", "install"' in native_runner
+    assert '"chromium"' in native_runner
+    assert '"tools/ci/browser_console_smoke.mjs", "--python"' in native_runner
+
+
+def test_native_verification_workflow_uses_shared_parity_runner():
+    workflow = _workflow("native_verify.yml")
+    runner = (REPO_ROOT / "tools" / "ci" / "native_verify.py").read_text(encoding="utf-8")
+
+    assert "uses: ./.github/actions/install-liboqs" in workflow
+    assert "expected-commit: ${{ env.LIBOQS_EXPECTED_COMMIT }}" in workflow
+    assert "python tools/ci/native_verify.py --profile windows-ci" in workflow
+    assert "python tools/ci/native_verify.py --profile linux-ci" in workflow
+    for required in (
+        '"pip_audit"',
+        '"pytest"',
+        '"--timeout=120"',
+        '"node", "--test", "paracci/tests/test_session_clipboard.mjs"',
+        '"tools/ci/browser_console_smoke.mjs"',
+        '"paracci/audits/guardian.py"',
+        '"py_compile"',
+    ):
+        assert required in runner
 
 
 def test_release_workflow_runs_windows_packaged_browser_console_smoke_before_upload():

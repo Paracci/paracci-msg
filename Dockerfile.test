@@ -51,8 +51,15 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && rm -rf /var/lib/apt/lists/*
 
 # liboqs C kütüphanesinin (0.15.0) GitHub workflow ile birebir aynı şekilde derlenmesi
+ENV LIBOQS_VERSION=0.15.0
+ENV LIBOQS_EXPECTED_COMMIT=97f6b86b1b6d109cfd43cf276ae39c2e776aed80
 ENV OQS_INSTALL_PREFIX=/opt/oqs
-RUN git clone --branch 0.15.0 --depth 1 https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs \
+RUN git clone --branch "$LIBOQS_VERSION" --depth 1 https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs \
+    && actual_commit="$(git -C /tmp/liboqs rev-parse HEAD)" \
+    && if [ "$actual_commit" != "$LIBOQS_EXPECTED_COMMIT" ]; then \
+        echo "liboqs source mismatch: expected $LIBOQS_EXPECTED_COMMIT, got $actual_commit" >&2; \
+        exit 1; \
+    fi \
     && cmake -S /tmp/liboqs -B /tmp/liboqs/build \
         -DBUILD_SHARED_LIBS=ON \
         -DCMAKE_BUILD_TYPE=Release \
@@ -61,6 +68,11 @@ RUN git clone --branch 0.15.0 --depth 1 https://github.com/open-quantum-safe/lib
         -DCMAKE_INSTALL_PREFIX="$OQS_INSTALL_PREFIX" \
     && cmake --build /tmp/liboqs/build --parallel $(nproc) \
     && cmake --build /tmp/liboqs/build --target install \
+    && printf '%s\n' \
+        "version=$LIBOQS_VERSION" \
+        "expected_commit=$LIBOQS_EXPECTED_COMMIT" \
+        "actual_commit=$actual_commit" \
+        > "$OQS_INSTALL_PREFIX/.paracci-liboqs-source" \
     && rm -rf /tmp/liboqs
 
 # Çevre değişkenlerinin tanımlanması (liboqs-python'un kütüphaneyi bulabilmesi için)
@@ -84,4 +96,4 @@ RUN python -m pip install --upgrade pip --break-system-packages \
 
 
 # Çalıştırılacak varsayılan komut (Derleme + Pytest + JS Testleri)
-CMD ["sh", "-c", "npm run build && python -m pytest paracci/tests -q && node --test paracci/tests/test_session_clipboard.mjs"]
+CMD ["sh", "-c", "python tools/ci/native_verify.py --profile linux-docker"]
