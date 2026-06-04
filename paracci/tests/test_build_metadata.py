@@ -109,10 +109,14 @@ def test_windows_output_fails_closed_without_the_python_runtime_dll(tmp_path, mo
 
 def test_windows_release_publishes_only_complete_payloads():
     workflow = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    validation_script = (REPO_ROOT / "tools" / "ci" / "release_artifact_validation.py").read_text(
+        encoding="utf-8"
+    )
 
-    assert '$runtimeDll = "builds\\windows\\Paracci\\_internal\\python312.dll"' in workflow
-    assert 'Test-Path -LiteralPath $runtimeDll -PathType Leaf' in workflow
-    assert "$_.FullName.Replace('\\', '/') -eq $expectedRuntimeEntry" in workflow
+    assert "prepare-build-assets --platform windows" in workflow
+    assert "validate_windows_portable_zip" in validation_script
+    assert '"python312.dll"' in validation_script
+    assert "Paracci.exe" in validation_script
     assert "${{ steps.resolve.outputs.win_setup_file }}" in workflow
     assert "${{ steps.resolve.outputs.win_portable_file }}" in workflow
     assert "${{ steps.resolve.outputs.win_file }}" not in workflow

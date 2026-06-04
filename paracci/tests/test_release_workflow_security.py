@@ -32,8 +32,9 @@ def test_release_workflow_recomputes_manifest_and_creates_draft_release():
     release_step = workflow.index("- name: Create GitHub Release")
 
     assert resolve_step < manifest_step < release_step
-    assert 'sha256sum "$file"' in workflow
-    assert 'basename "$file"' in workflow
+    assert "tools/ci/release_artifact_validation.py resolve-release-assets" in workflow
+    assert "tools/ci/release_artifact_validation.py write-manifest" in workflow
+    assert "tools/ci/packaged_runtime_smoke.py" in workflow
     assert "cat release-assets/windows/SHA256SUMS.txt" not in workflow
     assert "release-assets/linux/SHA256SUMS.txt" not in workflow
     assert "draft: true" in workflow

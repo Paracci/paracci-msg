@@ -23,6 +23,31 @@ Run dependency vulnerability scanning:
 python -m pip_audit -r requirements.lock -r requirements-dev.lock
 ```
 
+Run the focused pre-push release validation contract tests:
+
+```powershell
+.venv\Scripts\python.exe -m pytest paracci/tests/test_release_artifact_validation.py paracci/tests/test_release_workflow_security.py paracci/tests/test_build_metadata.py -q
+.venv\Scripts\python.exe -m pytest paracci/tests/test_security_docs.py -q
+```
+
+After building a release candidate for the current platform, run the local packaged smoke and artifact checks before pushing a tag:
+
+```powershell
+# Windows after: python build.py --clean --installer
+.venv\Scripts\python.exe tools/ci/packaged_runtime_smoke.py --platform windows
+.venv\Scripts\python.exe tools/ci/release_artifact_validation.py validate-build --platform windows
+.venv\Scripts\python.exe tools/ci/release_artifact_validation.py prepare-build-assets --platform windows
+```
+
+```bash
+# Linux after: python build.py --clean --appimage --deb
+python tools/ci/packaged_runtime_smoke.py --platform linux
+python tools/ci/release_artifact_validation.py validate-build --platform linux
+python tools/ci/release_artifact_validation.py prepare-build-assets --platform linux
+```
+
+The `Build & Release` workflow still owns CI-only release steps: Linux AppImage extraction, Debian install/remove checks, AppImage GUI timeout smoke, artifact upload, Sigstore attestation, VirusTotal scanning, and draft GitHub Release creation. The publish workflow remains the only place that verifies the offline manifest signature and publishes the draft.
+
 ---
 
 ## Test Areas

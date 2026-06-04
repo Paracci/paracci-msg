@@ -243,246 +243,12 @@ jobs:
 
       - name: Smoke test packaged ML-KEM
         shell: bash
-        run: |
-          python - <<'PY'
-          import http.cookiejar
-          import os
-          import queue
-          import re
-          import shutil
-          import socket
-          import subprocess
-          import sys
-          import tempfile
-          import threading
-          import time
-          import urllib.parse
-          import urllib.request
-          from pathlib import Path
-
-          runner_os = os.environ["RUNNER_OS"]
-          if runner_os == "Windows":
-              executable = Path("builds/windows/Paracci/Paracci.exe")
-          # macOS temporarily disabled — runner hangs at pytest collection phase
-          # elif runner_os == "macOS":
-          #     app_executable = Path("builds/macos/Paracci.app/Contents/MacOS/Paracci")
-          #     executable = app_executable if app_executable.exists() else Path("builds/macos/Paracci")
-          else:
-              executable = Path("builds/linux/Paracci/Paracci")
-
-          if not executable.exists():
-              raise SystemExit(f"Packaged executable not found: {executable}")
-
-          with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-              probe.bind(("127.0.0.1", 0))
-              port = probe.getsockname()[1]
-          token = None
-          origin = f"http://127.0.0.1:{port}"
-          data_root = Path(tempfile.mkdtemp(prefix="paracci-smoke-")).resolve()
-
-          env = os.environ.copy()
-          env.pop("PARACCI_LOOPBACK_TOKEN", None)
-          for name in (
-              "OQS_INSTALL_PATH",
-              "LIBOQS_LIB_DIR",
-              "LD_LIBRARY_PATH",
-              "DYLD_LIBRARY_PATH",
-          ):
-              env.pop(name, None)
-          env["PATH"] = os.pathsep.join(
-              part
-              for part in env.get("PATH", "").split(os.pathsep)
-              if "_oqs" not in part.lower() and "liboqs" not in part.lower()
-          )
-          env["DATA_DIR"] = str(data_root / "data")
-          env["PYOQS_VERSION"] = "paracci-smoke-no-autoinstall"
-          env["QT_QPA_PLATFORM"] = "offscreen"
-
-          proc = subprocess.Popen(
-              [str(executable), "--no-gui", "--port", str(port)],
-              env=env,
-              stdout=subprocess.PIPE,
-              stderr=subprocess.STDOUT,
-              text=True,
-              errors="replace",
-          )
-
-          output_lines = []
-          output_events = queue.Queue()
-
-          def collect_output():
-              if proc.stdout:
-                  for line in proc.stdout:
-                      output_lines.append(line)
-                      output_events.put(line)
-
-          output_thread = threading.Thread(target=collect_output, daemon=True)
-          output_thread.start()
-
-          def stop_process():
-              if proc.poll() is None:
-                  proc.terminate()
-                  try:
-                      proc.wait(timeout=10)
-                  except subprocess.TimeoutExpired:
-                      proc.kill()
-                      proc.wait(timeout=10)
-
-          def redact(text):
-              redacted = re.sub(r"([?&]token=)[^&\s]+", r"\1<redacted>", text)
-              return redacted.replace(token, "<redacted>") if token else redacted
-
-          def output_tail():
-              return redact("".join(output_lines)[-4000:])
-
-          def fail(message):
-              stop_process()
-              output_thread.join(timeout=1)
-              raise SystemExit(f"{message}\n--- packaged app output ---\n{output_tail()}")
-
-          try:
-              deadline = time.time() + 90
-              while token is None and time.time() < deadline:
-                  if proc.poll() is not None:
-                      fail(f"Packaged app exited early with code {proc.returncode}")
-                  try:
-                      line = output_events.get(timeout=0.25)
-                  except queue.Empty:
-                      continue
-                  marker = "http://127.0.0.1:"
-                  if marker not in line or "/__paracci_bootstrap?" not in line:
-                      continue
-                  entrypoint = urllib.parse.urlparse(line.strip())
-                  candidate = urllib.parse.parse_qs(entrypoint.query).get("token", [""])[0]
-                  if (
-                      entrypoint.scheme != "http"
-                      or entrypoint.hostname != "127.0.0.1"
-                      or entrypoint.port != port
-                      or entrypoint.path != "/__paracci_bootstrap"
-                      or not candidate
-                  ):
-                      fail("Packaged app printed an invalid authenticated entrypoint")
-                  token = candidate
-              if token is None:
-                  fail("Timed out waiting for packaged app authenticated entrypoint")
-
-              while time.time() < deadline:
-                  if proc.poll() is not None:
-                      fail(f"Packaged app exited early with code {proc.returncode}")
-                  try:
-                      with socket.create_connection(("127.0.0.1", port), timeout=1):
-                          break
-                  except OSError:
-                      time.sleep(1)
-              else:
-                  fail("Timed out waiting for packaged app to listen")
-
-              jar = http.cookiejar.CookieJar()
-              opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
-
-              def request(path, form=None, csrf=None):
-                  headers = {
-                      "Host": f"127.0.0.1:{port}",
-                      "Origin": origin,
-                      "X-Paracci-Token": token,
-                  }
-                  data = None
-                  if form is not None:
-                      data = urllib.parse.urlencode(form).encode("utf-8")
-                      headers["Content-Type"] = "application/x-www-form-urlencoded"
-                      if csrf:
-                          headers["X-CSRF-Token"] = csrf
-                  req = urllib.request.Request(origin + path, data=data, headers=headers)
-                  return opener.open(req, timeout=45)
-
-              response = request(f"/__paracci_bootstrap?token={urllib.parse.quote(token)}&next=/")
-              html = response.read().decode("utf-8", "replace")
-              csrf_match = re.search(r'name="paracci-csrf-token"\s+content="([^"]+)"', html)
-              if not csrf_match:
-                  response = request("/unlock")
-                  html = response.read().decode("utf-8", "replace")
-                  csrf_match = re.search(r'name="paracci-csrf-token"\s+content="([^"]+)"', html)
-              if not csrf_match:
-                  fail("Could not extract CSRF token from packaged app")
-
-              csrf = csrf_match.group(1)
-              request("/unlock", {"pin": "Correct-Horse-95175328"}, csrf).read()
-              request("/unlock/2fa/setup", {"action": "skip"}, csrf).read()
-              response = request(
-                  "/session/new",
-                  {
-                      "label": "Release smoke",
-                      "session_ttl": "0",
-                  },
-                  csrf,
-              )
-              body = response.read().decode("utf-8", "replace")
-              final_url = response.geturl()
-
-              if "/session/" not in final_url:
-                  snippet = re.sub(r"\s+", " ", body)[:1000]
-                  fail(f"ML-KEM session creation did not complete. Final URL: {final_url}. Body: {snippet}")
-
-              print(f"Packaged ML-KEM smoke test passed: {final_url}")
-          except Exception as e:
-              fail(f"Smoke test failed: {e}")
-          finally:
-              stop_process()
-              output_thread.join(timeout=1)
-              shutil.rmtree(data_root, ignore_errors=True)
-          PY
+        run: python tools/ci/packaged_runtime_smoke.py --platform "$RUNNER_OS"
 
       # ── 6. Normalize output path and compute SHA-256 ───────────────────────
       - name: Validate Linux distribution packages
         if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          appimages=(builds/linux/Paracci-*-x86_64.AppImage)
-          debs=(builds/linux/paracci_*_amd64.deb)
-          [ "${#appimages[@]}" -eq 1 ] && [ -f "${appimages[0]}" ]
-          [ "${#debs[@]}" -eq 1 ] && [ -f "${debs[0]}" ]
-          test -x "${appimages[0]}"
-
-          desktop-file-validate installer/linux/paracci.desktop
-          python - <<'PY'
-          from pathlib import Path
-          from xml.etree import ElementTree
-          ElementTree.parse(Path("installer/linux/application-x-paracci.xml"))
-          PY
-
-          extract_dir="$RUNNER_TEMP/paracci-appimage-extract"
-          mkdir -p "$extract_dir"
-          (
-            cd "$extract_dir"
-            "$GITHUB_WORKSPACE/${appimages[0]}" --appimage-extract >/dev/null
-          )
-          test -x "$extract_dir/squashfs-root/AppRun"
-          test -f "$extract_dir/squashfs-root/usr/share/applications/paracci.desktop"
-          test -f "$extract_dir/squashfs-root/usr/share/mime/packages/application-x-paracci.xml"
-          grep -q 'MimeType=application/x-paracci;' "$extract_dir/squashfs-root/usr/share/applications/paracci.desktop"
-
-          dpkg-deb --info "${debs[0]}" >/dev/null
-          sudo dpkg -i "${debs[0]}"
-          test -x /opt/paracci/Paracci
-          test -L /usr/local/bin/paracci
-          test -f /usr/share/applications/paracci.desktop
-          test -f /usr/share/mime/packages/application-x-paracci.xml
-          test ! -e /opt/paracci/data
-          sudo dpkg -r paracci
-          test ! -e /opt/paracci
-          test ! -e /usr/local/bin/paracci
-          test ! -e /usr/share/applications/paracci.desktop
-          test ! -e /usr/share/mime/packages/application-x-paracci.xml
-
-          status=0
-          APPIMAGE_EXTRACT_AND_RUN=1 timeout 20s xvfb-run -a "${appimages[0]}" \
-            > "$RUNNER_TEMP/paracci-appimage-gui.log" 2>&1 || status=$?
-          if [ "$status" -ne 124 ]; then
-            cat "$RUNNER_TEMP/paracci-appimage-gui.log"
-            echo "Expected the AppImage GUI process to remain active until timeout; status=$status" >&2
-            exit 1
-          fi
+        run: python tools/ci/release_artifact_validation.py validate-build --platform linux --native-ci-checks
 
       # macOS temporarily disabled — runner hangs at pytest collection phase
       # - name: Validate macOS DMG
@@ -496,84 +262,16 @@ jobs:
 
       - name: Prepare asset (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $runtimeDll = "builds\windows\Paracci\_internal\python312.dll"
-          if (-not (Test-Path -LiteralPath $runtimeDll -PathType Leaf)) {
-            throw "Windows onedir payload is missing Python runtime DLL: $runtimeDll"
-          }
-          $setups = @(Get-ChildItem "builds\windows\Paracci-Setup-v*.exe")
-          if ($setups.Count -ne 1) {
-            throw "Expected one Windows setup executable, found $($setups.Count)."
-          }
-
-          $setup = $setups[0]
-          if ($setup.BaseName -notmatch '^Paracci-Setup-v(.+)$') {
-            throw "Could not determine installer version from $($setup.Name)."
-          }
-          $version = $Matches[1]
-          $portableDir = "builds\windows\Paracci-Portable-v$version"
-          $portableZip = "builds\windows\Paracci-Portable-v$version.zip"
-
-          Copy-Item "builds\windows\Paracci" $portableDir -Recurse -Force
-          New-Item -Path (Join-Path $portableDir "data") -ItemType Directory -Force | Out-Null
-          Compress-Archive -Path $portableDir -DestinationPath $portableZip -Force
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $archive = [System.IO.Compression.ZipFile]::OpenRead($portableZip)
-          try {
-            $expectedRuntimeEntry = "Paracci-Portable-v$version/_internal/python312.dll"
-            $hasRuntimeDll = $null -ne ($archive.Entries | Where-Object {
-              $_.FullName.Replace('\', '/') -eq $expectedRuntimeEntry
-            } | Select-Object -First 1)
-            if (-not $hasRuntimeDll) {
-              throw "Windows portable archive is missing Python runtime DLL: $expectedRuntimeEntry"
-            }
-          } finally {
-            $archive.Dispose()
-          }
-          Remove-Item $portableDir -Recurse -Force
-
-          $setupHash = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLower()
-          $portableHash = (Get-FileHash $portableZip -Algorithm SHA256).Hash.ToLower()
-          @(
-            "$setupHash  $($setup.Name)"
-            "$portableHash  $(Split-Path $portableZip -Leaf)"
-          ) | Out-File -Encoding utf8 "builds\windows\SHA256SUMS.txt"
-          Write-Host "SHA256 $($setup.Name): $setupHash"
-          Write-Host "SHA256 $(Split-Path $portableZip -Leaf): $portableHash"
+        run: python tools/ci/release_artifact_validation.py prepare-build-assets --platform windows
 
       - name: Prepare asset (macOS)
         if: runner.os == 'macOS'
-        run: |
-          dmgs=(builds/macos/Paracci-*-macOS.dmg)
-          [ "${#dmgs[@]}" -eq 1 ] && [ -f "${dmgs[0]}" ]
-          if [ -d "builds/macos/Paracci.app" ]; then
-            cd builds/macos
-            zip -r Paracci-macOS.zip Paracci.app
-            sha256sum Paracci-macOS.zip Paracci-*-macOS.dmg > SHA256SUMS.txt
-            rm -rf Paracci.app
-          else
-            chmod +x builds/macos/Paracci
-            cd builds/macos
-            mv Paracci Paracci-macOS
-            sha256sum Paracci-macOS Paracci-*-macOS.dmg > SHA256SUMS.txt
-          fi
+        run: python tools/ci/release_artifact_validation.py prepare-build-assets --platform macos
 
       - name: Prepare asset (Linux)
         if: runner.os == 'Linux'
-        run: |
-          appimages=(builds/linux/Paracci-*-x86_64.AppImage)
-          debs=(builds/linux/paracci_*_amd64.deb)
-          [ "${#appimages[@]}" -eq 1 ] && [ -f "${appimages[0]}" ]
-          [ "${#debs[@]}" -eq 1 ] && [ -f "${debs[0]}" ]
-          test -x builds/linux/Paracci/Paracci
-          chmod +x builds/linux/Paracci/Paracci "${appimages[0]}"
-          cd builds/linux
-          zip -qr Paracci-Linux.zip Paracci
-          zip -T Paracci-Linux.zip
-          sha256sum Paracci-Linux.zip Paracci-*-x86_64.AppImage paracci_*_amd64.deb > SHA256SUMS.txt
-          rm -rf Paracci
-          
+        run: python tools/ci/release_artifact_validation.py prepare-build-assets --platform linux
+
       # ── 7. GitHub Build Provenance Attestation (Sigstore / SLSA L2) ────────
       #    Generates a cryptographically signed attestation that this binary
       #    was built from THIS specific commit in THIS repository.
@@ -682,77 +380,26 @@ jobs:
       # ── Resolve final file names ────────────────────────────────────────────
       - name: Resolve release files
         id: resolve
+        shell: bash
         run: |
-          PACKAGE_VERSION="$(tr -d '\r\n' < VERSION)"
-          if [ "$GITHUB_REF_NAME" != "v$PACKAGE_VERSION" ]; then
-            echo "Release tag $GITHUB_REF_NAME does not match canonical VERSION v$PACKAGE_VERSION." >&2
-            exit 1
-          fi
-          WIN_SETUP_FILE="$(find release-assets/windows -maxdepth 1 -name 'Paracci-Setup-v*.exe' -print -quit)"
-          WIN_PORTABLE_FILE="$(find release-assets/windows -maxdepth 1 -name 'Paracci-Portable-v*.zip' -print -quit)"
-          LINUX_ZIP_FILE="$(find release-assets/linux -maxdepth 1 -name 'Paracci-Linux.zip' -print -quit)"
-          LINUX_APPIMAGE_FILE="$(find release-assets/linux -maxdepth 1 -name 'Paracci-*-x86_64.AppImage' -print -quit)"
-          LINUX_DEB_FILE="$(find release-assets/linux -maxdepth 1 -name 'paracci_*_amd64.deb' -print -quit)"
-          
-          MACOS_DMG_FILE=""
-          if [ -d "release-assets/macos" ]; then
-            MACOS_DMG_FILE="$(find release-assets/macos -maxdepth 1 -name 'Paracci-*-macOS.dmg' -print -quit || true)"
-          fi
-
-          if [ -z "$WIN_SETUP_FILE" ] || [ -z "$WIN_PORTABLE_FILE" ] || \
-             [ -z "$LINUX_ZIP_FILE" ] || [ -z "$LINUX_APPIMAGE_FILE" ] || \
-             [ -z "$LINUX_DEB_FILE" ]; then
-            echo "Missing one or more required distribution package release files." >&2
-            exit 1
-          fi
-          chmod +x "$LINUX_APPIMAGE_FILE"
-
-          MACOS_FILE=""
-          if [ -d "release-assets/macos" ]; then
-            if [ -f "release-assets/macos/Paracci-macOS.zip" ]; then
-              MACOS_FILE="release-assets/macos/Paracci-macOS.zip"
-            elif [ -f "release-assets/macos/Paracci-macOS" ]; then
-              MACOS_FILE="release-assets/macos/Paracci-macOS"
-              chmod +x "$MACOS_FILE"
-            fi
-          fi
-
-          echo "win_setup_file=$WIN_SETUP_FILE" >> $GITHUB_OUTPUT
-          echo "win_portable_file=$WIN_PORTABLE_FILE" >> $GITHUB_OUTPUT
-          echo "macos_file=$MACOS_FILE" >> $GITHUB_OUTPUT
-          echo "macos_dmg_file=$MACOS_DMG_FILE" >> $GITHUB_OUTPUT
-          echo "linux_zip_file=$LINUX_ZIP_FILE" >> $GITHUB_OUTPUT
-          echo "linux_appimage_file=$LINUX_APPIMAGE_FILE" >> $GITHUB_OUTPUT
-          echo "linux_deb_file=$LINUX_DEB_FILE" >> $GITHUB_OUTPUT
-          echo "package_version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
+          python tools/ci/release_artifact_validation.py resolve-release-assets \
+            --release-assets release-assets \
+            --release-tag "$GITHUB_REF_NAME" \
+            --github-output "$GITHUB_OUTPUT"
 
       - name: Generate canonical SHA256SUMS.txt
         shell: bash
         run: |
           set -euo pipefail
-          files=(
-            "${{ steps.resolve.outputs.win_setup_file }}"
-            "${{ steps.resolve.outputs.win_portable_file }}"
-            "${{ steps.resolve.outputs.linux_zip_file }}"
-            "${{ steps.resolve.outputs.linux_appimage_file }}"
-            "${{ steps.resolve.outputs.linux_deb_file }}"
-          )
-          if [ -n "${{ steps.resolve.outputs.macos_file }}" ]; then
-            files+=("${{ steps.resolve.outputs.macos_file }}")
-          fi
-          if [ -n "${{ steps.resolve.outputs.macos_dmg_file }}" ]; then
-            files+=("${{ steps.resolve.outputs.macos_dmg_file }}")
-          fi
-
-          : > SHA256SUMS.txt
-          for file in "${files[@]}"; do
-            test -f "$file"
-            digest="$(sha256sum "$file" | awk '{print $1}')"
-            printf '%s  %s\n' "$digest" "$(basename "$file")" >> SHA256SUMS.txt
-          done
-
-          echo "=== Recomputed SHA256SUMS.txt ==="
-          cat SHA256SUMS.txt
+          python tools/ci/release_artifact_validation.py write-manifest \
+            --manifest SHA256SUMS.txt \
+            --file "${{ steps.resolve.outputs.win_setup_file }}" \
+            --file "${{ steps.resolve.outputs.win_portable_file }}" \
+            --file "${{ steps.resolve.outputs.linux_zip_file }}" \
+            --file "${{ steps.resolve.outputs.linux_appimage_file }}" \
+            --file "${{ steps.resolve.outputs.linux_deb_file }}" \
+            --file "${{ steps.resolve.outputs.macos_file }}" \
+            --file "${{ steps.resolve.outputs.macos_dmg_file }}"
 
       - name: Normalize filenames for VirusTotal
         run: |
