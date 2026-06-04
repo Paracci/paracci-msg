@@ -9,7 +9,7 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Mapping, Sequence
+from typing import Callable, Mapping, Sequence, TextIO
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -313,8 +313,30 @@ def redact_sensitive(value: object, repo_root: Path = REPO_ROOT, extra_roots: Se
     return text
 
 
+def _console_safe_text(value: object, stream: TextIO) -> str:
+    text = str(value)
+    encoding = getattr(stream, "encoding", None) or "utf-8"
+    try:
+        return text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+    except (LookupError, TypeError, ValueError):
+        return text.encode("utf-8", errors="replace").decode("utf-8", errors="replace")
+
+
+def _write_console(
+    value: object,
+    *,
+    stream: TextIO | None = None,
+    end: str = "\n",
+    flush: bool = False,
+) -> None:
+    output_stream = sys.stdout if stream is None else stream
+    output_stream.write(_console_safe_text(f"{value}{end}", output_stream))
+    if flush:
+        output_stream.flush()
+
+
 def run_step(step: CommandStep, profile: Profile, repo_root: Path, base_env: Mapping[str, str]) -> None:
-    print(f"\n==> {step.name}", flush=True)
+    _write_console(f"\n==> {step.name}", flush=True)
     env = os.environ.copy()
     env.update(base_env)
     if profile.ci_environment:
@@ -336,7 +358,7 @@ def run_step(step: CommandStep, profile: Profile, repo_root: Path, base_env: Map
     assert process.stdout is not None
     for line in process.stdout:
         redacted = redact_sensitive(line, repo_root)
-        print(redacted, end="", flush=True)
+        _write_console(redacted, end="", flush=True)
     returncode = process.wait()
     if returncode != 0:
         command = " ".join(redact_sensitive(part, repo_root) for part in launch_command)
@@ -371,11 +393,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     python_command = args.python_command or default_python_command(profile, repo_root)
 
     try:
-        print(f"Native Verification profile: {profile.name}")
-        print(f"Python command: {redact_sensitive(python_command, repo_root)}")
+        _write_console(f"Native Verification profile: {profile.name}")
+        _write_console(f"Python command: {redact_sensitive(python_command, repo_root)}")
         run_profile(profile, python_command, repo_root, os.environ)
     except NativeVerifyError as exc:
-        print(f"[ERROR] {redact_sensitive(exc, repo_root)}", file=sys.stderr)
+        _write_console(f"[ERROR] {redact_sensitive(exc, repo_root)}", stream=sys.stderr)
         return 1
     return 0
 

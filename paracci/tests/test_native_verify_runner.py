@@ -10,6 +10,24 @@ LIBOQS_VERSION = "0.15.0"
 LIBOQS_EXPECTED_COMMIT = "97f6b86b1b6d109cfd43cf276ae39c2e776aed80"
 
 
+class StrictEncodingStream:
+    def __init__(self, encoding: str):
+        self.encoding = encoding
+        self._chunks: list[str] = []
+        self.flushes = 0
+
+    def write(self, text: str) -> int:
+        text.encode(self.encoding, errors="strict")
+        self._chunks.append(text)
+        return len(text)
+
+    def flush(self) -> None:
+        self.flushes += 1
+
+    def getvalue(self) -> str:
+        return "".join(self._chunks)
+
+
 def load_native_verify_module():
     module_name = "paracci_native_verify"
     spec = importlib.util.spec_from_file_location(
@@ -65,6 +83,14 @@ def test_windows_ci_profile_preserves_native_verification_gate_commands():
     assert ("node", "tools/ci/browser_console_smoke.mjs", "--python", "python") in commands
     assert ("python", "paracci/audits/guardian.py") in commands
     assert any(command[:3] == ("python", "-m", "py_compile") for command in commands)
+
+
+def test_all_profiles_keep_guardian_audit_required_once():
+    native_verify = load_native_verify_module()
+
+    for profile_name, profile in native_verify.PROFILES.items():
+        commands = [step.command for step in native_verify.build_steps(profile, "python")]
+        assert commands.count(("python", "paracci/audits/guardian.py")) == 1, profile_name
 
 
 def test_linux_profiles_keep_platform_specific_playwright_and_docker_setup():
@@ -218,3 +244,80 @@ def test_redaction_removes_tokens_and_local_path_material(tmp_path):
     assert hidden_value not in redacted
     assert "token=<redacted>" in redacted
     assert "<local-path>" in redacted
+
+
+def test_safe_console_output_handles_cp1252_replacement_characters():
+    native_verify = load_native_verify_module()
+    stream = StrictEncodingStream("cp1252")
+
+    native_verify._write_console("guardian output had replacement=\ufffd and snowman=\u2603", stream=stream, flush=True)
+
+    output = stream.getvalue()
+    assert "\ufffd" not in output
+    assert "\u2603" not in output
+    assert "replacement=?" in output
+    assert "snowman=?" in output
+    assert stream.flushes == 1
+
+
+def test_safe_console_output_keeps_utf8_console_readable():
+    native_verify = load_native_verify_module()
+    stream = StrictEncodingStream("utf-8")
+    text = "guardian output had replacement=\ufffd and snowman=\u2603"
+
+    native_verify._write_console(text, stream=stream)
+
+    assert stream.getvalue() == text + "\n"
+
+
+def test_run_step_redacts_before_cp1252_safe_output(tmp_path, monkeypatch):
+    native_verify = load_native_verify_module()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    stream = StrictEncodingStream("cp1252")
+    token_value = "launch-" + "fixture-" + "abcdefghijklmnopqrstuvwxyz1234567890"
+    secret_value = "not-" + "for-" + "logs"
+    windows_path = "\\".join(["C:", "Users", "private-user", "AppData", "Local", "Temp", "paracci", "trace.log"])
+
+    class FakeProcess:
+        stdout = iter(
+            [
+                "\n".join(
+                    [
+                        f"url=http://127.0.0.1:54321/__paracci_bootstrap?token={token_value}",
+                        f"secret={secret_value}",
+                        f"path={windows_path}",
+                        "guardian replacement=\ufffd snowman=\u2603",
+                    ]
+                )
+                + "\n"
+            ]
+        )
+
+        def wait(self) -> int:
+            return 0
+
+    def fake_popen(*args, **kwargs):
+        assert kwargs["text"] is True
+        assert kwargs["errors"] == "replace"
+        return FakeProcess()
+
+    monkeypatch.setattr(native_verify.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(native_verify, "resolve_command", lambda profile, command, root: command)
+    monkeypatch.setattr(native_verify.sys, "stdout", stream)
+
+    native_verify.run_step(
+        native_verify.CommandStep("Run Guardian audit", ("python", "paracci/audits/guardian.py")),
+        native_verify.PROFILES["windows-ci"],
+        repo_root,
+        {},
+    )
+
+    output = stream.getvalue()
+    assert token_value not in output
+    assert secret_value not in output
+    assert windows_path not in output
+    assert "token=<redacted>" in output
+    assert "secret=<redacted>" in output
+    assert "<local-path>" in output
+    assert "guardian replacement=? snowman=?" in output
