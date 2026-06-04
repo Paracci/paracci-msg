@@ -29,6 +29,17 @@ def _commands_for(profile_name: str, python_command: str = "python") -> list[tup
     return [step.command for step in native_verify.build_steps(profile, python_command)]
 
 
+def _fake_which(*available_commands: str):
+    available = set(available_commands)
+
+    def fake_which(command: str) -> str | None:
+        if command in available:
+            return f"/toolchain/{command}"
+        return None
+
+    return fake_which
+
+
 def test_windows_ci_profile_preserves_native_verification_gate_commands():
     commands = _commands_for("windows-ci")
 
@@ -68,6 +79,46 @@ def test_linux_profiles_keep_platform_specific_playwright_and_docker_setup():
     assert ("python", "-m", "pip_audit", "-r", "requirements.lock", "-r", "requirements-dev.lock") in linux_docker_commands
 
 
+def test_windows_command_resolution_prefers_npm_cmd_launcher():
+    native_verify = load_native_verify_module()
+
+    assert native_verify.resolve_command(
+        native_verify.PROFILES["windows-ci"],
+        "npm",
+        REPO_ROOT,
+        which=_fake_which("npm", "npm.cmd"),
+    ) == "npm.cmd"
+
+
+def test_windows_command_resolution_prefers_npx_cmd_launcher():
+    native_verify = load_native_verify_module()
+
+    assert native_verify.resolve_command(
+        native_verify.PROFILES["windows-ci"],
+        "npx",
+        REPO_ROOT,
+        which=_fake_which("npx", "npx.cmd"),
+    ) == "npx.cmd"
+
+
+def test_non_windows_package_manager_resolution_keeps_command_names():
+    native_verify = load_native_verify_module()
+    which = _fake_which("npm", "npm.cmd", "npx", "npx.cmd")
+
+    assert native_verify.resolve_command(
+        native_verify.PROFILES["linux-ci"],
+        "npm",
+        REPO_ROOT,
+        which=which,
+    ) == "npm"
+    assert native_verify.resolve_command(
+        native_verify.PROFILES["linux-ci"],
+        "npx",
+        REPO_ROOT,
+        which=which,
+    ) == "npx"
+
+
 def test_missing_required_commands_fail_clearly():
     native_verify = load_native_verify_module()
 
@@ -82,6 +133,18 @@ def test_missing_required_commands_fail_clearly():
             "python",
             REPO_ROOT,
             which=fake_which,
+        )
+
+
+def test_missing_windows_package_manager_commands_fail_clearly():
+    native_verify = load_native_verify_module()
+
+    with pytest.raises(native_verify.NativeVerifyError, match="Required command not found.*npm, npx"):
+        native_verify.ensure_required_tools(
+            native_verify.PROFILES["windows-ci"],
+            "python",
+            REPO_ROOT,
+            which=_fake_which("python", "node"),
         )
 
 

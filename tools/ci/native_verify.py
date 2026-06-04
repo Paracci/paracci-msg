@@ -20,6 +20,10 @@ PY_COMPILE_TARGETS = (
     "paracci/ui_api/facade.py",
     "paracci/bridge/worker.py",
 )
+WINDOWS_COMMAND_LAUNCHERS = {
+    "npm": "npm.cmd",
+    "npx": "npx.cmd",
+}
 
 
 class NativeVerifyError(RuntimeError):
@@ -159,13 +163,38 @@ def build_steps(profile: Profile, python_command: str) -> list[CommandStep]:
     return steps
 
 
-def _command_path_exists(command: str, repo_root: Path, which: Callable[[str], str | None]) -> bool:
+def _resolve_command_token(
+    profile: Profile,
+    command: str,
+    repo_root: Path,
+    which: Callable[[str], str | None],
+) -> str | None:
     command_path = Path(command)
     if command_path.is_absolute():
-        return command_path.is_file()
+        return command if command_path.is_file() else None
     if len(command_path.parts) > 1:
-        return (repo_root / command_path).is_file()
-    return which(command) is not None
+        return command if (repo_root / command_path).is_file() else None
+
+    candidates = (command,)
+    if profile.platform == "windows" and command in WINDOWS_COMMAND_LAUNCHERS:
+        candidates = (WINDOWS_COMMAND_LAUNCHERS[command], command)
+
+    for candidate in candidates:
+        if which(candidate) is not None:
+            return candidate
+    return None
+
+
+def resolve_command(
+    profile: Profile,
+    command: str,
+    repo_root: Path,
+    which: Callable[[str], str | None] = shutil.which,
+) -> str:
+    resolved = _resolve_command_token(profile, command, repo_root, which)
+    if resolved is None:
+        raise NativeVerifyError(f"Required command not found for {profile.name}: {command}")
+    return resolved
 
 
 def ensure_required_tools(
@@ -178,7 +207,7 @@ def ensure_required_tools(
     missing = [
         command
         for command in required
-        if not _command_path_exists(command, repo_root, which)
+        if _resolve_command_token(profile, command, repo_root, which) is None
     ]
     if missing:
         names = ", ".join(missing)
@@ -294,8 +323,9 @@ def run_step(step: CommandStep, profile: Profile, repo_root: Path, base_env: Map
     if step.env:
         env.update(step.env)
 
+    launch_command = (resolve_command(profile, step.command[0], repo_root), *step.command[1:])
     process = subprocess.Popen(
-        step.command,
+        launch_command,
         cwd=repo_root,
         env=env,
         stdout=subprocess.PIPE,
@@ -309,7 +339,7 @@ def run_step(step: CommandStep, profile: Profile, repo_root: Path, base_env: Map
         print(redacted, end="", flush=True)
     returncode = process.wait()
     if returncode != 0:
-        command = " ".join(redact_sensitive(part, repo_root) for part in step.command)
+        command = " ".join(redact_sensitive(part, repo_root) for part in launch_command)
         raise NativeVerifyError(
             f"{step.name} failed with exit code {returncode}: {command}"
         )
