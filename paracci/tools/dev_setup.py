@@ -32,18 +32,18 @@ ensure_runtime_dependencies(
 
 sys.path.insert(0, str(ROOT_DIR / "paracci"))
 
-# Unicode support (for Windows console)
-if sys.platform == 'win32':
+# Unicode support for direct Windows console execution
+if sys.platform == 'win32' and __name__ == "__main__":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 from core.burn import BurnDB, init_device
+from core.crypto import wipe
 from core.identity import get_or_create_device_identity
 from core.session import (
     create_initiator_session,
     accept_initiator_and_create_responder,
     finalize_initiator_session,
-    apply_bond_nonce_to_y,
     serialize_session_meta,
     confirm_safety_code,
     get_session_safety_code
@@ -51,8 +51,9 @@ from core.session import (
 
 DEFAULT_PIN = "Correct-Horse-95175328"
 
-def setup_user(user_name: str):
-    data_dir = ROOT_DIR / f"data_{user_name}"
+
+def setup_user(user_name: str, root_dir: Path | None = None):
+    data_dir = (root_dir or ROOT_DIR) / f"data_{user_name}"
     if data_dir.exists():
         print(f"  [!] {data_dir} already exists, cleaning up...")
         shutil.rmtree(data_dir)
@@ -61,6 +62,7 @@ def setup_user(user_name: str):
     db = BurnDB(data_dir / "sessions.db")
     device_key = init_device(db, DEFAULT_PIN)
     db = db.with_device_key(device_key)
+    db.reset_unlock_failures()
     
     # Create default profile settings
     import json
@@ -79,12 +81,11 @@ def setup_user(user_name: str):
     
     return db, device_key
 
-def main():
-    print("--- Paracci Automated Development Setup ---")
-    
+
+def create_dev_profiles(root_dir: Path | None = None):
     # 1. Prepare Users
-    db_x, key_x = setup_user("x")
-    db_y, key_y = setup_user("y")
+    db_x, key_x = setup_user("x", root_dir)
+    db_y, key_y = setup_user("y", root_dir)
     
     print("[+] User X and Y data directories prepared.")
     print(f"[+] Default PIN: {DEFAULT_PIN}")
@@ -118,17 +119,14 @@ def main():
     meta_x_final = finalize_initiator_session(meta_x_init, resp_file)
     print("  [3/4] X: Responder accepted, session activated.")
 
-    # Y: Apply bond nonce from X to finalize bonding
-    meta_y_final = apply_bond_nonce_to_y(meta_y, meta_x_final.bond_nonce)
-    print("  [4/4] Y: Bond nonce applied, session fully bonded.")
-
     # Automatically confirm safety codes to activate the sessions
     code_x = get_session_safety_code(meta_x_final)
     meta_x_final = confirm_safety_code(meta_x_final, code_x)
     
-    code_y = get_session_safety_code(meta_y_final)
-    meta_y_final = confirm_safety_code(meta_y_final, code_y)
-    print("  [+] X & Y: Safety codes matched and sessions activated.")
+    code_y = get_session_safety_code(meta_y)
+    meta_y = confirm_safety_code(meta_y, code_y)
+    print("  [4/4] X & Y: Safety codes matched and sessions activated.")
+    print("  [+] Y remains unbonded until opening X's first message.")
 
     # 3. Save to Database
     enc_x = serialize_session_meta(meta_x_final, key_x)
@@ -137,11 +135,21 @@ def main():
         enc_x, meta_x_final.created_at
     )
     
-    enc_y = serialize_session_meta(meta_y_final, key_y)
+    enc_y = serialize_session_meta(meta_y, key_y)
     db_y.save_session(
-        meta_y_final.session_id, meta_y_final.label, meta_y_final.state, 
-        enc_y, meta_y_final.created_at
+        meta_y.session_id, meta_y.label, meta_y.state,
+        enc_y, meta_y.created_at
     )
+
+    db_x.release_device_key()
+    db_y.release_device_key()
+    wipe(key_x)
+    wipe(key_y)
+
+
+def main():
+    print("--- Paracci Automated Development Setup ---")
+    create_dev_profiles()
     
     print("\n[✔] Setup completed!")
     print("---------------------------------------------")
@@ -150,6 +158,7 @@ def main():
     print("  Terminal 2: python run.py --user y")
     print("---------------------------------------------")
     print(f"Note: Use '{DEFAULT_PIN}' on the PIN entry screen.")
+    print("Note: X must send the first message before Y can send.")
 
 if __name__ == "__main__":
     main()

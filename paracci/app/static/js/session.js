@@ -591,7 +591,7 @@ function clearOpenMessageState({ clearServer = true, keepalive = false } = {}) {
     if (copyBtn) {
         copyBtn.style.display = 'none';
         copyBtn.disabled = false;
-        copyBtn.textContent = window.PARACCI_I18N?.copy_protection_btn || 'Copy (30s auto-clear)';
+        copyBtn.textContent = window.PARACCI_I18N?.copy_protection_btn || 'Copy (clear active clipboard in 30s if unchanged)';
     }
 }
 
@@ -753,7 +753,7 @@ function reportClipboardClearFailure() {
     cancelClipboardClearRetry();
     showNotification(
         window.PARACCI_I18N?.clipboard_clear_failed
-            || 'Clipboard could not be cleared. Replace or clear it manually now.',
+            || 'Active clipboard could not be cleared. Clipboard history may also retain copies. Replace or clear it manually now.',
         'error'
     );
 }
@@ -794,7 +794,10 @@ async function performClipboardClear({ allowBrowserRetry = true, showSuccess = f
         cancelClipboardClearRetry();
         copiedClipboardTextPendingClear = false;
         if (showSuccess) {
-            showNotification(window.PARACCI_I18N?.clipboard_cleared || 'Clipboard cleared.');
+            showNotification(
+                window.PARACCI_I18N?.clipboard_cleared
+                    || 'Active clipboard cleared if unchanged. Clipboard history may still retain copies.'
+            );
         }
         return true;
     } catch (err) {
@@ -824,14 +827,14 @@ function startClipboardClearCountdown(btn) {
     copyTimer = setInterval(() => {
         timeLeft--;
         if (btn) {
-            const pattern = window.PARACCI_I18N?.clearing_clipboard || 'Clearing clipboard ({s}s)';
+            const pattern = window.PARACCI_I18N?.clearing_clipboard || 'Clear active clipboard in {s}s if unchanged';
             btn.textContent = pattern.replace('{s}', timeLeft);
         }
         if (timeLeft <= 0) {
             clearInterval(copyTimer);
             copyTimer = null;
             if (btn) {
-                btn.textContent = window.PARACCI_I18N?.copy_protection_btn || 'Copy (30s auto-clear)';
+                btn.textContent = window.PARACCI_I18N?.copy_protection_btn || 'Copy (clear active clipboard in 30s if unchanged)';
                 btn.disabled = false;
             }
             void requestClipboardClear({ showSuccess: true });
@@ -870,11 +873,14 @@ async function handleSecureCopy() {
     copiedClipboardTextPendingClear = true;
     const btn = document.getElementById('btn-copy-msg');
     startClipboardClearCountdown(btn);
-    showNotification(window.PARACCI_I18N?.text_copied_notify || 'Text copied. Clipboard will clear in 30 seconds.');
+    showNotification(
+        window.PARACCI_I18N?.text_copied_notify
+            || 'Text copied. Paracci will clear the active clipboard in 30 seconds only if it is unchanged. Clipboard history may retain copies.'
+    );
     if (usedBrowserClipboard) {
         showNotification(
             window.PARACCI_I18N?.clipboard_browser_history_warning
-                || 'Browser mode cannot prevent clipboard history storage. Clear operating-system clipboard history manually.',
+                || 'Browser mode cannot prevent clipboard history storage. Clipboard history may retain this text; clear it manually if needed.',
             'warning'
         );
     }

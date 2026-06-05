@@ -66,7 +66,7 @@ Paracci uses a hybrid X25519 + ML-KEM-768 key exchange. Both classical and post-
 These controls are best-effort and platform-dependent. See [SECURITY_SHIELDS.md](paracci/docs/SECURITY_SHIELDS.md) for exact guarantees and limitations per platform.
 
 - **Screen Capture Reduction**: Uses native OS APIs where available (`SetWindowDisplayAffinity` on Windows) to reduce common capture exposure.
-- **Clipboard Auto-Clear**: Clears decrypted clipboard contents after a configurable timeout. Local processes may read the clipboard before clearing.
+- **Clipboard Auto-Clear**: Clears the unchanged active clipboard after a configurable timeout. Local processes may read copied content before clearing, and operating-system or third-party clipboard history may retain copies.
 - **Recent-Item Cleanup**: Attempts to remove `.paracci` file references from OS recent-document lists on startup.
 - **Memory-Bound Decryption**: Decrypted payloads are dropped from Paracci-controlled caches on lock, close, or navigation. Copies may exist in Python runtime, OS, or WebView memory outside direct control.
 
@@ -147,6 +147,9 @@ pip install --require-hashes -r requirements-dev.lock
 ```
 
 ```powershell
+# Generate clean X/Y profiles with the setup ceremony completed
+python paracci/tools/dev_setup.py
+
 # Run with distinct data profiles to test locally (Alice and Bob flow)
 python run.py --user x     # Launches on local port 5000 using data_x/
 python run.py --user y     # Launches on local port 5001 using data_y/
@@ -157,6 +160,8 @@ python run.py --no-gui
 # Enable developer inspector tools inside the webview
 python run.py --debug
 ```
+
+The generated X profile must send the first message. Y remains active but unbonded until it opens that message through the normal receive flow; Y cannot send before then.
 
 ---
 

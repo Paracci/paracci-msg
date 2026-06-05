@@ -561,9 +561,12 @@ class ProApi:
         return _open_download_file_location(path)
 
     def copy_and_clear(self, text, delay=30):
-        """Copies text to the clipboard and clears it after X seconds."""
+        """Copy text and clear the unchanged active clipboard after X seconds."""
         if shield.copy_to_clipboard(text, delay):
-            print(f"  [>] Text copied to clipboard. Cleanup: {delay}s ({shield.get_os_name()})")
+            print(
+                f"  [>] Text copied. Active clipboard cleanup scheduled: "
+                f"{delay}s ({shield.get_os_name()}); history may retain copies."
+            )
             return True
         return False
 

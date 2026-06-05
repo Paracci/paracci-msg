@@ -10,6 +10,9 @@ const SESSION_JS = fs.readFileSync(
     path.resolve(TEST_DIR, '../app/static/js/session.js'),
     'utf8'
 );
+const EN_I18N = JSON.parse(
+    fs.readFileSync(path.resolve(TEST_DIR, '../app/i18n/en.json'), 'utf8')
+);
 
 function eventTarget(initial = {}) {
     const listeners = new Map();
@@ -166,6 +169,24 @@ function makeHarness({
         }
     };
 }
+
+test('English clipboard wording states the active-clipboard and history limits', () => {
+    const strings = EN_I18N.session;
+
+    assert.match(strings.copy_btn, /active clipboard/i);
+    assert.match(strings.copy_btn, /if unchanged/i);
+    assert.match(strings.copy_protection_btn, /active clipboard/i);
+    assert.match(strings.copy_protection_btn, /if unchanged/i);
+    assert.match(strings.clearing_clipboard, /active clipboard/i);
+    assert.match(strings.clearing_clipboard, /if unchanged/i);
+    assert.match(strings.clipboard_cleared, /if unchanged/i);
+    assert.match(strings.clipboard_cleared, /history may still retain copies/i);
+    assert.match(strings.clipboard_clear_failed, /history may also retain copies/i);
+    assert.match(strings.clipboard_browser_history_warning, /history may retain this text/i);
+    assert.match(strings.text_copied_notify, /active clipboard/i);
+    assert.match(strings.text_copied_notify, /only if it is unchanged/i);
+    assert.match(strings.text_copied_notify, /history may retain copies/i);
+});
 
 test('browser fallback performs an actual timed clear', async () => {
     const writes = [];

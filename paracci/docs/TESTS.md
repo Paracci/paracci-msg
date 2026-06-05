@@ -147,6 +147,7 @@ The `Build & Release` workflow still owns CI-only release steps: Windows package
 - Handshake verification and out-of-band safety code computation.
 - Session bonding and master key derivation.
 - SQLite-bound encrypted session state preservation.
+- Isolated `dev_setup.py` X/Y profiles, clean unlock-rate state, and the first-message Flask open that bonds Y.
 
 ### 3. Envelope Protocol
 - Sealing and opening `.paracci` message packages.
@@ -175,5 +176,5 @@ The `Build & Release` workflow still owns CI-only release steps: Windows package
 
 ## Test Gaps & Release Checklist
 - **WebView Interface Manual Check**: Launch the application locally under different platforms using `--debug` mode to manually verify the UI layout, attachments drawer, and configuration settings.
-- **Multi-User Simulation**: Run parallel debug modes (`run.py --user x` and `run.py --user y`) to execute Alice-and-Bob handshake ceremonies and verify message delivery.
+- **Multi-User Simulation**: Isolated profile tests cover the generated X-to-Y first-message route. Run parallel debug modes (`run.py --user x` and `run.py --user y`) to verify the full WebView ceremony and subsequent message delivery.
 - **Standalone Binary Packaging Gates**: Packaged executables require confirmation on clean target operating systems to verify native shell loading, anti-screenshot behaviors, and proper device key storage registration.
