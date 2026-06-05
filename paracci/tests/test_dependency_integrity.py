@@ -5,6 +5,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SQLCIPHER_VERSION = "0.5.7"
 PYTEST_TIMEOUT_VERSION = "2.4.0"
+PIP_VERSION = "26.1.2"
 LIBOQS_VERSION = "0.15.0"
 LIBOQS_EXPECTED_COMMIT = "97f6b86b1b6d109cfd43cf276ae39c2e776aed80"
 
@@ -46,6 +47,16 @@ def test_native_timeout_plugin_is_dev_lock_controlled():
     assert block.startswith(f"pytest-timeout=={PYTEST_TIMEOUT_VERSION} \\")
     assert block.count("--hash=sha256:") == 2
     assert "# via -r requirements-dev.txt" in block
+
+
+def test_pip_tool_dependency_is_safe_and_hash_locked():
+    lock = _read("requirements-dev.lock")
+
+    block = _package_block(lock, "pip")
+    assert block.startswith(f"pip=={PIP_VERSION} \\")
+    assert block.count("--hash=sha256:") == 2
+    assert "#   pip-api" in block
+    assert "#   pip-tools" in block
 
 
 def test_bootstrap_and_ci_do_not_install_sqlcipher_outside_runtime_lock():
