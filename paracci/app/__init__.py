@@ -11,7 +11,12 @@ import logging
 from pathlib import Path
 from flask import Flask
 from .i18n_manager import i18n
-from core.burn import BurnDB, _secure_dir_permissions, _secure_file_permissions
+from core.burn import (
+    BurnDB,
+    _PRIVATE_CREATION_UMASK,
+    _secure_dir_permissions,
+    _secure_file_permissions,
+)
 from core.crypto import wipe
 
 logger = logging.getLogger(__name__)
@@ -300,7 +305,7 @@ def create_app(
         sk = os.urandom(32)
         _old_mask = None
         if sys.platform != "win32":
-            _old_mask = os.umask(0o177)
+            _old_mask = os.umask(_PRIVATE_CREATION_UMASK)
         try:
             secret_path.write_bytes(sk)
         finally:

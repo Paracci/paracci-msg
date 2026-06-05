@@ -1,6 +1,7 @@
 import importlib
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 import pytest
@@ -14,8 +15,30 @@ HOST = "127.0.0.1:18080"
 ORIGIN = f"http://{HOST}"
 
 
+@pytest.fixture(autouse=True)
+def _join_inactivity_timers(monkeypatch):
+    timers = []
+    real_timer = threading.Timer
+
+    class TrackingTimer(real_timer):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            timers.append(self)
+
+    monkeypatch.setattr(threading, "Timer", TrackingTimer)
+    yield
+
+    for timer in timers:
+        timer.cancel()
+    for timer in timers:
+        timer.join(timeout=5)
+        assert not timer.is_alive(), "inactivity timer leaked past test teardown"
+
+
 def make_flask_app(tmp_path, monkeypatch, no_gui=True):
-    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(mode=0o700)
+    monkeypatch.setenv("DATA_DIR", str(data_dir))
     monkeypatch.setenv("PARACCI_LOOPBACK_HOST", "127.0.0.1")
     monkeypatch.setenv("PARACCI_LOOPBACK_PORT", "18080")
     monkeypatch.setenv("PARACCI_NO_GUI", "1" if no_gui else "0")
@@ -23,7 +46,7 @@ def make_flask_app(tmp_path, monkeypatch, no_gui=True):
     import app as ag_app
 
     ag_app = importlib.reload(ag_app)
-    flask_app = ag_app.create_app(loopback_auth_token=TOKEN)
+    flask_app = ag_app.create_app(loopback_auth_token=TOKEN, data_dir=data_dir)
     flask_app.config["TESTING"] = True
     return ag_app, flask_app
 

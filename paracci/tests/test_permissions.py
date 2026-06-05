@@ -6,7 +6,28 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core.burn import _secure_dir_permissions, _secure_file_permissions, BurnDB
+from core.burn import (
+    BurnDB,
+    _PRIVATE_CREATION_UMASK,
+    _secure_dir_permissions,
+    _secure_file_permissions,
+)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission semantics required")
+def test_private_creation_umask_preserves_owner_directory_traversal(tmp_path):
+    private_dir = tmp_path / "private"
+    private_file = private_dir / "secret.bin"
+
+    old_mask = os.umask(_PRIVATE_CREATION_UMASK)
+    try:
+        private_dir.mkdir(mode=0o700)
+        private_file.write_bytes(b"secret")
+    finally:
+        os.umask(old_mask)
+
+    assert os.stat(private_dir).st_mode & 0o777 == 0o700
+    assert os.stat(private_file).st_mode & 0o777 == 0o600
 
 def test_secure_dir_permissions_posix(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "platform", "linux")

@@ -97,6 +97,8 @@ from .crypto import (
 
 logger = logging.getLogger(__name__)
 
+_PRIVATE_CREATION_UMASK = 0o077
+
 BURN_STATUS_OPENING = "opening"
 BURN_STATUS_BURNED = "burned"
 BURN_STATUS_FAILED = "failed"
@@ -464,7 +466,7 @@ class BurnDB:
         
         _old_mask = None
         if sys.platform != "win32":
-            _old_mask = os.umask(0o177)
+            _old_mask = os.umask(_PRIVATE_CREATION_UMASK)
             
         try:
             import sqlite3
