@@ -12,7 +12,7 @@ from typing import NamedTuple, Optional, Sequence
 from pathlib import Path
 import logging
 import unicodedata
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urlparse, urlsplit
 
 from flask import (
     Blueprint, render_template, request, redirect,
@@ -325,9 +325,9 @@ def _native_save_response(file_bytes: bytes | None, filename: str, file_path: st
     try:
         validated_filename = validate_native_download_filename(filename)
         native_save_token = native_save_grants.issue(file_bytes, validated_filename, file_path=file_path)
-    except ValueError as exc:
+    except ValueError:
         return _mark_sensitive_no_store(
-            jsonify({"success": False, "error": str(exc)})
+            jsonify({"success": False, "error": "Native save request rejected."})
         ), 400
     return _mark_sensitive_no_store(jsonify({
         "native_save_token": native_save_token,
@@ -819,29 +819,66 @@ def _is_public_request() -> bool:
     }
 
 
-def _same_origin_url(value: str | None) -> bool:
-    """Validate that an absolute or relative URL resolves to the expected origin."""
-    if not value:
-        return False
+def _safe_local_next(value: str | None) -> str | None:
+    """Allow only strict root-relative redirect paths such as /settings?tab=x."""
+    if not isinstance(value, str) or not value:
+        return None
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value):
+        return None
+    if "\\" in value or not value.startswith("/") or value.startswith("//"):
+        return None
     try:
-        parsed = urlparse(urljoin(f"{_expected_origin()}/", value))
-        return (
-            parsed.scheme == "http"
+        parsed = urlsplit(value)
+    except ValueError:
+        return None
+    if parsed.scheme or parsed.netloc or parsed.fragment:
+        return None
+
+    decoded_value = unquote(value)
+    decoded_path = unquote(parsed.path)
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in decoded_value):
+        return None
+    if "\\" in decoded_value or decoded_path.startswith("//"):
+        return None
+    if re.match(r"^/[A-Za-z][A-Za-z0-9+.-]*:", decoded_path):
+        return None
+
+    target = parsed.path
+    if parsed.query:
+        target = f"{target}?{parsed.query}"
+    return target
+
+
+def _same_origin_local_target(value: str | None) -> str | None:
+    """Extract a strict local redirect target from an absolute same-origin URL."""
+    if not isinstance(value, str) or not value:
+        return None
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value) or "\\" in value:
+        return None
+    try:
+        parsed = urlsplit(value)
+        is_same_origin = (
+            parsed.scheme.lower() == "http"
             and parsed.hostname in {ag_app.loopback_host.lower(), "localhost"}
             and parsed.port == int(ag_app.loopback_port)
+            and parsed.username is None
+            and parsed.password is None
+            and not parsed.fragment
         )
-    except Exception:
-        return False
+    except ValueError:
+        return None
+    if not is_same_origin:
+        return None
+
+    target = parsed.path or url_for("main.index")
+    if parsed.query:
+        target = f"{target}?{parsed.query}"
+    return _safe_local_next(target)
 
 
-def _safe_local_next(value: str | None) -> str | None:
-    """Allow only local redirect paths such as /settings?tab=x."""
-    if not value or not value.startswith("/") or value.startswith("//"):
-        return None
-    parsed = urlparse(value)
-    if parsed.scheme or parsed.netloc:
-        return None
-    return value
+def _same_origin_url(value: str | None) -> bool:
+    """Return whether an absolute URL is the expected origin with a safe local target."""
+    return _same_origin_local_target(value) is not None
 
 
 _FILE_ACTIVATION_NEXT_KEY = "file_activation_next"
@@ -1602,11 +1639,8 @@ def set_locale(lang):
         session.modified = True
     
     target = _safe_local_next(request.form.get("next"))
-    if not target and _same_origin_url(request.referrer):
-        parsed = urlparse(request.referrer)
-        target = parsed.path or url_for('main.index')
-        if parsed.query:
-            target = f"{target}?{parsed.query}"
+    if not target:
+        target = _same_origin_local_target(request.referrer)
     return redirect(target or url_for('main.index'))
 
 

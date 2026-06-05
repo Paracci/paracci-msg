@@ -20,6 +20,18 @@ TOKEN = "test-loopback-token"
 HOST = "127.0.0.1:18080"
 ORIGIN = f"http://{HOST}"
 
+UNSAFE_LOCAL_REDIRECT_TARGETS = (
+    "http://evil.test/path",
+    "https:/evil.test/path",
+    "https:///evil.test/path",
+    "//evil.test/path",
+    "/\\evil.test/path",
+    "/%5cevil.test/path",
+    "/%2f%2fevil.test/path",
+    "/http://evil.test/path",
+    "/settings#external-fragment",
+)
+
 
 def make_flask_app(tmp_path, monkeypatch, no_gui=True):
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
@@ -180,6 +192,49 @@ def test_gui_native_preview_download_rejects_non_native_filename(tmp_path, monke
     assert response.get_json()["success"] is False
 
 
+def test_gui_native_preview_download_redacts_native_save_exception_details(tmp_path, monkeypatch):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch, no_gui=False)
+    import app.routes as routes_module
+
+    sensitive_values = (
+        "<local-user-path>/private/report.paracci",
+        "preview-token-sentinel",
+        "private-key-sentinel",
+        "secret-filename.paracci",
+    )
+    exception_text = " | ".join(sensitive_values)
+
+    class RejectingNativeSaveGrants:
+        def issue(self, *_args, **_kwargs):
+            raise ValueError(exception_text)
+
+    client = flask_app.test_client()
+    bootstrap(client)
+    _unlock_test_client(ag_app, client)
+    monkeypatch.setattr(routes_module, "native_save_grants", RejectingNativeSaveGrants())
+    seed_downloadable_preview(routes_module)
+
+    response = client.get(
+        "/preview/native-download/download?preview_token=preview-access-token",
+        base_url=ORIGIN,
+        headers={
+            "Host": HOST,
+            "X-Paracci-Token": TOKEN,
+            "X-Paracci-Native-Save": "1",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.get_json() == {
+        "error": "Native save request rejected.",
+        "success": False,
+    }
+    response_text = response.get_data(as_text=True)
+    assert exception_text not in response_text
+    for sensitive_value in sensitive_values:
+        assert sensitive_value not in response_text
+
+
 def test_root_requires_bootstrap(tmp_path, monkeypatch):
     _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
 
@@ -278,6 +333,111 @@ def test_bootstrap_sets_authorized_client_session(tmp_path, monkeypatch):
         assert sess["paracci_client_ok"] is True
         assert sess["paracci_client_id"]
         assert sess["csrf_token"]
+
+
+def test_bootstrap_preserves_strict_local_target(tmp_path, monkeypatch):
+    _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+
+    response = flask_app.test_client().get(
+        "/__paracci_bootstrap",
+        base_url=ORIGIN,
+        query_string={"token": TOKEN, "next": "/settings?tab=security"},
+        headers={"Host": HOST},
+    )
+
+    assert response.status_code == 200
+    assert b'data-target="/settings?tab=security"' in response.data
+
+
+@pytest.mark.parametrize("unsafe_target", UNSAFE_LOCAL_REDIRECT_TARGETS)
+def test_bootstrap_rejects_unsafe_local_target(tmp_path, monkeypatch, unsafe_target):
+    _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+
+    response = flask_app.test_client().get(
+        "/__paracci_bootstrap",
+        base_url=ORIGIN,
+        query_string={"token": TOKEN, "next": unsafe_target},
+        headers={"Host": HOST},
+    )
+
+    assert response.status_code == 200
+    assert b'data-target="/"' in response.data
+    assert unsafe_target.encode("utf-8") not in response.data
+
+
+def test_locale_redirect_preserves_strict_local_next(tmp_path, monkeypatch):
+    _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    client = flask_app.test_client()
+    bootstrap(client)
+
+    response = client.post(
+        "/set_locale/de",
+        base_url=ORIGIN,
+        data={"next": "/settings?tab=security"},
+        headers=auth_headers(client),
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/settings?tab=security"
+    with client.session_transaction(base_url=ORIGIN) as sess:
+        assert sess["locale"] == "de"
+
+
+def test_locale_redirect_preserves_valid_same_origin_referrer(tmp_path, monkeypatch):
+    _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    client = flask_app.test_client()
+    bootstrap(client)
+
+    response = client.post(
+        "/set_locale/fr",
+        base_url=ORIGIN,
+        headers=auth_headers(client, Referer=f"{ORIGIN}/settings?tab=security"),
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/settings?tab=security"
+
+
+@pytest.mark.parametrize("unsafe_target", UNSAFE_LOCAL_REDIRECT_TARGETS)
+def test_locale_redirect_rejects_unsafe_next(tmp_path, monkeypatch, unsafe_target):
+    _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    client = flask_app.test_client()
+    bootstrap(client)
+
+    response = client.post(
+        "/set_locale/en",
+        base_url=ORIGIN,
+        data={"next": unsafe_target},
+        headers=auth_headers(client),
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/"
+
+
+@pytest.mark.parametrize(
+    "unsafe_referrer",
+    (
+        "http://evil.test/path",
+        "https:/evil.test/path",
+        "https:///evil.test/path",
+        f"{ORIGIN}/\\evil.test/path",
+        f"{ORIGIN}/%5cevil.test/path",
+        f"{ORIGIN}/%2f%2fevil.test/path",
+    ),
+)
+def test_locale_redirect_rejects_unsafe_referrer(tmp_path, monkeypatch, unsafe_referrer):
+    _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    client = flask_app.test_client()
+    bootstrap(client)
+
+    response = client.post(
+        "/set_locale/en",
+        base_url=ORIGIN,
+        headers=auth_headers(client, Referer=unsafe_referrer),
+    )
+
+    assert response.status_code == 403
 
 
 def test_legacy_environment_token_is_purged_and_not_authorized(tmp_path, monkeypatch):
