@@ -95,6 +95,24 @@ def test_release_workflow_runs_windows_packaged_browser_console_smoke_before_upl
     assert "if: runner.os == 'Windows'" in workflow
 
 
+def test_release_workflow_runs_packaged_mlkem_smoke_after_build_before_validation_and_upload():
+    workflow = _workflow("release.yml")
+
+    windows_build_step = workflow.index("- name: Build executable and installer (Windows)")
+    linux_build_step = workflow.index("- name: Build executable, AppImage, and Debian package (Linux)")
+    smoke_step = workflow.index("- name: Smoke test packaged ML-KEM")
+    linux_validation_step = workflow.index("- name: Validate Linux distribution packages")
+    windows_prepare_step = workflow.index("- name: Prepare asset (Windows)")
+    windows_upload_step = workflow.index("- name: Upload artifact (Windows)")
+    linux_upload_step = workflow.index("- name: Upload artifact (Linux)")
+
+    assert windows_build_step < smoke_step
+    assert linux_build_step < smoke_step
+    assert smoke_step < linux_validation_step < linux_upload_step
+    assert smoke_step < windows_prepare_step < windows_upload_step
+    assert 'python tools/ci/packaged_runtime_smoke.py --platform "$RUNNER_OS"' in workflow
+
+
 def test_publish_workflow_recomputes_hashes_before_accepting_signature_or_publish():
     workflow = _workflow("publish_signed_release.yml")
 
