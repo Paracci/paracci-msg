@@ -18,6 +18,8 @@ RELEASE_SIGNING_DOC_PATHS = [
     REPO_ROOT / "paracci" / "docs" / "SECURITY_ENGINEERING.md",
 ]
 
+CARRIER_TRANSPORT_DOC_PATH = REPO_ROOT / "paracci" / "docs" / "CARRIER_TRANSPORT.md"
+
 EXPECTED_LEDGER_COMMITS = [
     "df35a2f07638df74ab745f0ec0cb3cdf1bd6c7d6",
     "dbc7cc659dbef229f85a049587011a2a0fc910f9",
@@ -157,6 +159,40 @@ def _tracked_files() -> list[Path]:
 def test_security_guardrail_docs_exist():
     for path in DOC_PATHS:
         assert path.is_file(), f"{path.relative_to(REPO_ROOT)} is missing"
+
+
+def test_carrier_transport_doc_records_skeleton_security_model():
+    doc = " ".join(_read(CARRIER_TRANSPORT_DOC_PATH).split())
+    required_phrases = [
+        "Carrier mode is optional and disabled by default.",
+        "Normal `.paracci` export, import, and open flows remain the default behavior.",
+        "`png_lossless_v1` and `qr_matrix_v1` are planned carrier kind constants only.",
+        "They remain unsupported until dedicated adapters and regressions are added.",
+        "Carrier transport is an outer wrapper only.",
+        "It must not change the existing",
+        "`.paracci` setup, responder, or message envelope formats.",
+        "Extraction must produce bounded `.paracci` bytes",
+        "pass those bytes into",
+        "the existing validation, import, open, and decrypt paths",
+        "Carrier failures must be stable and generic.",
+        "payload bytes, tokens, passphrases, decrypted content, raw carrier internals",
+        "filenames, or sensitive paths",
+        "sent as a file or document, not as an inline photo.",
+        "QR/Matrix carrier work must be described as visible robust transport",
+        "not invisible steganography",
+    ]
+    forbidden_claims = [
+        "undetectable",
+        "cannot be detected",
+        "bypasses existing validation",
+        "enabled by default",
+    ]
+
+    for phrase in required_phrases:
+        assert phrase in doc
+    doc_lower = doc.lower()
+    for claim in forbidden_claims:
+        assert claim not in doc_lower
 
 
 def test_agents_doc_records_required_agent_workflow():
