@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -6,6 +7,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 def _workflow(name: str) -> str:
     return (REPO_ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
+
+
+def _publish_lock() -> str:
+    return (REPO_ROOT / "requirements-publish.lock").read_text(encoding="utf-8")
 
 
 def test_release_workflows_have_no_online_updater_signing_authority():
@@ -119,6 +124,54 @@ def test_release_workflow_runs_packaged_mlkem_smoke_after_build_before_validatio
     assert 'python tools/ci/packaged_runtime_smoke.py --platform "$RUNNER_OS"' in workflow
 
 
+def test_publish_workflow_uses_minimal_hash_locked_dependencies_without_gui_packages():
+    workflow = _workflow("publish_signed_release.yml")
+
+    assert "- name: Install Linux runtime dependency headers" not in workflow
+    assert "sudo apt-get" not in workflow
+    for forbidden in (
+        "gir1.2-gtk-3.0",
+        "gir1.2-webkit2-4.0",
+        "libwebkit2gtk-4.0-37",
+        "libgirepository1.0-dev",
+        "libcairo2-dev",
+        "libglib2.0-dev",
+        "python3-dev",
+    ):
+        assert forbidden not in workflow
+
+    assert "- name: Install locked publish verification dependencies" in workflow
+    assert "python -m pip install --require-hashes --only-binary=:all: -r requirements-publish.lock" in workflow
+    assert "python -m pip install --require-hashes -r requirements.lock" not in workflow
+
+
+def test_publish_dependency_lock_is_signature_verification_only():
+    lock = _publish_lock()
+    package_names = {
+        line.split("==", 1)[0].lower()
+        for line in lock.splitlines()
+        if re.match(r"^[A-Za-z0-9_.-]+==", line)
+    }
+
+    assert package_names == {"cffi", "cryptography", "packaging", "pycparser"}
+    for expected in package_names:
+        assert f"{expected}==" in lock.lower()
+    assert "--hash=sha256:" in lock
+
+    for forbidden in (
+        "pygobject",
+        "pywebview",
+        "pycairo",
+        "flask",
+        "pillow",
+        "sqlcipher",
+        "liboqs",
+        "gir1.2-webkit2-4.0",
+        "libwebkit2gtk-4.0-37",
+    ):
+        assert forbidden not in lock.lower()
+
+
 def test_publish_workflow_recomputes_hashes_before_accepting_signature_or_publish():
     workflow = _workflow("publish_signed_release.yml")
 
@@ -134,6 +187,8 @@ def test_publish_workflow_recomputes_hashes_before_accepting_signature_or_publis
 
     assert require_draft_step < verify_step < attach_step
     assert "test \"$(gh release view \"$RELEASE_TAG\" --json isDraft --jq '.isDraft')\" = \"true\"" in workflow
+    assert "manifest_signature_b64:" in workflow
+    assert "MANIFEST_SIGNATURE_B64: ${{ inputs.manifest_signature_b64 }}" in workflow
     assert checksum_step < decode_step < signature_verify_step < signature_write_step
     assert signature_write_step < signature_upload_step < publish_step
 

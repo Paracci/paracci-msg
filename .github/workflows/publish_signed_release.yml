@@ -32,17 +32,10 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
-      - name: Install Linux runtime dependency headers
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y \
-            gir1.2-gtk-3.0 gir1.2-webkit2-4.0 libwebkit2gtk-4.0-37 \
-            libgirepository1.0-dev gcc libcairo2-dev pkg-config python3-dev libglib2.0-dev
-
-      - name: Install locked runtime dependencies
+      - name: Install locked publish verification dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --require-hashes -r requirements.lock
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-publish.lock
 
       - name: Require draft release and download assets
         env:

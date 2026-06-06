@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import re
 import shutil
@@ -20,7 +21,25 @@ from packaging.version import InvalidVersion, Version
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from app.build_info import APP_VERSION, SESSION_PROTOCOL_VERSION
+
+def _load_build_info() -> tuple[str, int]:
+    try:
+        from app.build_info import APP_VERSION, SESSION_PROTOCOL_VERSION
+
+        return APP_VERSION, SESSION_PROTOCOL_VERSION
+    except ModuleNotFoundError as exc:
+        if exc.name != "flask":
+            raise
+        build_info_path = Path(__file__).resolve().parents[1] / "app" / "build_info.py"
+        spec = importlib.util.spec_from_file_location("_paracci_build_info", build_info_path)
+        if spec is None or spec.loader is None:
+            raise
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.APP_VERSION, module.SESSION_PROTOCOL_VERSION
+
+
+APP_VERSION, SESSION_PROTOCOL_VERSION = _load_build_info()
 
 
 LATEST_RELEASE_URL = "https://api.github.com/repos/Paracci/paracci-msg/releases/latest"
