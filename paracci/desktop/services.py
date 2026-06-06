@@ -34,6 +34,12 @@ from core.burn import (
     _secure_file_permissions,
     secure_delete,
 )
+from core.carrier import (
+    CARRIER_PUBLIC_ERROR,
+    MAX_CARRIER_FILE_BYTES,
+    CarrierError,
+    extract_envelope,
+)
 from core.config import ParacciConfig
 from core.crypto import EncryptedBlob, decrypt, encrypt, wipe
 from core.envelope import (
@@ -53,6 +59,7 @@ from core.ingest_limits import (
     IngestionLimitError,
     ensure_buffer_within_limit,
     ensure_path_within_limit,
+    read_path_limited,
 )
 from core.package import Attachment, PackageLimitError, create_package, extract_package
 from core.sanitizer import SanitizationError, sanitize_image
@@ -93,6 +100,28 @@ MIGRATION_MARKER = ".native_migration.json"
 MAX_ATTACHMENT_SIZE = 50 * 1024 * 1024
 MAX_ATTACHMENT_COUNT = 10
 PENDING_UNLOCK_TTL_SECONDS = 600
+
+
+def _extract_carrier_payload(
+    carrier_kind: str,
+    payload_kind: str,
+    *,
+    carrier_bytes: bytes | bytearray | memoryview | None = None,
+    carrier_path: str | Path | None = None,
+) -> bytes:
+    try:
+        if (carrier_bytes is None) == (carrier_path is None):
+            raise CarrierBridgeError(CARRIER_PUBLIC_ERROR)
+        if carrier_path is not None:
+            source = read_path_limited(carrier_path, MAX_CARRIER_FILE_BYTES, "Carrier file")
+        else:
+            source = carrier_bytes
+        extracted = extract_envelope(carrier_kind, source, payload_kind=payload_kind)
+        return extracted.envelope_bytes
+    except CarrierBridgeError:
+        raise
+    except (CarrierError, IngestionLimitError, OSError, TypeError, ValueError) as exc:
+        raise CarrierBridgeError(CARRIER_PUBLIC_ERROR) from exc
 
 DANGEROUS_EXTENSIONS = {
     ".exe",
@@ -767,6 +796,28 @@ class SessionService:
 
         raise SessionServiceError("Message files must be opened inside an active session.")
 
+    def import_handshake_from_carrier(
+        self,
+        carrier_kind: str,
+        local_label: str,
+        *,
+        carrier_bytes: bytes | bytearray | memoryview | None = None,
+        carrier_path: str | Path | None = None,
+    ) -> ImportResult:
+        try:
+            file_bytes = _extract_carrier_payload(
+                carrier_kind,
+                "setup",
+                carrier_bytes=carrier_bytes,
+                carrier_path=carrier_path,
+            )
+        except CarrierBridgeError as exc:
+            raise SessionServiceError(CARRIER_PUBLIC_ERROR) from exc
+        try:
+            return self.import_handshake(file_bytes, local_label)
+        except (SessionServiceError, ValueError) as exc:
+            raise SessionServiceError(CARRIER_PUBLIC_ERROR) from exc
+
     def export_handshake(self, session_id_hex: str) -> tuple[bytes, str]:
         meta = self.load(session_id_hex)
         identity = self.device.identity()
@@ -1023,6 +1074,28 @@ class MessageService:
             secure_delete_failed=not secure_delete_succeeded,
         )
 
+    def open_message_from_carrier(
+        self,
+        session_id_hex: str,
+        carrier_kind: str,
+        *,
+        carrier_bytes: bytes | bytearray | memoryview | None = None,
+        carrier_path: str | Path | None = None,
+    ) -> OpenedMessage:
+        try:
+            file_bytes = _extract_carrier_payload(
+                carrier_kind,
+                "message",
+                carrier_bytes=carrier_bytes,
+                carrier_path=carrier_path,
+            )
+        except CarrierBridgeError as exc:
+            raise MessageServiceError(CARRIER_PUBLIC_ERROR) from exc
+        try:
+            return self.open_message(session_id_hex, file_bytes=file_bytes, source_path=None)
+        except (MessageServiceError, SessionServiceError, ValueError) as exc:
+            raise MessageServiceError(CARRIER_PUBLIC_ERROR) from exc
+
     def _read_attachments(self, paths: list[Path]) -> list[tuple[str, Path]]:
         if len(paths) > MAX_ATTACHMENT_COUNT:
             raise MessageServiceError(f"Maximum {MAX_ATTACHMENT_COUNT} files can be attached.")
@@ -1187,6 +1260,10 @@ class SessionServiceError(Exception):
 
 class MessageServiceError(Exception):
     """Message service failure."""
+
+
+class CarrierBridgeError(Exception):
+    """Internal carrier bridge failure."""
 
 
 class MigrationError(Exception):

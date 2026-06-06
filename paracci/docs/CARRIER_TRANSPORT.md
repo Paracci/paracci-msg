@@ -11,6 +11,8 @@ before carrier transport is exposed through user-facing flows.
 - `png_lossless_v1` is implemented as a core-only PNG lossless carrier adapter.
 - `qr_matrix_v1` remains a planned carrier kind constant only. It remains
   unsupported until a dedicated adapter and regressions are added.
+- An internal service bridge can extract supported carrier payloads into the
+  existing setup import and message open services.
 - The current implementation does not add QR/Matrix logic, UI routes, frontend
   controls, native-save integration, UIApi commands, file associations, or new
   dependencies.
@@ -25,6 +27,8 @@ the existing validation, import, open, and decrypt paths. Extraction must not
 bypass signature checks, AEAD authentication, transcript binding, device
 binding, BurnDB, envelope size caps, package expansion limits, preview policy,
 loopback authorization, native filesystem broker rules, or log redaction.
+The internal service bridge does not auto-detect carrier files in normal
+`.paracci` import or open flows.
 
 Carrier failures must be stable and generic. Public errors must not include
 payload bytes, tokens, passphrases, decrypted content, raw carrier internals,
