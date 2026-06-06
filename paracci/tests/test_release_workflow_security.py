@@ -124,8 +124,35 @@ def test_release_workflow_runs_packaged_mlkem_smoke_after_build_before_validatio
     assert 'python tools/ci/packaged_runtime_smoke.py --platform "$RUNNER_OS"' in workflow
 
 
+def test_publish_workflow_uses_workflow_checkout_for_tooling_not_release_tag():
+    workflow = _workflow("publish_signed_release.yml")
+
+    checkout_step = workflow.index("- name: Checkout publish tooling source")
+    setup_step = workflow.index("- name: Set up Python 3.12")
+    checkout_block = workflow[checkout_step:setup_step]
+
+    assert "actions/checkout@" in checkout_block
+    assert "ref: ${{ inputs.release_tag }}" not in checkout_block
+    assert "inputs.release_tag" not in checkout_block
+    assert "- name: Checkout signed release source" not in workflow
+
+    assert workflow.count("RELEASE_TAG: ${{ inputs.release_tag }}") == 3
+    for required_release_operation in (
+        'gh release view "$RELEASE_TAG" --json isDraft',
+        'gh release download "$RELEASE_TAG" --dir release-assets',
+        'gh release upload "$RELEASE_TAG" release-assets/SHA256SUMS.txt.sig --clobber',
+        'gh release edit "$RELEASE_TAG" --draft=false',
+        'gh release view "$RELEASE_TAG" --json body',
+        'gh release edit "$RELEASE_TAG" --notes-file release-body.md',
+    ):
+        assert required_release_operation in workflow
+
+
 def test_publish_workflow_uses_minimal_hash_locked_dependencies_without_gui_packages():
     workflow = _workflow("publish_signed_release.yml")
+    checkout_step = workflow.index("- name: Checkout publish tooling source")
+    install_step = workflow.index("- name: Install locked publish verification dependencies")
+    require_draft_step = workflow.index("- name: Require draft release and download assets")
 
     assert "- name: Install Linux runtime dependency headers" not in workflow
     assert "sudo apt-get" not in workflow
@@ -140,6 +167,7 @@ def test_publish_workflow_uses_minimal_hash_locked_dependencies_without_gui_pack
     ):
         assert forbidden not in workflow
 
+    assert checkout_step < install_step < require_draft_step
     assert "- name: Install locked publish verification dependencies" in workflow
     assert "python -m pip install --require-hashes --only-binary=:all: -r requirements-publish.lock" in workflow
     assert "python -m pip install --require-hashes -r requirements.lock" not in workflow
