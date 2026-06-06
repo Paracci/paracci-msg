@@ -26,6 +26,9 @@ logs/
 .flask_secret
 .paracci_identity
 /signing_key.pem
+/SHA256SUMS.txt
+/SHA256SUMS.txt.sig
+/release-assets/
 audit_results.txt
 
 # --- OS Caches ---

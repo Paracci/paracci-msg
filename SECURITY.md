@@ -78,6 +78,14 @@ Please note that Paracci's documented design limitations (such as the absence of
 
 ---
 
+## Release and Updater Signing
+
+Paracci release manifests are signed offline with an Ed25519 private key that must remain local/offline. GitHub Actions must not contain `RELEASE_SIGNING_KEY` or `RELEASE_SIGNING_PASSPHRASE`; `VT_API_KEY` may remain only for VirusTotal scanning.
+
+Draft releases must not be manually published from the GitHub UI. The `publish_signed_release.yml` workflow must verify the offline signature for the exact draft `SHA256SUMS.txt` before attaching `SHA256SUMS.txt.sig` and publishing the draft.
+
+---
+
 ## Disclosure Policy
 
 - **Responsible Disclosure**: We request that you allow us a reasonable timeframe to address and patch the vulnerability before disclosing it publicly or to third parties.

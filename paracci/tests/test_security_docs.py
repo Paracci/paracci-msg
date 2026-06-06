@@ -12,6 +12,12 @@ DOC_PATHS = [
     REPO_ROOT / "paracci" / "docs" / "SECURITY_REGRESSION_LEDGER.md",
 ]
 
+RELEASE_SIGNING_DOC_PATHS = [
+    REPO_ROOT / "README.md",
+    REPO_ROOT / "SECURITY.md",
+    REPO_ROOT / "paracci" / "docs" / "SECURITY_ENGINEERING.md",
+]
+
 EXPECTED_LEDGER_COMMITS = [
     "df35a2f07638df74ab745f0ec0cb3cdf1bd6c7d6",
     "dbc7cc659dbef229f85a049587011a2a0fc910f9",
@@ -56,6 +62,9 @@ REQUIRED_ENGINEERING_PHRASES = [
     "## Dependency And Native-Library Supply Chain",
     "## Platform Device Key Binding",
     "The updater signing private key must remain offline.",
+    "GitHub Actions must not contain `RELEASE_SIGNING_KEY` or `RELEASE_SIGNING_PASSPHRASE`",
+    "Draft releases must not be manually published",
+    "`publish_signed_release.yml` must verify the offline signature before publication.",
     "Release manifests must be recomputed from the actual assets",
     "2FA-enabled profiles must never become active from passphrase-only native unlock.",
     "must enforce size caps before read, parse, decrypt, unpack, or schema handling",
@@ -90,6 +99,13 @@ FORBIDDEN_PRIVATE_REFERENCES = [
 FORBIDDEN_PRIVATE_PATTERNS = [
     re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----"),
     re.compile(r"(?im)^\s*(?:secret|token|passphrase|password|api[_-]?key)\s*[:=]\s*['\"][^'\"]+['\"]"),
+]
+
+REQUIRED_RELEASE_SIGNING_DOC_PHRASES = [
+    "GitHub Actions must not contain `RELEASE_SIGNING_KEY` or `RELEASE_SIGNING_PASSPHRASE`",
+    "`VT_API_KEY` may remain only for VirusTotal scanning",
+    "Draft releases must not be manually published",
+    "verify the offline signature",
 ]
 
 _USERS = b"Users"
@@ -155,6 +171,13 @@ def test_security_engineering_doc_records_required_invariants():
 
     for phrase in REQUIRED_ENGINEERING_PHRASES:
         assert phrase in doc
+
+
+def test_release_signing_docs_record_offline_key_custody():
+    for path in RELEASE_SIGNING_DOC_PATHS:
+        doc = _read(path)
+        for phrase in REQUIRED_RELEASE_SIGNING_DOC_PHRASES:
+            assert phrase in doc, f"{path.relative_to(REPO_ROOT)} missing {phrase!r}"
 
 
 def test_security_regression_ledger_records_all_remediation_commits():

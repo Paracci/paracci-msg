@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 
@@ -40,6 +40,9 @@ SIGNATURE_URL = "https://github.com/Paracci/paracci-msg/releases/download/v1.4.2
 TEST_SIGNING_PRIVATE_KEY = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
 TEST_SIGNING_PUBLIC_KEY = TEST_SIGNING_PRIVATE_KEY.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
 COMMITTED_SIGNING_PUBLIC_KEY = updater_module.UPDATE_SIGNING_PUBLIC_KEY
+RETIRED_SIGNING_PUBLIC_KEY = bytes.fromhex(
+    "451447d8e67143b01d8601990d77a823a7ca9c313d80f87799686bd58c91b4d7"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -161,7 +164,10 @@ def test_committed_update_signing_key_is_a_real_public_key():
     source = (PACKAGE_ROOT / "desktop" / "updater.py").read_text(encoding="utf-8")
     assert len(COMMITTED_SIGNING_PUBLIC_KEY) == 32
     assert COMMITTED_SIGNING_PUBLIC_KEY != bytes(32)
+    assert COMMITTED_SIGNING_PUBLIC_KEY != RETIRED_SIGNING_PUBLIC_KEY
+    Ed25519PublicKey.from_public_bytes(COMMITTED_SIGNING_PUBLIC_KEY)
     assert "UPDATE_SIGNING_PUBLIC_KEY = bytes.fromhex(" in source
+    assert '"b5e5e7a8f017bf4bfbb711d2815e919b6881918dba61672dd48b35533badd97a"' in source
     assert '"0000000000000000000000000000000000000000000000000000000000000000"' not in source
 
 

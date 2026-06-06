@@ -8,20 +8,26 @@ def _workflow(name: str) -> str:
     return (REPO_ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
 
 
-def test_release_workflow_has_no_online_updater_signing_authority():
-    workflow = _workflow("release.yml")
+def test_release_workflows_have_no_online_updater_signing_authority():
+    workflows = {
+        "release.yml": _workflow("release.yml"),
+        "publish_signed_release.yml": _workflow("publish_signed_release.yml"),
+    }
 
-    for forbidden in (
-        "RELEASE_SIGNING_KEY",
-        "RELEASE_SIGNING_PASSPHRASE",
-        "signing_key.pem",
-        "tools/sign_release_manifest.py",
-        "Write release signing key",
-        "Sign release manifest",
-    ):
-        assert forbidden not in workflow
+    for name, workflow in workflows.items():
+        for forbidden in (
+            "RELEASE_SIGNING_KEY",
+            "RELEASE_SIGNING_PASSPHRASE",
+            "signing_key.pem",
+            "tools/sign_release_manifest.py",
+            "Write release signing key",
+            "Sign release manifest",
+            "load_pem_private_key",
+            "Ed25519PrivateKey",
+        ):
+            assert forbidden not in workflow, f"{name} must not contain {forbidden}"
 
-    assert "            SHA256SUMS.txt.sig" not in workflow
+    assert "            SHA256SUMS.txt.sig" not in workflows["release.yml"]
 
 
 def test_release_workflow_recomputes_manifest_and_creates_draft_release():

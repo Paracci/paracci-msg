@@ -280,7 +280,9 @@ git push origin v1.5.0
 
 GitHub Actions rejects a release tag that does not match `VERSION`, then builds Windows, macOS, and Linux packages in parallel, creates the Windows installer and portable archive, the macOS DMG, and Linux AppImage and Debian packages, and signs application artifacts with Sigstore build provenance attestations. The tag workflow recomputes the canonical `SHA256SUMS.txt` from the package assets it is about to upload, creates a draft GitHub Release, and does not publish unsigned update metadata.
 
-Paracci's in-app Windows updater trusts only a release whose `SHA256SUMS.txt` has a valid detached Ed25519 signature in `SHA256SUMS.txt.sig`. The matching public key is embedded in the desktop updater. The private signing key remains offline and must never be placed in GitHub Actions secrets.
+Paracci's in-app Windows updater trusts only a release whose `SHA256SUMS.txt` has a valid detached Ed25519 signature in `SHA256SUMS.txt.sig`. The matching public key is embedded in the desktop updater. The private signing key remains offline and must never be placed in GitHub Actions secrets. GitHub Actions must not contain `RELEASE_SIGNING_KEY` or `RELEASE_SIGNING_PASSPHRASE`; `VT_API_KEY` may remain only for VirusTotal scanning.
+
+Draft releases must not be manually published from the GitHub UI. Publication must go through `publish_signed_release.yml`, which must verify the offline signature before attaching `SHA256SUMS.txt.sig` and publishing the draft.
 
 Generate the dedicated signing key once on a trusted offline workstation, then embed the printed public-key constant in `paracci/desktop/updater.py` before distributing builds:
 
@@ -288,6 +290,8 @@ Generate the dedicated signing key once on a trusted offline workstation, then e
 python tools/gen_signing_key.py
 # Store signing_key.pem offline; it is ignored by Git.
 ```
+
+When rotating the release-signing key, embed the new public verifier key and build a new release tag from that commit. Do not publish a draft release that was built with a retired verifier key.
 
 For each release, after reviewing the draft packages and provenance, download the exact draft manifest and sign it offline:
 

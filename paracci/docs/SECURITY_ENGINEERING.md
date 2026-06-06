@@ -232,7 +232,9 @@ Regression-test style:
 What must remain true:
 
 - The updater signing private key must remain offline. CI must not sign updater-trusted manifests with an online repository secret.
+- GitHub Actions must not contain `RELEASE_SIGNING_KEY` or `RELEASE_SIGNING_PASSPHRASE`; `VT_API_KEY` may remain only for VirusTotal scanning.
 - CI may build release assets and draft releases, but the updater-trusted manifest signature must come from the offline signing ceremony.
+- Draft releases must not be manually published; `publish_signed_release.yml` must verify the offline signature before publication.
 - Release manifests must be recomputed from the actual assets that will be published, then verified before publication. Do not trust prepackaged manifest files from build outputs without rehashing the release assets.
 - Publishing must fail closed if expected assets are missing, duplicated, renamed unexpectedly, mismatched, or signature verification fails.
 
