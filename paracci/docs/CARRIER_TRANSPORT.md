@@ -1,17 +1,18 @@
 # Carrier Transport
 
-This document records the 1.8.0 carrier transport skeleton. It defines the
-security model and implementation boundaries before any carrier adapter is
-enabled.
+This document records the 1.8.0 carrier transport skeleton and PNG lossless
+core adapter. It defines the security model and implementation boundaries
+before carrier transport is exposed through user-facing flows.
 
 ## Status
 
 - Carrier mode is optional and disabled by default.
 - Normal `.paracci` export, import, and open flows remain the default behavior.
-- `png_lossless_v1` and `qr_matrix_v1` are planned carrier kind constants only.
-  They remain unsupported until dedicated adapters and regressions are added.
-- The skeleton does not add PNG logic, QR/Matrix logic, UI routes, frontend
-  controls, native-save integration, UIApi commands, image decoding, or new
+- `png_lossless_v1` is implemented as a core-only PNG lossless carrier adapter.
+- `qr_matrix_v1` remains a planned carrier kind constant only. It remains
+  unsupported until a dedicated adapter and regressions are added.
+- The current implementation does not add QR/Matrix logic, UI routes, frontend
+  controls, native-save integration, UIApi commands, file associations, or new
   dependencies.
 
 ## Security Model
@@ -35,23 +36,35 @@ filenames, or sensitive paths.
 - Extracted setup and responder payloads are capped by
   `MAX_EXTRACTED_SETUP_BYTES`.
 - Extracted message payloads are capped by `MAX_EXTRACTED_MESSAGE_BYTES`.
-- Future image carrier adapters must respect the existing image pixel,
-  dimension, frame-count, and decompression budgets before they decode or
-  transform carrier images.
+- Image carrier adapters must respect the existing image pixel, dimension,
+  frame-count, and decompression budgets before they decode or transform
+  carrier images.
+
+## PNG Lossless MVP
+
+PNG lossless carrier work is limited to lossless PNG output. The adapter treats
+source PNGs as untrusted input, enforces the shared carrier and image budgets,
+normalizes supported single-frame PNGs to RGB or RGBA, writes a fresh PNG, and
+does not preserve source PNG metadata.
+
+The hidden PNG container stores a carrier marker, byte length, CRC32 value, and
+the original `.paracci` bytes. CRC32 is used only to detect carrier corruption
+or transport damage. It is not cryptographic authentication, does not prove
+that extracted bytes are a valid Paracci envelope, and does not replace the
+existing `.paracci` validation, open, or decrypt path.
+
+Users must be warned that social platforms and messengers may recompress,
+resize, or strip image data. Carrier PNGs should be sent as a file or document,
+not as an inline photo.
 
 ## Planned MVP Kinds
-
-PNG lossless carrier work must be limited to lossless PNG output. Users must be
-warned that social platforms and messengers may recompress, resize, or strip
-image data. Carrier PNGs should be sent as a file or document, not as an inline
-photo.
 
 QR/Matrix carrier work must be described as visible robust transport for small
 payloads, not invisible steganography. It should be treated as a convenience
 transport for constrained channels, not as a secrecy or detection-resistance
 guarantee.
 
-## Out Of Scope For This Skeleton
+## Out Of Scope For This Task
 
 - JPEG/DCT robust steganography.
 - PDF, audio, or video carriers.

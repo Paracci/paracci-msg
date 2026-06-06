@@ -1,7 +1,6 @@
 """Shared carrier transport types and limits.
 
-Carrier mode is an outer wrapper around existing Paracci files. This module
-does not implement any carrier format.
+Carrier mode is an outer wrapper around existing Paracci files.
 """
 
 from __future__ import annotations
@@ -17,7 +16,8 @@ PayloadKind = Literal["setup", "message"]
 
 PNG_LOSSLESS_V1 = "png_lossless_v1"
 QR_MATRIX_V1 = "qr_matrix_v1"
-PLANNED_CARRIER_KINDS = (PNG_LOSSLESS_V1, QR_MATRIX_V1)
+SUPPORTED_CARRIER_KINDS = (PNG_LOSSLESS_V1,)
+PLANNED_CARRIER_KINDS = (QR_MATRIX_V1,)
 
 MAX_CARRIER_FILE_BYTES = MAX_MESSAGE_ENVELOPE_BYTES
 MAX_EXTRACTED_SETUP_BYTES = MAX_SETUP_FILE_BYTES
@@ -116,6 +116,7 @@ class CarrierAdapter(Protocol):
         self,
         envelope_bytes: bytes,
         *,
+        carrier_bytes: bytes | None = None,
         payload_kind: PayloadKind = "message",
     ) -> CarrierOutput:
         ...

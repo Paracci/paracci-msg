@@ -166,8 +166,9 @@ def test_carrier_transport_doc_records_skeleton_security_model():
     required_phrases = [
         "Carrier mode is optional and disabled by default.",
         "Normal `.paracci` export, import, and open flows remain the default behavior.",
-        "`png_lossless_v1` and `qr_matrix_v1` are planned carrier kind constants only.",
-        "They remain unsupported until dedicated adapters and regressions are added.",
+        "`png_lossless_v1` is implemented as a core-only PNG lossless carrier adapter.",
+        "`qr_matrix_v1` remains a planned carrier kind constant only.",
+        "It remains unsupported until a dedicated adapter and regressions are added.",
         "Carrier transport is an outer wrapper only.",
         "It must not change the existing",
         "`.paracci` setup, responder, or message envelope formats.",
@@ -177,6 +178,9 @@ def test_carrier_transport_doc_records_skeleton_security_model():
         "Carrier failures must be stable and generic.",
         "payload bytes, tokens, passphrases, decrypted content, raw carrier internals",
         "filenames, or sensitive paths",
+        "CRC32 is used only to detect carrier corruption or transport damage.",
+        "It is not cryptographic authentication",
+        "does not replace the existing `.paracci` validation, open, or decrypt path.",
         "sent as a file or document, not as an inline photo.",
         "QR/Matrix carrier work must be described as visible robust transport",
         "not invisible steganography",
@@ -186,6 +190,8 @@ def test_carrier_transport_doc_records_skeleton_security_model():
         "cannot be detected",
         "bypasses existing validation",
         "enabled by default",
+        "authenticated carrier",
+        "tamper-proof carrier",
     ]
 
     for phrase in required_phrases:

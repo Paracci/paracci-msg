@@ -21,8 +21,11 @@ from .base import (
     CarrierOutput,
     CarrierRegistryError,
     CarrierUnsupportedError,
+    SUPPORTED_CARRIER_KINDS,
 )
+from .png import PngLosslessCarrierAdapter
 from .registry import (
+    builtin_adapters,
     detect_carrier,
     embed_envelope,
     estimate_capacity,
@@ -43,6 +46,7 @@ __all__ = [
     "PLANNED_CARRIER_KINDS",
     "PNG_LOSSLESS_V1",
     "QR_MATRIX_V1",
+    "SUPPORTED_CARRIER_KINDS",
     "CapacityEstimate",
     "CarrierAdapter",
     "CarrierAdapterError",
@@ -53,6 +57,8 @@ __all__ = [
     "CarrierOutput",
     "CarrierRegistryError",
     "CarrierUnsupportedError",
+    "PngLosslessCarrierAdapter",
+    "builtin_adapters",
     "detect_carrier",
     "embed_envelope",
     "estimate_capacity",

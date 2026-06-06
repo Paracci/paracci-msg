@@ -10,6 +10,7 @@ from core.carrier import (  # noqa: E402
     PLANNED_CARRIER_KINDS,
     PNG_LOSSLESS_V1,
     QR_MATRIX_V1,
+    SUPPORTED_CARRIER_KINDS,
     CapacityEstimate,
     CarrierAdapterError,
     CarrierDetection,
@@ -58,8 +59,8 @@ class FakeCarrierAdapter:
             fits=payload_size <= capacity,
         )
 
-    def embed(self, envelope_bytes, *, payload_kind="message"):
-        self.calls.append(("embed", envelope_bytes, payload_kind))
+    def embed(self, envelope_bytes, *, carrier_bytes=None, payload_kind="message"):
+        self.calls.append(("embed", envelope_bytes, carrier_bytes, payload_kind))
         return CarrierOutput(
             kind=self.kind,
             carrier_bytes=b"FAKE" + envelope_bytes,
@@ -81,20 +82,21 @@ class RaisingCarrierAdapter:
     def estimate_capacity(self, carrier_bytes=None, *, payload_size=0):
         raise RuntimeError("payload-secret-sentinel path-secret-sentinel token-secret-sentinel")
 
-    def embed(self, envelope_bytes, *, payload_kind="message"):
+    def embed(self, envelope_bytes, *, carrier_bytes=None, payload_kind="message"):
         raise RuntimeError("payload-secret-sentinel path-secret-sentinel token-secret-sentinel")
 
     def extract(self, carrier_bytes, *, payload_kind="message"):
         raise RuntimeError("payload-secret-sentinel path-secret-sentinel token-secret-sentinel")
 
 
-def test_no_carrier_adapters_are_registered_by_default():
+def test_registry_can_be_isolated_for_adapter_stubs():
     assert carrier_registry.registered_kinds() == ()
     assert carrier_registry.detect_carrier(b"not a carrier") is None
 
 
-def test_planned_carrier_kind_constants_are_unsupported():
-    assert PLANNED_CARRIER_KINDS == (PNG_LOSSLESS_V1, QR_MATRIX_V1)
+def test_kind_constants_separate_supported_and_planned_carriers():
+    assert SUPPORTED_CARRIER_KINDS == (PNG_LOSSLESS_V1,)
+    assert PLANNED_CARRIER_KINDS == (QR_MATRIX_V1,)
 
     for kind in PLANNED_CARRIER_KINDS:
         with pytest.raises(CarrierUnsupportedError) as get_exc:
@@ -143,6 +145,7 @@ def test_fake_adapter_dispatch_round_trip():
     extracted = carrier_registry.extract_envelope("fake_v1", b"FAKEPARC-message")
     assert extracted == CarrierExtraction(kind="fake_v1", envelope_bytes=b"PARC-message")
     assert [call[0] for call in adapter.calls] == ["detect", "estimate", "embed", "extract"]
+    assert adapter.calls[2] == ("embed", b"PARC-message", None, "message")
 
 
 def test_carrier_input_limit_rejects_before_adapter_work(monkeypatch):

@@ -17,9 +17,15 @@ from .base import (
     ensure_carrier_bytes_within_limit,
     ensure_extracted_payload_within_limit,
 )
+from .png import PngLosslessCarrierAdapter
 
 
-_ADAPTERS: dict[str, CarrierAdapter] = {}
+def builtin_adapters() -> dict[str, CarrierAdapter]:
+    adapter = PngLosslessCarrierAdapter()
+    return {adapter.kind: adapter}
+
+
+_ADAPTERS: dict[str, CarrierAdapter] = builtin_adapters()
 
 
 def _normalize_kind(kind: str | None) -> str:
@@ -101,14 +107,19 @@ def embed_envelope(
     kind: str,
     envelope_bytes: bytes | bytearray | memoryview,
     *,
+    carrier_bytes: bytes | bytearray | memoryview | None = None,
     payload_kind: PayloadKind = "message",
 ) -> CarrierOutput:
     data = coerce_bytes(envelope_bytes)
     ensure_extracted_payload_within_limit(data, payload_kind)
+    carrier_data = None
+    if carrier_bytes is not None:
+        carrier_data = coerce_bytes(carrier_bytes)
+        ensure_carrier_bytes_within_limit(carrier_data)
 
     adapter = get_adapter(kind)
     try:
-        output = adapter.embed(data, payload_kind=payload_kind)
+        output = adapter.embed(data, carrier_bytes=carrier_data, payload_kind=payload_kind)
     except CarrierError:
         raise
     except Exception as exc:
