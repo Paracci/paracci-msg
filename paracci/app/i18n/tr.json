@@ -208,6 +208,23 @@
     "import_initiator_subtitle": "Initiator dosyasını yükleyerek oturuma katılın. Bu dosya gizli mesaj içeriği değil, doğrulanmış herkese açık meta veriler içerir.",
     "error_responder_redirect": "Bu bir Responder (yanıt) dosyasıdır. Lütfen bu dosyayı ilgili oturumun içine girerek yükleyin."
   },
+  "carrier": {
+    "panel_title": "PNG taşıyıcı",
+    "panel_optional": "İsteğe bağlıdır ve varsayılan olarak kapalıdır",
+    "outer_wrapper_note": "PNG taşıyıcı yalnızca dış bir aktarım sarmalayıcısıdır. Çıkarılan içerik normal Paracci doğrulama ve şifre çözme yolundan geçmeye devam eder.",
+    "recompression_warning": "PNG dosyasını dosya/belge olarak gönderin. Sosyal platformlar görüntüyü yeniden sıkıştırabilir, boyutlandırabilir veya dönüştürebilir ve çıkarma işlemini bozabilir.",
+    "capacity_hint": "Yeterince büyük, kayıpsız bir PNG seçin. Veri sığmazsa işlem güvenli biçimde başarısız olur.",
+    "cover_file_label": "Kapak PNG",
+    "carrier_file_label": "Taşıyıcı PNG",
+    "extract_setup": "Setup verisini PNG taşıyıcıdan çıkar",
+    "extract_responder": "Responder verisini PNG taşıyıcıdan çıkar",
+    "extract_message": "Mesajı PNG taşıyıcıdan çıkar",
+    "export_setup": "Setup verisini PNG taşıyıcıya aktar",
+    "export_responder": "Responder verisini PNG taşıyıcıya aktar",
+    "export_message": "Mesajı PNG taşıyıcıya aktar",
+    "generic_error": "Taşıyıcı dosya güvenli biçimde işlenemedi.",
+    "processing": "Taşıyıcı işleniyor..."
+  },
   "session": {
     "not_found": "Oturum bulunamadı.",
     "not_active": "Oturum aktif değil.",

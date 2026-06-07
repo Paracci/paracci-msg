@@ -208,6 +208,23 @@
     "subtitle": "Beginnen Sie mit einer neuen Dateiaustausch-Sitzung.",
     "title": "New Session"
   },
+  "carrier": {
+    "panel_title": "PNG-Carrier",
+    "panel_optional": "Optional und standardmäßig deaktiviert",
+    "outer_wrapper_note": "Ein PNG-Carrier ist nur eine äußere Transporthülle. Extrahierte Inhalte durchlaufen weiterhin die normale Paracci-Validierung und -Entschlüsselung.",
+    "recompression_warning": "Senden Sie das PNG als Datei/Dokument. Soziale Plattformen können es neu komprimieren, skalieren oder konvertieren und dadurch die Extraktion verhindern.",
+    "capacity_hint": "Wählen Sie ein ausreichend großes verlustfreies PNG. Wenn die Nutzlast nicht hineinpasst, schlägt der Vorgang sicher fehl.",
+    "cover_file_label": "Cover-PNG",
+    "carrier_file_label": "Carrier-PNG",
+    "extract_setup": "Setup aus PNG-Carrier extrahieren",
+    "extract_responder": "Responder aus PNG-Carrier extrahieren",
+    "extract_message": "Nachricht aus PNG-Carrier extrahieren",
+    "export_setup": "Setup in PNG-Carrier exportieren",
+    "export_responder": "Responder in PNG-Carrier exportieren",
+    "export_message": "Nachricht in PNG-Carrier exportieren",
+    "generic_error": "Die Carrier-Datei konnte nicht sicher verarbeitet werden.",
+    "processing": "Carrier wird verarbeitet..."
+  },
   "session": {
     "not_found": "Sitzung nicht gefunden.",
     "not_active": "Sitzung ist nicht aktiv.",

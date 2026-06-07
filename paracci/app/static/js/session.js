@@ -124,6 +124,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // 3. Global Message Form Handling
     setupForms();
     setupTemplateEventBindings();
+    setupCarrierControls();
 
     // 4. Dismiss Warning if already acknowledged
     if (window.PARACCI_CONFIG?.sid) {
@@ -256,6 +257,61 @@ function setupTemplateEventBindings() {
     });
     document.getElementById('btn-close-msg')?.addEventListener('click', () => {
         window.handleCloseClick?.();
+    });
+}
+
+function setupCarrierControls() {
+    const carrierUi = window.ParacciCarrierUI;
+    if (!carrierUi) return;
+
+    document.querySelectorAll('[data-carrier-operation]').forEach(panel => {
+        const operation = panel.dataset.carrierOperation;
+        const url = panel.dataset.carrierUrl;
+        const fileInput = panel.querySelector('[data-carrier-file]');
+        const button = panel.querySelector('[data-carrier-submit]');
+        const errorContainer = panel.querySelector('[data-carrier-error]');
+        if (!operation || !url || !fileInput || !button) return;
+
+        fileInput.addEventListener('change', () => carrierUi.clearError(errorContainer));
+        button.addEventListener('click', async () => {
+            carrierUi.clearError(errorContainer);
+
+            let sourceForm = null;
+            if (panel.dataset.carrierSourceForm) {
+                sourceForm = document.getElementById(panel.dataset.carrierSourceForm);
+                if (!sourceForm || !sourceForm.reportValidity()) return;
+            }
+
+            carrierUi.setBusy(button, true);
+            try {
+                const formData = sourceForm ? new FormData(sourceForm) : new FormData();
+                const file = carrierUi.selectedFile(fileInput);
+                formData.set('carrier_kind', carrierUi.PNG_KIND);
+
+                if (operation === 'download') {
+                    formData.set('cover_png', file);
+                    await carrierUi.submitDownload(url, formData);
+                    return;
+                }
+
+                formData.set('carrier_png', file);
+                if (operation === 'import') {
+                    await carrierUi.submitImport(url, formData);
+                    return;
+                }
+                if (operation === 'open') {
+                    const data = await carrierUi.submitOpen(url, formData);
+                    renderDecryptedMessage(data);
+                    document.getElementById('message-view-container')?.scrollIntoView({ behavior: 'smooth' });
+                    return;
+                }
+                throw new Error();
+            } catch {
+                carrierUi.showGenericError(errorContainer);
+            } finally {
+                carrierUi.setBusy(button, false);
+            }
+        });
     });
 }
 

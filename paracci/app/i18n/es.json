@@ -208,6 +208,23 @@
     "subtitle": "Empieza creando una nueva sesión de intercambio de archivos.",
     "title": "New Session"
   },
+  "carrier": {
+    "panel_title": "Portador PNG",
+    "panel_optional": "Opcional y desactivado de forma predeterminada",
+    "outer_wrapper_note": "Un portador PNG es solo una envoltura de transporte externa. El contenido extraído sigue usando la validación y el descifrado normales de Paracci.",
+    "recompression_warning": "Envía el PNG como archivo/documento. Las plataformas sociales pueden recomprimirlo, redimensionarlo o convertirlo y romper la extracción.",
+    "capacity_hint": "Elige un PNG sin pérdida suficientemente grande. Si la carga no cabe, la operación falla de forma segura.",
+    "cover_file_label": "PNG de portada",
+    "carrier_file_label": "PNG portador",
+    "extract_setup": "Extraer configuración del portador PNG",
+    "extract_responder": "Extraer respuesta del portador PNG",
+    "extract_message": "Extraer mensaje del portador PNG",
+    "export_setup": "Exportar configuración a un portador PNG",
+    "export_responder": "Exportar respuesta a un portador PNG",
+    "export_message": "Exportar mensaje a un portador PNG",
+    "generic_error": "El archivo portador no se pudo procesar de forma segura.",
+    "processing": "Procesando portador..."
+  },
   "session": {
     "not_found": "Sesión no encontrada.",
     "not_active": "La sesión no está activa.",

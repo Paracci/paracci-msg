@@ -217,6 +217,31 @@
         </div>
       </div>
 
+      <details class="carrier-panel mt-6" id="setup-carrier-panel">
+        <summary class="carrier-panel-summary">
+          <span>
+            <strong>{{ _('carrier.panel_title') }}</strong>
+            <small>{{ _('carrier.panel_optional') }}</small>
+          </span>
+          <span class="carrier-panel-chevron" aria-hidden="true">+</span>
+        </summary>
+        <div class="carrier-panel-body">
+          <p class="carrier-note">{{ _('carrier.outer_wrapper_note') }}</p>
+          <p class="carrier-warning">{{ _('carrier.recompression_warning') }}</p>
+          <div class="form-group">
+            <label for="setup-carrier-png">{{ _('carrier.carrier_file_label') }}</label>
+            <input type="file" id="setup-carrier-png" accept="image/png,.png">
+          </div>
+          <div id="setup-carrier-error" class="carrier-error" role="alert" aria-live="polite"></div>
+          <button type="button"
+                  class="btn btn-secondary"
+                  id="setup-carrier-import"
+                  data-carrier-url="{{ url_for('main.session_import_carrier') }}">
+            {{ _('carrier.extract_setup') }}
+          </button>
+        </div>
+      </details>
+
     </div>
     <div class="card-footer bg-overlay py-6">
       <div class="form-actions-row">
@@ -230,5 +255,6 @@
 </div>
 {% endif %}
 
+<script src="{{ url_for('static', filename='js/carrier.js', v=range(1, 99999) | random) }}"></script>
 <script src="{{ url_for('static', filename='js/setup.js', v=range(1, 99999) | random) }}"></script>
 {% endblock %}

@@ -1,5 +1,40 @@
 <!-- app/templates/session.html -->
 {% extends "base.html" %}
+{% macro png_carrier_panel(panel_id, action_url, action_label, operation, source_form_id='') %}
+<details class="carrier-panel mt-5"
+         id="{{ panel_id }}"
+         data-carrier-operation="{{ operation }}"
+         data-carrier-url="{{ action_url }}"
+         {% if source_form_id %}data-carrier-source-form="{{ source_form_id }}"{% endif %}>
+  <summary class="carrier-panel-summary">
+    <span>
+      <strong>{{ _('carrier.panel_title') }}</strong>
+      <small>{{ _('carrier.panel_optional') }}</small>
+    </span>
+    <span class="carrier-panel-chevron" aria-hidden="true">+</span>
+  </summary>
+  <div class="carrier-panel-body">
+    <p class="carrier-note">{{ _('carrier.outer_wrapper_note') }}</p>
+    <p class="carrier-warning">{{ _('carrier.recompression_warning') }}</p>
+    {% if operation == 'download' %}
+      <p class="carrier-capacity-hint">{{ _('carrier.capacity_hint') }}</p>
+    {% endif %}
+    <div class="form-group">
+      <label for="{{ panel_id }}-png">
+        {{ _('carrier.cover_file_label') if operation == 'download' else _('carrier.carrier_file_label') }}
+      </label>
+      <input type="file"
+             id="{{ panel_id }}-png"
+             accept="image/png,.png"
+             data-carrier-file>
+    </div>
+    <div class="carrier-error" data-carrier-error role="alert" aria-live="polite"></div>
+    <button type="button" class="btn btn-secondary" data-carrier-submit>
+      {{ action_label }}
+    </button>
+  </div>
+</details>
+{% endmacro %}
 {% block title %}Paracci - {{ meta.label }}{% endblock %}
 
 {% block extra_head %}
@@ -103,6 +138,13 @@
             </div>
           </div>
         </form>
+
+        {{ png_carrier_panel(
+          'responder-carrier-import',
+          url_for('main.session_import_responder_carrier', sid=sid),
+          _('carrier.extract_responder'),
+          'import'
+        ) }}
         
         <div class="flex-between items-center pt-4 border-t border-accent-soft">
           <span class="text-dim font-xs italic">{{ _('session.initiator_file_prefix') }} {{ _('session.filename_pattern', id=sid[:8]) }}</span>
@@ -117,6 +159,13 @@
             </span> {{ _('session.download_init_btn') }}
           </a>
         </div>
+
+        {{ png_carrier_panel(
+          'initiator-carrier-export',
+          url_for('main.session_export_carrier', sid=sid),
+          _('carrier.export_setup'),
+          'download'
+        ) }}
       </div>
     {% endif %}
   </div>
@@ -160,6 +209,12 @@
              class="btn btn-ghost">
             {{ _('session.download_resp_btn') }}
           </a>
+          {{ png_carrier_panel(
+            'responder-carrier-export-unverified',
+            url_for('main.session_export_carrier', sid=sid),
+            _('carrier.export_responder'),
+            'download'
+          ) }}
         </div>
       {% endif %}
     {% else %}
@@ -232,6 +287,12 @@
        class="btn btn-ghost mt-4">
       {{ _('session.download_resp_btn') }}
     </a>
+    {{ png_carrier_panel(
+      'responder-carrier-export-ready',
+      url_for('main.session_export_carrier', sid=sid),
+      _('carrier.export_responder'),
+      'download'
+    ) }}
   </div>
 </div>
 {% endif %}
@@ -312,6 +373,13 @@
           {{ _('session.seal_btn') }}
         </button>
       </form>
+      {{ png_carrier_panel(
+        'message-carrier-seal',
+        url_for('main.session_seal_carrier', sid=sid),
+        _('carrier.export_message'),
+        'download',
+        'seal-form'
+      ) }}
       {% endif %}
     </div>
   </div>
@@ -341,6 +409,12 @@
           {{ _('session.open_btn') }}
         </button>
       </form>
+      {{ png_carrier_panel(
+        'message-carrier-open',
+        url_for('main.session_open_carrier', sid=sid),
+        _('carrier.extract_message'),
+        'open'
+      ) }}
     </div>
   </div>
 
@@ -465,6 +539,7 @@
      data-preview-label="{{ _('preview.page_title', filename='') | replace(': ', '') }}"
      >
 </div>
+<script src="{{ url_for('static', filename='js/carrier.js') }}"></script>
 <script src="{{ url_for('static', filename='js/session.js') }}"></script>
 
 {% endblock %}

@@ -38,6 +38,7 @@ function initSetup() {
     const processingText = window.PARACCI_I18N?.processing || 'Processing...';
     const setupForm = document.getElementById('setupForm');
     const importForm = document.getElementById('importForm');
+    setupCarrierImport(importForm);
 
     setupForm?.addEventListener('submit', () => {
         const btn = document.getElementById('submitBtn');
@@ -117,6 +118,35 @@ function initSetup() {
                 }
             });
         });
+    });
+}
+
+function setupCarrierImport(importForm) {
+    const carrierUi = window.ParacciCarrierUI;
+    const button = document.getElementById('setup-carrier-import');
+    const fileInput = document.getElementById('setup-carrier-png');
+    const errorContainer = document.getElementById('setup-carrier-error');
+    if (!carrierUi || !importForm || !button || !fileInput) return;
+
+    fileInput.addEventListener('change', () => carrierUi.clearError(errorContainer));
+    button.addEventListener('click', async () => {
+        carrierUi.clearError(errorContainer);
+        const labelInput = importForm.querySelector('[name="label"]');
+        if (labelInput && !labelInput.reportValidity()) return;
+
+        carrierUi.setBusy(button, true);
+        try {
+            const formData = new FormData(importForm);
+            formData.delete('paracci_file');
+            formData.delete('native_file_id');
+            formData.set('carrier_png', carrierUi.selectedFile(fileInput));
+            formData.set('carrier_kind', carrierUi.PNG_KIND);
+            await carrierUi.submitImport(button.dataset.carrierUrl, formData);
+        } catch {
+            carrierUi.showGenericError(errorContainer);
+        } finally {
+            carrierUi.setBusy(button, false);
+        }
     });
 }
 

@@ -208,6 +208,23 @@
     "subtitle": "Commencez par créer une nouvelle session d'échange de fichiers.",
     "title": "New Session"
   },
+  "carrier": {
+    "panel_title": "Transporteur PNG",
+    "panel_optional": "Facultatif et désactivé par défaut",
+    "outer_wrapper_note": "Un transporteur PNG est uniquement une enveloppe de transport externe. Le contenu extrait suit toujours la validation et le déchiffrement Paracci habituels.",
+    "recompression_warning": "Envoyez le PNG comme fichier/document. Les plateformes sociales peuvent le recompresser, le redimensionner ou le convertir et empêcher l'extraction.",
+    "capacity_hint": "Choisissez un PNG sans perte suffisamment grand. Si la charge ne tient pas, l'opération échoue de manière sûre.",
+    "cover_file_label": "PNG de couverture",
+    "carrier_file_label": "PNG transporteur",
+    "extract_setup": "Extraire la configuration du transporteur PNG",
+    "extract_responder": "Extraire la réponse du transporteur PNG",
+    "extract_message": "Extraire le message du transporteur PNG",
+    "export_setup": "Exporter la configuration dans un transporteur PNG",
+    "export_responder": "Exporter la réponse dans un transporteur PNG",
+    "export_message": "Exporter le message dans un transporteur PNG",
+    "generic_error": "Le fichier transporteur n'a pas pu être traité de manière sûre.",
+    "processing": "Traitement du transporteur..."
+  },
   "session": {
     "not_found": "Session non trouvée.",
     "not_active": "La session n'est pas active.",
