@@ -45,6 +45,15 @@ from core.ingest_limits import (
     ensure_path_within_limit,
     read_path_limited,
 )
+from core.carrier import (
+    CARRIER_PUBLIC_ERROR,
+    MAX_CARRIER_FILE_BYTES,
+    PNG_LOSSLESS_V1,
+    CarrierError,
+    embed_envelope,
+    estimate_capacity,
+    extract_envelope,
+)
 from core.package import (
     PackageLimitError,
     create_package,
@@ -129,6 +138,31 @@ STAGED_ATTACHMENT_CACHE = {}
 # Native file references are issued only by the pywebview Python bridge after an
 # OS dialog or native drop event. Web content submits opaque IDs, never paths.
 NATIVE_FILE_REF_CACHE = {}
+NATIVE_FILE_REF_PURPOSE_CARRIER_IMPORT = "carrier_import"
+NATIVE_FILE_REF_PURPOSE_CARRIER_MESSAGE_OPEN = "carrier_message_open"
+NATIVE_FILE_REF_PURPOSE_CARRIER_COVER = "carrier_cover"
+NATIVE_FILE_REF_PURPOSES = {
+    NATIVE_FILE_REF_PURPOSE_CARRIER_IMPORT,
+    NATIVE_FILE_REF_PURPOSE_CARRIER_MESSAGE_OPEN,
+    NATIVE_FILE_REF_PURPOSE_CARRIER_COVER,
+}
+RAW_PATH_SHAPED_CARRIER_FIELDS = {
+    "auto_export_path",
+    "carrier_path",
+    "cover_path",
+    "destination_path",
+    "dest_path",
+    "export_path",
+    "import_path",
+    "input_path",
+    "message_path",
+    "output_path",
+    "path",
+    "payload_path",
+    "save_path",
+    "source_path",
+}
+RAW_PATH_FIELD_PART_RE = re.compile(r"\[([^\]]+)\]")
 
 # ── Security Configuration ──
 MAX_ATTACHMENT_SIZE = 50 * 1024 * 1024  # 50MB
@@ -675,9 +709,12 @@ def _cleanup_native_file_ref_cache():
         NATIVE_FILE_REF_CACHE.pop(ref_id, None)
 
 
-def register_native_file_path(path: str | Path, ttl=600) -> dict:
+def register_native_file_path(path: str | Path, ttl=600, purpose: str | None = None) -> dict:
     """Register a native OS-selected path and return an opaque web-safe ID."""
     _cleanup_native_file_ref_cache()
+    normalized_purpose = str(purpose or "").strip() or None
+    if normalized_purpose is not None and normalized_purpose not in NATIVE_FILE_REF_PURPOSES:
+        raise NativeFileReferenceError("Invalid native file reference purpose.")
     path_str = str(path or "").strip()
     if not path_str:
         raise NativeFileReferenceError("Missing native file path.")
@@ -687,6 +724,7 @@ def register_native_file_path(path: str | Path, ttl=600) -> dict:
         "path": path_str,
         "filename": filename,
         "expires": time.time() + ttl,
+        "purpose": normalized_purpose,
     }
     return {"id": ref_id, "filename": filename}
 
@@ -712,6 +750,159 @@ def _import_from_native_ref(ref_id: str | None) -> tuple[bytes | None, dict | No
     if not entry:
         return None, None
     return _import_from_native(entry["path"]), entry
+
+
+def _consume_native_file_ref(ref_id: str | None, purpose: str) -> dict | None:
+    """Resolve and consume a purpose-scoped native file reference."""
+    _cleanup_native_file_ref_cache()
+    ref_id = str(ref_id or "").strip()
+    entry = NATIVE_FILE_REF_CACHE.pop(ref_id, None) if ref_id else None
+    if (
+        not entry
+        or entry.get("expires", 0) < time.time()
+        or entry.get("purpose") != purpose
+    ):
+        return None
+    return entry
+
+
+class CarrierRouteError(Exception):
+    """Frontend-safe carrier route failure."""
+
+
+def _contains_raw_path_field(value) -> bool:
+    if isinstance(value, dict):
+        return any(
+            _carrier_field_name_is_raw_path(str(key))
+            or _contains_raw_path_field(nested)
+            for key, nested in value.items()
+        )
+    if isinstance(value, (list, tuple)):
+        return any(_contains_raw_path_field(item) for item in value)
+    return False
+
+
+def _carrier_field_name_is_raw_path(name: str) -> bool:
+    raw_name = str(name or "").strip()
+    candidates = {raw_name, raw_name.split(".")[-1]}
+    candidates.update(RAW_PATH_FIELD_PART_RE.findall(raw_name))
+    return any(candidate in RAW_PATH_SHAPED_CARRIER_FIELDS for candidate in candidates)
+
+
+def _reject_carrier_raw_path_fields() -> None:
+    for container in (request.args, request.form, request.files):
+        for key in container.keys():
+            if _carrier_field_name_is_raw_path(str(key)):
+                raise CarrierRouteError()
+    if request.is_json:
+        try:
+            if _contains_raw_path_field(request.get_json(silent=True) or {}):
+                raise CarrierRouteError()
+        except CarrierRouteError:
+            raise
+        except Exception as exc:
+            raise CarrierRouteError() from exc
+
+
+def _carrier_json_error(status: int = 400):
+    return _mark_sensitive_no_store(jsonify({"success": False, "error": CARRIER_PUBLIC_ERROR})), status
+
+
+def _carrier_redirect(endpoint: str, **values):
+    return _mark_sensitive_no_store(redirect(url_for(endpoint, **values)))
+
+
+def _carrier_kind_from_request() -> str:
+    kind = str(request.form.get("carrier_kind", PNG_LOSSLESS_V1) or "").strip()
+    if kind != PNG_LOSSLESS_V1:
+        raise CarrierRouteError()
+    return kind
+
+
+def _read_carrier_upload(field_name: str) -> bytes | None:
+    upload = request.files.get(field_name)
+    if not upload or not upload.filename:
+        return None
+    buffer = BytesIO()
+    copy_stream_limited(upload.stream, buffer, MAX_CARRIER_FILE_BYTES, "Carrier file")
+    return buffer.getvalue()
+
+
+def _read_carrier_native_ref(field_name: str, purpose: str) -> bytes | None:
+    ref_id = str(request.form.get(field_name, "") or "").strip()
+    if not ref_id:
+        return None
+    entry = _consume_native_file_ref(ref_id, purpose)
+    if not entry:
+        raise CarrierRouteError()
+    return read_path_limited(entry["path"], MAX_CARRIER_FILE_BYTES, "Carrier file")
+
+
+def _carrier_bytes_from_request(upload_field: str, ref_field: str, purpose: str) -> bytes:
+    upload_present = bool(request.files.get(upload_field) and request.files[upload_field].filename)
+    ref_present = bool(str(request.form.get(ref_field, "") or "").strip())
+    if upload_present == ref_present:
+        raise CarrierRouteError()
+    if upload_present:
+        data = _read_carrier_upload(upload_field)
+    else:
+        data = _read_carrier_native_ref(ref_field, purpose)
+    if not data:
+        raise CarrierRouteError()
+    return data
+
+
+def _extract_carrier_payload_from_request(payload_kind: str, purpose: str) -> bytes:
+    try:
+        _reject_carrier_raw_path_fields()
+        kind = _carrier_kind_from_request()
+        carrier_bytes = _carrier_bytes_from_request("carrier_png", "carrier_native_file_id", purpose)
+        return extract_envelope(kind, carrier_bytes, payload_kind=payload_kind).envelope_bytes
+    except (CarrierRouteError, CarrierError, IngestionLimitError, OSError, TypeError, ValueError) as exc:
+        raise CarrierRouteError() from exc
+
+
+def _cover_bytes_from_request() -> bytes:
+    try:
+        return _carrier_bytes_from_request(
+            "cover_png",
+            "cover_native_file_id",
+            NATIVE_FILE_REF_PURPOSE_CARRIER_COVER,
+        )
+    except (CarrierRouteError, IngestionLimitError, OSError, TypeError, ValueError) as exc:
+        raise CarrierRouteError() from exc
+
+
+def _embed_payload_in_carrier(payload_bytes: bytes, payload_kind: str) -> bytes:
+    try:
+        _reject_carrier_raw_path_fields()
+        kind = _carrier_kind_from_request()
+        cover_bytes = _cover_bytes_from_request()
+        estimate = estimate_capacity(kind, cover_bytes, payload_size=len(payload_bytes))
+        if not estimate.fits:
+            raise CarrierRouteError()
+        output = embed_envelope(
+            kind,
+            payload_bytes,
+            carrier_bytes=cover_bytes,
+            payload_kind=payload_kind,
+        )
+        return output.carrier_bytes
+    except (CarrierRouteError, CarrierError, IngestionLimitError, OSError, TypeError, ValueError) as exc:
+        raise CarrierRouteError() from exc
+
+
+def _carrier_png_response(carrier_bytes: bytes):
+    native_response = _native_save_response(carrier_bytes, "carrier.png")
+    if native_response is not None:
+        return native_response
+    response = send_file(
+        io.BytesIO(carrier_bytes),
+        mimetype="image/png",
+        as_attachment=True,
+        download_name="carrier.png",
+    )
+    return _mark_sensitive_no_store(response)
 
 
 def stage_native_attachment_paths(paths: Sequence[str | Path]) -> list[dict]:
@@ -2168,6 +2359,51 @@ def _process_responder_import(file_bytes, session_id):
         flash(_('session.import_error', error=str(e)), "error")
         return render_template("setup.html", mode="import", is_import=True)
 
+
+@bp.route("/session/import/carrier", methods=["POST"])
+def session_import_carrier():
+    """Import an initiator setup payload explicitly extracted from a PNG carrier."""
+    try:
+        file_bytes = _extract_carrier_payload_from_request(
+            "setup",
+            NATIVE_FILE_REF_PURPOSE_CARRIER_IMPORT,
+        )
+        raw_header = _parse_file_header_raw(file_bytes)
+        if not raw_header or raw_header["file_type"] != 0x10:
+            raise CarrierRouteError()
+        existing = _load_session(raw_header["session_id"].hex())
+        if existing and existing.role == "X":
+            raise CarrierRouteError()
+
+        local_label = sanitize_text(request.form.get("label", "").strip())
+        if not local_label:
+            raise CarrierRouteError()
+        color = request.form.get("color")
+        custom_color = request.form.get("custom_color", "").strip()
+        if custom_color:
+            if not custom_color.startswith("#"):
+                custom_color = "#" + custom_color
+            if len(custom_color) in [4, 7]:
+                color = custom_color
+
+        identity = _get_device_identity()
+        cfg = ParacciConfig()
+        meta, _responder_bytes = accept_initiator_and_create_responder(
+            file_bytes,
+            local_label,
+            my_username=cfg.get("username"),
+            color=color,
+            identity_pub=identity.public_key,
+            identity_priv=identity.private_key,
+        )
+        _save_session(meta)
+        flash(_('session.y_init_success'), "success")
+        flash(_('session.safety_unverified'), "warning")
+        return _carrier_redirect("main.session_detail", sid=meta.session_id.hex(), auto_download="1")
+    except (CarrierRouteError, HybridKEMError, SessionError, ValueError, TypeError):
+        return _carrier_json_error(400)
+
+
 @bp.route("/session/import", methods=["GET", "POST"])
 def session_import():
     """Imports incoming session files (Init/Resp)."""
@@ -2390,6 +2626,35 @@ def session_import_responder(sid: str):
     return _process_responder_import(file_bytes, raw_header["session_id"])
 
 
+@bp.route("/session/<sid>/carrier/import_responder", methods=["POST"])
+def session_import_responder_carrier(sid: str):
+    """Finalize X with a responder payload explicitly extracted from a PNG carrier."""
+    try:
+        meta = _load_session(sid)
+        if meta is None:
+            abort(404)
+        if meta.role != "X":
+            raise CarrierRouteError()
+        file_bytes = _extract_carrier_payload_from_request(
+            "setup",
+            NATIVE_FILE_REF_PURPOSE_CARRIER_IMPORT,
+        )
+        raw_header = _parse_file_header_raw(file_bytes)
+        if (
+            not raw_header
+            or raw_header["file_type"] != 0x11
+            or raw_header["session_id"].hex() != sid
+        ):
+            raise CarrierRouteError()
+        updated_meta = finalize_initiator_session(meta, file_bytes)
+        _save_session(updated_meta)
+        flash(_('session.x_finalize_success'), "success")
+        flash(_('session.safety_unverified'), "warning")
+        return _carrier_redirect("main.session_detail", sid=updated_meta.session_id.hex())
+    except (CarrierRouteError, HybridKEMError, SessionError, ValueError, TypeError):
+        return _carrier_json_error(400)
+
+
 # ---------------------------------------------------------------------------
 # POST /session/<sid>/seal — Encrypt message → download
 # ---------------------------------------------------------------------------
@@ -2580,6 +2845,104 @@ def session_seal(sid: str):
     finally:
         if temp_zip_path.exists():
             secure_delete(temp_zip_path)
+        for name, path in files:
+            if isinstance(path, (str, Path)) and os.path.exists(path):
+                secure_delete(path)
+
+
+@bp.route("/session/<sid>/carrier/seal", methods=["POST"])
+def session_seal_carrier(sid: str):
+    """Seal a message normally, then explicitly embed the envelope into a PNG carrier."""
+    meta = _load_session(sid)
+    if meta is None:
+        abort(404)
+
+    files = []
+    temp_zip_path = None
+    envelope_path = None
+    try:
+        _reject_carrier_raw_path_fields()
+        require_transcript_bound_session(meta)
+        if not meta.can_send:
+            raise CarrierRouteError()
+
+        text = unicodedata.normalize('NFC', request.form.get("message", "").strip())
+        allow_download = request.form.get("allow_download") == "on"
+        try:
+            ttl_seconds = int(request.form.get("ttl_seconds", "0"))
+        except Exception:
+            ttl_seconds = 0
+
+        files, error = _gather_attachments(
+            request.files.getlist("attachments"),
+            request.form.get("staged_attachment_ids", ""),
+        )
+        if error:
+            raise CarrierRouteError()
+
+        temp_dir = Path(os.environ.get("DATA_DIR", "data")) / "temp"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        token = secrets.token_hex(16)
+        temp_zip_path = temp_dir / f"package_{token}.zip"
+        envelope_path = temp_dir / f"envelope_{token}.paracci"
+
+        import inspect
+
+        sig = inspect.signature(create_package)
+        if "output_path" in sig.parameters:
+            create_package(text, files, allow_download=allow_download, output_path=temp_zip_path)
+        else:
+            pkg_bytes = create_package(text, files, allow_download)
+            with open(temp_zip_path, "wb") as f:
+                f.write(pkg_bytes)
+
+        sealed = seal_envelope(
+            temp_zip_path,
+            meta,
+            single_use=True,
+            ttl_seconds=ttl_seconds,
+            allow_download=allow_download,
+            output_path=envelope_path,
+        )
+        payload_bytes = read_path_limited(envelope_path, MAX_MESSAGE_ENVELOPE_BYTES, "Message file")
+        carrier_bytes = _embed_payload_in_carrier(payload_bytes, "message")
+
+        updated = meta._replace(tx_count=meta.tx_count + 1, send_seed=sealed.next_seed)
+        native_response = _native_save_response(carrier_bytes, "carrier.png")
+        if native_response is not None:
+            status_code = native_response[1] if isinstance(native_response, tuple) else native_response.status_code
+            if 200 <= status_code < 300:
+                _save_session(updated)
+            return native_response
+
+        _save_session(updated)
+        response = send_file(
+            io.BytesIO(carrier_bytes),
+            mimetype="image/png",
+            as_attachment=True,
+            download_name="carrier.png",
+        )
+        return _mark_sensitive_no_store(response)
+    except (MemoryError, KeyboardInterrupt, SystemExit):
+        raise
+    except (
+        CarrierRouteError,
+        CarrierError,
+        EnvelopeError,
+        HybridKEMError,
+        IngestionLimitError,
+        PackageLimitError,
+        SessionError,
+        OSError,
+        TypeError,
+        ValueError,
+    ):
+        return _carrier_json_error(400)
+    finally:
+        if temp_zip_path and temp_zip_path.exists():
+            secure_delete(temp_zip_path)
+        if envelope_path and envelope_path.exists():
+            secure_delete(envelope_path)
         for name, path in files:
             if isinstance(path, (str, Path)) and os.path.exists(path):
                 secure_delete(path)
@@ -2820,6 +3183,70 @@ def session_open(sid: str):
             secure_delete(temp_upload_path)
 
 
+@bp.route("/session/<sid>/carrier/open", methods=["POST"])
+def session_open_carrier(sid: str):
+    """Open a message envelope explicitly extracted from a PNG carrier."""
+    meta = _load_session(sid)
+    if meta is None:
+        return _carrier_json_error(404)
+
+    try:
+        file_bytes = _extract_carrier_payload_from_request(
+            "message",
+            NATIVE_FILE_REF_PURPOSE_CARRIER_MESSAGE_OPEN,
+        )
+        require_transcript_bound_session(meta)
+        if not meta.can_open:
+            raise CarrierRouteError()
+
+        raw = _parse_file_header_raw(file_bytes)
+        if raw is None or raw["file_type"] != 0x20:
+            raise CarrierRouteError()
+
+        db, _device_key = _get_db_and_key()
+        guard = BurnGuard(db)
+        burn_reserved = guard.pre_open_check(
+            msg_id=raw["msg_id"],
+            expire_at=raw["expire_at"],
+            single_use=raw["single_use"],
+        )
+        try:
+            opened = open_envelope(file_bytes, meta)
+        except EnvelopeError as exc:
+            if burn_reserved:
+                guard.mark_open_failed(raw["msg_id"], str(exc))
+            raise
+
+        guard.post_open_burn(
+            msg_id=opened.msg_id,
+            session_id=opened.session_id,
+            direction=opened.direction,
+            single_use=opened.single_use,
+            file_path=None,
+        )
+        return _mark_sensitive_no_store(
+            _prepare_open_response(meta, opened, sid, True, secure_delete_warning=None)
+        )
+    except (MemoryError, KeyboardInterrupt, SystemExit):
+        raise
+    except (
+        AlreadyBurnedError,
+        CarrierRouteError,
+        CarrierError,
+        EnvelopeError,
+        EnvelopeTTLError,
+        HybridKEMError,
+        IngestionLimitError,
+        PackageLimitError,
+        SessionError,
+        TTLExpiredError,
+        OSError,
+        TypeError,
+        ValueError,
+    ):
+        return _carrier_json_error(400)
+
+
 def _render_session_error(meta, sid, msg):
     """Renders the session page with an error message."""
     evo_info = None
@@ -2930,6 +3357,49 @@ def session_export(sid: str):
 # ---------------------------------------------------------------------------
 # GET/POST /settings — Application Settings
 # ---------------------------------------------------------------------------
+
+@bp.route("/session/<sid>/carrier/export", methods=["POST"])
+def session_export_carrier(sid: str):
+    """Export the current setup/responder file explicitly embedded into a PNG carrier."""
+    meta = _load_session(sid)
+    if meta is None:
+        abort(404)
+
+    try:
+        _reject_carrier_raw_path_fields()
+        identity = _get_device_identity()
+        if meta.role == "X" and meta.state == "pending":
+            file_bytes = serialize_initiator_file(meta, identity_priv=identity.private_key)
+        elif meta.role == "Y":
+            file_bytes = serialize_responder_file(
+                session_id=meta.session_id,
+                y_pub=meta.my_pub,
+                evo_config=meta.evo_config,
+                label=meta.label,
+                x_pub=meta.peer_pub,
+                x_identity_pub=meta.peer_identity_pub,
+                y_identity_pub=meta.my_identity_pub,
+                identity_priv=identity.private_key,
+                ml_kem_ciphertext=meta.ml_kem_ciphertext,
+            )
+        else:
+            raise CarrierRouteError()
+        carrier_bytes = _embed_payload_in_carrier(file_bytes, "setup")
+        return _carrier_png_response(carrier_bytes)
+    except (MemoryError, KeyboardInterrupt, SystemExit):
+        raise
+    except (
+        CarrierRouteError,
+        CarrierError,
+        HybridKEMError,
+        IngestionLimitError,
+        SessionError,
+        OSError,
+        TypeError,
+        ValueError,
+    ):
+        return _carrier_json_error(400)
+
 
 @bp.route("/updates")
 def updates():
