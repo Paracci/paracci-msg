@@ -383,6 +383,9 @@ def test_ui_api_session_import_rejects_oversized_path_before_service_import(tmp_
         ),
         ("message_open", {"session_id_hex": "00", "message_path": "C:/private/msg.paracci"}),
         ("attachment_save", {"open_id": "open-id", "attachment_id": "0", "output_path": "C:/private/out.txt"}),
+        ("carrier_session_import", {"import_ref": "opaque", "carrier_path": "C:/private/carrier.png"}),
+        ("carrier_message_open", {"session_id_hex": "00", "message_ref": "opaque", "message_path": "C:/private/carrier.png"}),
+        ("carrier_embed", {"cover_ref": "cover", "payload_ref": "payload", "destination_path": "C:/private/carrier.png"}),
     ],
 )
 def test_ui_api_rejects_raw_path_params_before_handler(tmp_path, monkeypatch, caplog, method, params):

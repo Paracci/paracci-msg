@@ -13,11 +13,18 @@ from pathlib import Path
 from typing import Any
 
 from core.burn import _secure_dir_permissions, secure_delete
+from core.carrier import (
+    CARRIER_PUBLIC_ERROR,
+    MAX_CARRIER_FILE_BYTES,
+    MAX_EXTRACTED_MESSAGE_BYTES,
+    MAX_EXTRACTED_SETUP_BYTES,
+)
 from desktop.device_key_binding import DeviceBindingError
 from desktop.services import (
     MAX_ATTACHMENT_COUNT,
     MAX_ATTACHMENT_SIZE,
     AttachmentPayload,
+    CarrierBridgeError,
     MessageServiceError,
     NativeServices,
     OpenedMessage,
@@ -51,7 +58,30 @@ RAW_PATH_REJECTED_MESSAGE = (
 )
 FILE_REF_INVALID_MESSAGE = "Selected file is no longer available."
 SAVE_GRANT_INVALID_MESSAGE = "Save grant is invalid or expired."
-TRUSTED_FILE_REF_PURPOSES = {"session_import", "message_open"}
+CARRIER_RAW_PATH_PARAMS = {
+    "auto_export_path",
+    "carrier_path",
+    "cover_path",
+    "destination_path",
+    "dest_path",
+    "export_path",
+    "import_path",
+    "input_path",
+    "message_path",
+    "output_path",
+    "path",
+    "payload_path",
+    "save_path",
+    "source_path",
+}
+TRUSTED_FILE_REF_PURPOSES = {
+    "carrier_cover",
+    "carrier_import",
+    "carrier_message_open",
+    "carrier_payload",
+    "session_import",
+    "message_open",
+}
 RAW_PATH_PARAMS_BY_METHOD = {
     "session_create": {"export_path"},
     "session_import": {"import_path", "auto_export_path"},
@@ -59,6 +89,9 @@ RAW_PATH_PARAMS_BY_METHOD = {
     "message_seal": {"output_path", "attachment_paths"},
     "message_open": {"message_path"},
     "attachment_save": {"output_path"},
+    "carrier_session_import": CARRIER_RAW_PATH_PARAMS,
+    "carrier_message_open": CARRIER_RAW_PATH_PARAMS,
+    "carrier_embed": CARRIER_RAW_PATH_PARAMS,
 }
 
 
@@ -359,6 +392,42 @@ class UIApi:
             response["auto_exported"] = True
         return response
 
+    def cmd_carrier_session_import(
+        self,
+        import_ref: str | None = None,
+        carrier_kind: str = "png_lossless_v1",
+        local_label: str = "",
+    ) -> dict[str, Any]:
+        if not import_ref:
+            raise UIApiError("file_ref_required", "A trusted file reference is required.")
+        path = self._consume_file_ref(import_ref, "carrier_import")
+        try:
+            result = self.services.sessions.import_handshake_from_carrier(
+                carrier_kind,
+                str(local_label or "").strip(),
+                carrier_path=path,
+            )
+        except (SessionServiceError, CarrierBridgeError, TypeError, ValueError) as exc:
+            raise UIApiError("carrier_error", CARRIER_PUBLIC_ERROR) from exc
+        response = {
+            "session_id_hex": result.session_id_hex,
+            "message": result.message,
+            "auto_exported": False,
+            "auto_export_path": None,
+            "native_save_token": None,
+            "filename": result.auto_export_filename,
+            "state": result.state,
+            "safety_code": result.safety_code,
+            "requires_confirmation": result.requires_confirmation,
+        }
+        if result.auto_export_bytes:
+            response["native_save_token"] = self._issue_save_grant(
+                result.auto_export_bytes,
+                result.auto_export_filename or "session.paracci",
+            )
+            response["auto_exported"] = True
+        return response
+
     def cmd_session_export(self, session_id_hex: str, export_path: str | None = None) -> dict[str, Any]:
         self._reject_raw_path_param("export_path", export_path)
         data, filename = self.services.sessions.export_handshake(session_id_hex)
@@ -425,6 +494,76 @@ class UIApi:
             opened_at=int(time.time()),
         )
         return self._opened_message_to_dict(open_id, opened)
+
+    def cmd_carrier_message_open(
+        self,
+        session_id_hex: str,
+        message_ref: str | None = None,
+        carrier_kind: str = "png_lossless_v1",
+    ) -> dict[str, Any]:
+        if not message_ref:
+            raise UIApiError("file_ref_required", "A trusted file reference is required.")
+        self._cleanup_open_cache()
+        path = self._consume_file_ref(message_ref, "carrier_message_open")
+        try:
+            opened = self.services.messages.open_message_from_carrier(
+                session_id_hex,
+                carrier_kind,
+                carrier_path=path,
+            )
+        except (MessageServiceError, SessionServiceError, CarrierBridgeError, TypeError, ValueError) as exc:
+            raise UIApiError("carrier_error", CARRIER_PUBLIC_ERROR) from exc
+        open_id = uuid.uuid4().hex
+        self._opened[open_id] = CachedOpenMessage(
+            message=opened,
+            opened_at=int(time.time()),
+        )
+        return self._opened_message_to_dict(open_id, opened)
+
+    def cmd_carrier_embed(
+        self,
+        cover_ref: str | None = None,
+        payload_ref: str | None = None,
+        payload_kind: str = "message",
+        carrier_kind: str = "png_lossless_v1",
+    ) -> dict[str, Any]:
+        if not cover_ref or not payload_ref:
+            raise UIApiError("file_ref_required", "Trusted file references are required.")
+        normalized_payload_kind = self._normalize_carrier_payload_kind(payload_kind)
+        cover_path = self._consume_file_ref(cover_ref, "carrier_cover")
+        payload_path = self._consume_file_ref(payload_ref, "carrier_payload")
+        try:
+            cover_bytes = read_path_limited(cover_path, MAX_CARRIER_FILE_BYTES, "Carrier file")
+            payload_bytes = read_path_limited(
+                payload_path,
+                self._carrier_payload_limit(normalized_payload_kind),
+                "Carrier payload",
+            )
+            output = self.services.carriers.embed_payload(
+                carrier_kind,
+                normalized_payload_kind,
+                payload_bytes,
+                cover_bytes,
+            )
+            native_save_token = self._issue_save_grant(
+                output.carrier_bytes,
+                output.filename or "carrier.png",
+            )
+        except (
+            CarrierBridgeError,
+            IngestionLimitError,
+            OSError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            raise UIApiError("carrier_error", CARRIER_PUBLIC_ERROR) from exc
+        return {
+            "carrier_kind": output.kind,
+            "native_save_token": native_save_token,
+            "filename": output.filename,
+            "mime_type": output.mime_type,
+            "warnings": list(output.warnings),
+        }
 
     def cmd_attachment_preview(self, open_id: str, attachment_id: str) -> dict[str, Any]:
         attachment = self._get_attachment(open_id, attachment_id)
@@ -631,12 +770,33 @@ class UIApi:
 
     def _reject_raw_path_params(self, method: str, params: dict[str, Any]) -> None:
         for field in RAW_PATH_PARAMS_BY_METHOD.get(method, set()):
-            if field in params:
+            if self._contains_param_name(params, field):
                 raise UIApiError("raw_path_rejected", RAW_PATH_REJECTED_MESSAGE)
 
     def _reject_raw_path_param(self, field: str, value: Any) -> None:
         if value is not None:
             raise UIApiError("raw_path_rejected", RAW_PATH_REJECTED_MESSAGE)
+
+    def _contains_param_name(self, value: Any, field: str) -> bool:
+        if isinstance(value, dict):
+            return field in value or any(
+                self._contains_param_name(nested, field)
+                for nested in value.values()
+            )
+        if isinstance(value, (list, tuple)):
+            return any(self._contains_param_name(nested, field) for nested in value)
+        return False
+
+    def _normalize_carrier_payload_kind(self, payload_kind: str) -> str:
+        normalized = str(payload_kind or "").strip()
+        if normalized not in {"setup", "message"}:
+            raise UIApiError("carrier_error", CARRIER_PUBLIC_ERROR)
+        return normalized
+
+    def _carrier_payload_limit(self, payload_kind: str) -> int:
+        if payload_kind == "setup":
+            return MAX_EXTRACTED_SETUP_BYTES
+        return MAX_EXTRACTED_MESSAGE_BYTES
 
     def _normalize_file_ref_purpose(self, purpose: str) -> str:
         normalized = str(purpose or "").strip()

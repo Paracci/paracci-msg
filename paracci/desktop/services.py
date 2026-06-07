@@ -38,6 +38,8 @@ from core.carrier import (
     CARRIER_PUBLIC_ERROR,
     MAX_CARRIER_FILE_BYTES,
     CarrierError,
+    CarrierOutput,
+    embed_envelope,
     extract_envelope,
 )
 from core.config import ParacciConfig
@@ -1237,6 +1239,27 @@ class ShieldService:
         return shield.get_system_info()
 
 
+class CarrierService:
+    """Internal service boundary for carrier operations."""
+
+    def embed_payload(
+        self,
+        carrier_kind: str,
+        payload_kind: str,
+        payload_bytes: bytes | bytearray | memoryview,
+        cover_bytes: bytes | bytearray | memoryview,
+    ) -> CarrierOutput:
+        try:
+            return embed_envelope(
+                carrier_kind,
+                payload_bytes,
+                carrier_bytes=cover_bytes,
+                payload_kind=payload_kind,
+            )
+        except (CarrierError, TypeError, ValueError) as exc:
+            raise CarrierBridgeError(CARRIER_PUBLIC_ERROR) from exc
+
+
 class NativeServices:
     """Composition root used by the Qt application."""
 
@@ -1244,6 +1267,7 @@ class NativeServices:
         self.data_dir = data_dir
         self.device = DeviceService(data_dir)
         self.settings = SettingsService()
+        self.carriers = CarrierService()
         self.sessions = SessionService(self.device)
         self.messages = MessageService(self.sessions, self.settings)
         self.i18n = I18nService(locale)

@@ -13,9 +13,11 @@ before carrier transport is exposed through user-facing flows.
   unsupported until a dedicated adapter and regressions are added.
 - An internal service bridge can extract supported carrier payloads into the
   existing setup import and message open services.
+- A headless trusted-ref command boundary exists for future native UI use.
+  Carrier commands consume one-shot trusted file references and return managed
+  save grants for output.
 - The current implementation does not add QR/Matrix logic, UI routes, frontend
-  controls, native-save integration, UIApi commands, file associations, or new
-  dependencies.
+  controls, public native-save routes, file associations, or new dependencies.
 
 ## Security Model
 
@@ -33,6 +35,11 @@ The internal service bridge does not auto-detect carrier files in normal
 Carrier failures must be stable and generic. Public errors must not include
 payload bytes, tokens, passphrases, decrypted content, raw carrier internals,
 filenames, or sensitive paths.
+
+Carrier import and export command helpers must use trusted file references for
+input. Carrier output must use managed save or download grant patterns, never
+caller-provided destination paths. Source carrier and cover files are not
+auto-deleted by carrier operations.
 
 ## Limits
 
