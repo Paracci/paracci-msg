@@ -90,6 +90,17 @@ def test_normal_paracci_flows_and_drop_targets_remain_primary():
     assert "url_for('main.session_export', sid=sid)" in SESSION_TEMPLATE
 
 
+def test_post_bond_composer_state_is_rendered_hidden_and_backend_driven():
+    assert 'id="bonded-checklist"{% if not meta.is_bonded %} hidden{% endif %}' in SESSION_TEMPLATE
+    assert 'id="bond-pending-composer"' in SESSION_TEMPLATE
+    assert '{% if meta.is_bonded %} hidden{% endif %}' in SESSION_TEMPLATE
+    assert 'id="message-composer"{% if meta.role == \'Y\' and not meta.is_bonded %} hidden{% endif %}' in SESSION_TEMPLATE
+    assert "if (data?.session_can_send !== true) return;" in SESSION_JS
+    assert "document.body.dataset.dropAttach = 'true';" in SESSION_JS
+    assert SESSION_JS.count("applyPostOpenSessionState(data);") == 2
+    assert "location.reload(" not in SESSION_JS
+
+
 def test_carrier_inputs_are_explicit_png_pickers_without_path_or_drop_fields():
     combined = SETUP_TEMPLATE + SESSION_TEMPLATE + SETUP_JS + SESSION_JS
 

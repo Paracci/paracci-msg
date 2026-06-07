@@ -248,8 +248,7 @@
 {% else %}
 
 <!-- ── SECURITY CHECKLIST ────────────────────────────────── -->
-{% if meta.is_bonded %}
-<details class="collapsible-card mb-5">
+<details class="collapsible-card mb-5" id="bonded-checklist"{% if not meta.is_bonded %} hidden{% endif %}>
   <summary class="collapsible-trigger">
     <span class="flex items-center gap-2">
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="18" height="18">
@@ -277,7 +276,6 @@
     </div>
   </div>
 </details>
-{% endif %}
 
 <!-- ── DYNAMIC ERROR CONTAINER ───────────────────────────── -->
 <div id="dynamic-error-container"></div>
@@ -322,8 +320,8 @@
       </div>
     </div>
     <div class="card-body">
-      {% if meta.role == 'Y' and not meta.is_bonded %}
-      <div class="text-center p-6 bg-warn-soft border-warn-soft rounded-lg flex flex-col items-center" style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2rem 1.5rem; border: 1px solid rgba(255, 179, 64, 0.15); background: rgba(255, 179, 64, 0.05); border-radius: var(--radius-lg); text-align: center;">
+      {% if meta.role == 'Y' %}
+      <div id="bond-pending-composer" class="text-center p-6 bg-warn-soft border-warn-soft rounded-lg flex flex-col items-center"{% if meta.is_bonded %} hidden{% endif %} style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2rem 1.5rem; border: 1px solid rgba(255, 179, 64, 0.15); background: rgba(255, 179, 64, 0.05); border-radius: var(--radius-lg); text-align: center;">
         <div class="icon-circle mb-4 bg-warn-soft text-warn" style="width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: rgba(255, 179, 64, 0.15); color: var(--state-warn-text, #ffb340);">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="24" height="24">
             <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
@@ -332,7 +330,8 @@
         <h3 class="mb-2 font-bold" style="color: var(--text-primary); font-size: var(--text-body-lg); font-weight: 700; margin-bottom: 0.5rem;">{{ _('session.bond_not_established_y') }}</h3>
         <p class="text-dim text-sm leading-relaxed" style="color: var(--text-tertiary); font-size: var(--text-body-sm); line-height: 1.5; margin: 0; max-width: 360px;">{{ _('session.waiting_initiator_msg_desc') }}</p>
       </div>
-      {% else %}
+      {% endif %}
+      <div id="message-composer"{% if meta.role == 'Y' and not meta.is_bonded %} hidden{% endif %}>
       <form method="POST" action="{{ url_for('main.session_seal', sid=sid) }}" enctype="multipart/form-data"
         id="seal-form">
 
@@ -394,7 +393,7 @@
         'download',
         'seal-form'
       ) }}
-      {% endif %}
+      </div>
     </div>
   </div>
 

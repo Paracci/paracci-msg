@@ -721,12 +721,15 @@ def register_native_file_path(path: str | Path, ttl=600, purpose: str | None = N
         raise NativeFileReferenceError("Missing native file path.")
     ref_id = str(uuid.uuid4())
     filename = sanitize_attachment_filename(Path(path_str).name)
-    NATIVE_FILE_REF_CACHE[ref_id] = {
+    entry = {
         "path": path_str,
         "filename": filename,
         "expires": time.time() + ttl,
         "purpose": normalized_purpose,
     }
+    if normalized_purpose == NATIVE_FILE_REF_PURPOSE_CARRIER_COVER:
+        entry["carrier_output_name"] = _carrier_filename_leaf(path_str)
+    NATIVE_FILE_REF_CACHE[ref_id] = entry
     return {"id": ref_id, "filename": filename}
 
 
@@ -785,6 +788,36 @@ class CarrierEmbedResult(NamedTuple):
     filename: str
 
 
+_TURKISH_FILENAME_TRANSLATION = str.maketrans({
+    "ı": "i",
+    "İ": "I",
+    "ğ": "g",
+    "Ğ": "G",
+    "ü": "u",
+    "Ü": "U",
+    "ş": "s",
+    "Ş": "S",
+    "ö": "o",
+    "Ö": "O",
+    "ç": "c",
+    "Ç": "C",
+})
+
+
+def _carrier_filename_leaf(value) -> str:
+    """Return only a bounded, control-free Unicode filename leaf."""
+    normalized = unicodedata.normalize("NFKC", str(value or ""))
+    normalized = "".join(
+        char for char in normalized
+        if not unicodedata.category(char).startswith("C")
+    )
+    leaf = normalized.replace("\\", "/").rsplit("/", 1)[-1]
+    if leaf.lower() == ".png":
+        return ""
+    leaf = leaf.strip(" .")
+    return leaf[: MAX_ATTACHMENT_FILENAME_LENGTH * 4]
+
+
 def _contains_raw_path_field(value) -> bool:
     if isinstance(value, dict):
         return any(
@@ -840,9 +873,14 @@ def _read_carrier_upload(field_name: str) -> CarrierRequestFile | None:
         return None
     buffer = BytesIO()
     copy_stream_limited(upload.stream, buffer, MAX_CARRIER_FILE_BYTES, "Carrier file")
+    filename = (
+        _carrier_filename_leaf(upload.filename)
+        if field_name == "cover_png"
+        else sanitize_attachment_filename(upload.filename, fallback="image.png")
+    )
     return CarrierRequestFile(
         file_bytes=buffer.getvalue(),
-        filename=sanitize_attachment_filename(upload.filename, fallback="image.png"),
+        filename=filename,
     )
 
 
@@ -853,9 +891,14 @@ def _read_carrier_native_ref(field_name: str, purpose: str) -> CarrierRequestFil
     entry = _consume_native_file_ref(ref_id, purpose)
     if not entry:
         raise CarrierRouteError()
+    filename = (
+        entry.get("carrier_output_name")
+        if purpose == NATIVE_FILE_REF_PURPOSE_CARRIER_COVER
+        else entry.get("filename")
+    )
     return CarrierRequestFile(
         file_bytes=read_path_limited(entry["path"], MAX_CARRIER_FILE_BYTES, "Carrier file"),
-        filename=sanitize_attachment_filename(entry.get("filename"), fallback="image.png"),
+        filename=filename or "image.png",
     )
 
 
@@ -904,9 +947,14 @@ def _cover_file_from_request() -> CarrierRequestFile:
 
 def _carrier_output_filename(cover_filename: str | None) -> str:
     fallback = "image-carrier.png"
-    safe_name = sanitize_attachment_filename(cover_filename, fallback="image.png")
-    stem = Path(safe_name).stem
-    ascii_stem = unicodedata.normalize("NFKD", stem).encode("ascii", "ignore").decode("ascii")
+    safe_name = _carrier_filename_leaf(cover_filename)
+    stem = safe_name[:-4] if safe_name.lower().endswith(".png") else Path(safe_name).stem
+    transliterated_stem = stem.translate(_TURKISH_FILENAME_TRANSLATION)
+    ascii_stem = (
+        unicodedata.normalize("NFKD", transliterated_stem)
+        .encode("ascii", "ignore")
+        .decode("ascii")
+    )
     slug = re.sub(r"[^A-Za-z0-9]+", "-", ascii_stem).strip("-._").lower()
     if not slug:
         slug = "image"
@@ -3087,6 +3135,7 @@ def _prepare_open_response(meta, opened, sid, is_ajax, secure_delete_warning=Non
         "msg_id_hex": opened.msg_id.hex(),
         "safety_code": safety_code,
         "rx_count": updated_meta.rx_count,
+        "session_can_send": updated_meta.can_send,
         "security_report": security_report,
         "secure_delete_warning": secure_delete_warning,
     }

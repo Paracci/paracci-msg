@@ -28,6 +28,22 @@ function makeHarness({ fetchImpl, nativeApi = null } = {}) {
     const objectUrls = [];
     const revokedUrls = [];
     const notices = [];
+    const consoleCalls = {
+        error: [],
+        log: [],
+        warn: []
+    };
+    const testConsole = {
+        error(...args) {
+            consoleCalls.error.push(args);
+        },
+        log(...args) {
+            consoleCalls.log.push(args);
+        },
+        warn(...args) {
+            consoleCalls.warn.push(args);
+        }
+    };
     class TestDataTransfer {
         constructor() {
             const files = [];
@@ -108,6 +124,7 @@ function makeHarness({ fetchImpl, nativeApi = null } = {}) {
     };
     const context = vm.createContext({
         Blob,
+        console: testConsole,
         document,
         window
     });
@@ -116,6 +133,7 @@ function makeHarness({ fetchImpl, nativeApi = null } = {}) {
     return {
         anchors,
         api: window.ParacciCarrierUI,
+        consoleCalls,
         notices,
         objectUrls,
         revokedUrls,
@@ -234,14 +252,21 @@ test('network and backend failures do not expose sentinel details', async () => 
             return true;
         }
     );
+    assert.deepEqual(network.consoleCalls, { error: [], log: [], warn: [] });
 
     let jsonRead = false;
+    let textRead = false;
     const backend = makeHarness({
         fetchImpl: async () => ({
             ok: false,
+            status: 400,
             async json() {
                 jsonRead = true;
                 return { error: 'backend-magic-checksum-sentinel' };
+            },
+            async text() {
+                textRead = true;
+                return 'backend-magic-checksum-sentinel';
             }
         })
     });
@@ -250,6 +275,8 @@ test('network and backend failures do not expose sentinel details', async () => 
         /Localized generic carrier error/
     );
     assert.equal(jsonRead, false);
+    assert.equal(textRead, false);
+    assert.deepEqual(backend.consoleCalls, { error: [], log: [], warn: [] });
 });
 
 test('carrier imports follow only authenticated redirect navigation', async () => {
@@ -366,6 +393,7 @@ test('capacity failures use localized safe text without reading backend details'
     );
     assert.equal(jsonRead, false);
     assert.equal(textRead, false);
+    assert.deepEqual(harness.consoleCalls, { error: [], log: [], warn: [] });
 });
 
 test('carrier filenames reject path-like or unsafe response values', () => {

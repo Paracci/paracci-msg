@@ -1,0 +1,126 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import test from 'node:test';
+import vm from 'node:vm';
+import { fileURLToPath } from 'node:url';
+
+const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
+const SESSION_JS = fs.readFileSync(
+    path.resolve(TEST_DIR, '../app/static/js/session.js'),
+    'utf8'
+);
+
+function makeHarness() {
+    const navigationCalls = [];
+    const elements = new Map([
+        ['bond-pending-composer', { hidden: false }],
+        ['message-composer', { hidden: true }],
+        ['y-responder-warning', { hidden: false }],
+        ['bonded-checklist', { hidden: true }],
+        ['rendered-message', { textContent: 'opened-message-sentinel' }]
+    ]);
+    const document = {
+        body: { dataset: { dropAttach: 'false' } },
+        addEventListener() {},
+        getElementById(id) {
+            return elements.get(id) || null;
+        },
+        querySelectorAll() {
+            return [];
+        }
+    };
+    const window = {
+        addEventListener() {},
+        location: {
+            assign(value) {
+                navigationCalls.push(['assign', value]);
+            },
+            reload() {
+                navigationCalls.push(['reload']);
+            }
+        }
+    };
+    const context = vm.createContext({
+        Blob,
+        clearInterval() {},
+        clearTimeout() {},
+        console: { error() {}, log() {}, warn() {} },
+        document,
+        fetch: async () => ({ ok: true, json: async () => ({}) }),
+        FormData,
+        localStorage: {
+            getItem() {
+                return null;
+            },
+            setItem() {}
+        },
+        navigator: {},
+        setInterval() {
+            return 1;
+        },
+        setTimeout() {
+            return 1;
+        },
+        URL,
+        window
+    });
+    vm.runInContext(SESSION_JS, context, { filename: 'session.js' });
+
+    return {
+        applyState: context.applyPostOpenSessionState,
+        document,
+        elements,
+        navigationCalls
+    };
+}
+
+test('authoritative post-open state unlocks the composer without disturbing the opened message', () => {
+    const harness = makeHarness();
+    const openedMessage = harness.elements.get('rendered-message');
+
+    harness.applyState({ session_can_send: true });
+
+    assert.equal(harness.elements.get('bond-pending-composer').hidden, true);
+    assert.equal(harness.elements.get('message-composer').hidden, false);
+    assert.equal(harness.elements.get('y-responder-warning').hidden, true);
+    assert.equal(harness.elements.get('bonded-checklist').hidden, false);
+    assert.equal(harness.document.body.dataset.dropAttach, 'true');
+    assert.equal(openedMessage.textContent, 'opened-message-sentinel');
+    assert.deepEqual(harness.navigationCalls, []);
+});
+
+test('missing or false session send state leaves the bond-locked UI unchanged', () => {
+    for (const payload of [{}, { session_can_send: false }]) {
+        const harness = makeHarness();
+
+        harness.applyState(payload);
+
+        assert.equal(harness.elements.get('bond-pending-composer').hidden, false);
+        assert.equal(harness.elements.get('message-composer').hidden, true);
+        assert.equal(harness.elements.get('y-responder-warning').hidden, false);
+        assert.equal(harness.elements.get('bonded-checklist').hidden, true);
+        assert.equal(harness.document.body.dataset.dropAttach, 'false');
+        assert.equal(
+            harness.elements.get('rendered-message').textContent,
+            'opened-message-sentinel'
+        );
+        assert.deepEqual(harness.navigationCalls, []);
+    }
+});
+
+test('normal and carrier open paths apply state only after rendering decrypted content', () => {
+    const orderedCalls = SESSION_JS.match(
+        /renderDecryptedMessage\(data\);\s*applyPostOpenSessionState\(data\);/g
+    ) || [];
+    assert.equal(orderedCalls.length, 2);
+
+    const helper = SESSION_JS.match(
+        /function applyPostOpenSessionState\(data\) \{[\s\S]*?\n\}/
+    );
+    assert.ok(helper);
+    assert.doesNotMatch(
+        helper[0],
+        /renderDecryptedMessage|location\.|replaceChildren|textContent|innerHTML/
+    );
+});

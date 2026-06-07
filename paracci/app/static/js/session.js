@@ -307,6 +307,7 @@ function setupCarrierControls() {
                 if (operation === 'open') {
                     const data = await carrierUi.submitOpen(url, formData);
                     renderDecryptedMessage(data);
+                    applyPostOpenSessionState(data);
                     document.getElementById('message-view-container')?.scrollIntoView({ behavior: 'smooth' });
                     return;
                 }
@@ -318,6 +319,21 @@ function setupCarrierControls() {
             }
         });
     });
+}
+
+function applyPostOpenSessionState(data) {
+    if (data?.session_can_send !== true) return;
+
+    const pendingComposer = document.getElementById('bond-pending-composer');
+    const composer = document.getElementById('message-composer');
+    const responderWarning = document.getElementById('y-responder-warning');
+    const bondedChecklist = document.getElementById('bonded-checklist');
+
+    if (pendingComposer) pendingComposer.hidden = true;
+    if (composer) composer.hidden = false;
+    if (responderWarning) responderWarning.hidden = true;
+    if (bondedChecklist) bondedChecklist.hidden = false;
+    if (document.body?.dataset) document.body.dataset.dropAttach = 'true';
 }
 
 function updateAttachmentBadge() {
@@ -572,6 +588,7 @@ function setupForms() {
             }
 
             renderDecryptedMessage(data);
+            applyPostOpenSessionState(data);
             isMessageOpen = true;
             this.reset();
             const nativeFileId = document.getElementById('open-native-file-id');

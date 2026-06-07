@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from core.carrier import CARRIER_PUBLIC_ERROR, PNG_LOSSLESS_V1, QR_MATRIX_V1  # noqa: E402
 from core.carrier import registry as carrier_registry  # noqa: E402
 from core.envelope import open_envelope  # noqa: E402
-from core.package import extract_package  # noqa: E402
+from core.package import extract_package, validate_native_download_filename  # noqa: E402
 from test_loopback_security import (  # noqa: E402
     HOST,
     ORIGIN,
@@ -275,6 +275,8 @@ def test_normal_paracci_seal_and_export_routes_remain_unchanged(tmp_path, monkey
     assert opened.status_code == 200
     assert opened.get_json()["success"] is True
     assert opened.get_json()["text"] == "normal route"
+    assert opened.get_json()["session_can_send"] is True
+    assert _load_meta(ag_app, meta_y).can_send is True
 
     exported = client.get(
         f"/session/{meta_y.session_id.hex()}/export",
@@ -306,12 +308,13 @@ def test_carrier_export_uses_purpose_scoped_ref_and_native_grant(tmp_path, monke
     assert routes_module._resolve_native_file_ref(normal_ref["id"]) is not None
     assert routes_module._resolve_native_file_ref(normal_ref["id"]) is not None
 
-    cover_path = tmp_path / "Holiday Photo.PNG"
+    cover_path = tmp_path / "ışıklı örtü.png"
     cover_path.write_bytes(png_cover_bytes())
     cover_ref = routes_module.register_native_file_path(
         cover_path,
         purpose=routes_module.NATIVE_FILE_REF_PURPOSE_CARRIER_COVER,
     )
+    assert set(cover_ref) == {"id", "filename"}
 
     response = client.post(
         f"/session/{meta_y.session_id.hex()}/carrier/export",
@@ -322,10 +325,11 @@ def test_carrier_export_uses_purpose_scoped_ref_and_native_grant(tmp_path, monke
 
     assert response.status_code == 200
     payload = response.get_json()
-    assert payload["filename"] == "holiday-photo-carrier.png"
+    assert payload["filename"] == "isikli-ortu-carrier.png"
     grant = grants.consume(payload["native_save_token"])
     assert grant is not None
-    assert grant.filename == "holiday-photo-carrier.png"
+    assert grant.filename == "isikli-ortu-carrier.png"
+    assert validate_native_download_filename(grant.filename) == grant.filename
     assert grant.file_bytes.startswith(PNG_SIGNATURE)
     assert grants.consume(payload["native_save_token"]) is None
     assert cover_path.exists()
@@ -355,7 +359,7 @@ def test_carrier_seal_returns_png_bytes_and_keeps_qr_unsupported(tmp_path, monke
         data={
             "message": "carrier sealed",
             "ttl_seconds": "0",
-            "cover_png": multipart_file(png_cover_bytes(), "Holiday Photo.PNG"),
+            "cover_png": multipart_file(png_cover_bytes(), "güvenli görsel.png"),
         },
         headers=auth_headers(client),
         content_type="multipart/form-data",
@@ -363,7 +367,7 @@ def test_carrier_seal_returns_png_bytes_and_keeps_qr_unsupported(tmp_path, monke
 
     assert sealed.status_code == 200
     assert sealed.data.startswith(PNG_SIGNATURE)
-    assert "holiday-photo-carrier.png" in sealed.headers["Content-Disposition"]
+    assert "guvenli-gorsel-carrier.png" in sealed.headers["Content-Disposition"]
     extracted = carrier_registry.extract_envelope(PNG_LOSSLESS_V1, sealed.data).envelope_bytes
     assert extracted.startswith(b"PARC")
     assert extracted[5] == 0x20
@@ -552,9 +556,16 @@ def test_carrier_export_uses_422_only_for_insufficient_embed_capacity(
     ("source_name", "expected"),
     [
         ("Holiday Photo.PNG", "holiday-photo-carrier.png"),
+        ("güvenli görsel.png", "guvenli-gorsel-carrier.png"),
+        ("ışıklı örtü.png", "isikli-ortu-carrier.png"),
+        ("özel_çalışma.PNG", "ozel-calisma-carrier.png"),
+        ("Résumé_ışık_日本.png", "resume-isik-carrier.png"),
         ("../../Invoice Scan.png", "invoice-scan-carrier.png"),
-        (r"<local-user-path>\CON.png", "con-carrier.png"),
+        (r"X:\folder\özel çalışma.png", "ozel-calisma-carrier.png"),
+        (r"X:\folder\CON.png", "con-carrier.png"),
+        ("folder/../control\x00name.png", "controlname-carrier.png"),
         ("秘密.png", "image-carrier.png"),
+        (".png", "image-carrier.png"),
         ("", "image-carrier.png"),
         ("a" * 300 + ".png", "a" * 168 + "-carrier.png"),
     ],
@@ -568,6 +579,7 @@ def test_carrier_output_filename_is_safe_and_cover_derived(source_name, expected
     assert "/" not in output
     assert "\\" not in output
     assert len(output) <= 180
+    assert validate_native_download_filename(output) == output
 
 
 @oqs_required
@@ -629,6 +641,8 @@ def test_carrier_open_uses_existing_validation_and_generic_failures(tmp_path, mo
     assert opened.status_code == 200
     assert opened.get_json()["success"] is True
     assert opened.get_json()["text"] == "opened through carrier route"
+    assert opened.get_json()["session_can_send"] is True
+    assert _load_meta(ag_app, meta_y).can_send is True
     assert carrier_path.exists()
 
     replay_ref = routes_module.register_native_file_path(
@@ -642,4 +656,5 @@ def test_carrier_open_uses_existing_validation_and_generic_failures(tmp_path, mo
         headers=auth_headers(client),
     )
     assert_generic_carrier_response(replayed, "already", "expired", "replay")
+    assert "session_can_send" not in replayed.get_data(as_text=True)
     assert carrier_path.exists()
