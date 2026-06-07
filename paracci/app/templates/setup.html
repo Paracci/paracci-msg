@@ -219,26 +219,42 @@
 
       <details class="carrier-panel mt-6" id="setup-carrier-panel">
         <summary class="carrier-panel-summary">
-          <span>
+          <span class="carrier-panel-badge" aria-hidden="true">PNG</span>
+          <span class="carrier-panel-summary-copy">
             <strong>{{ _('carrier.panel_title') }}</strong>
             <small>{{ _('carrier.panel_optional') }}</small>
           </span>
           <span class="carrier-panel-chevron" aria-hidden="true">+</span>
         </summary>
         <div class="carrier-panel-body">
-          <p class="carrier-note">{{ _('carrier.outer_wrapper_note') }}</p>
-          <p class="carrier-warning">{{ _('carrier.recompression_warning') }}</p>
-          <div class="form-group">
-            <label for="setup-carrier-png">{{ _('carrier.carrier_file_label') }}</label>
-            <input type="file" id="setup-carrier-png" accept="image/png,.png">
+          <div class="carrier-guidance">
+            <p class="carrier-note">{{ _('carrier.outer_wrapper_note') }}</p>
+            <p class="carrier-warning">{{ _('carrier.recompression_warning') }}</p>
+          </div>
+          <div class="carrier-file-field">
+            <span class="carrier-file-label">{{ _('carrier.carrier_file_label') }}</span>
+            <div class="carrier-file-control">
+              <input type="file"
+                     class="carrier-file-input"
+                     id="setup-carrier-png"
+                     accept="image/png,.png">
+              <label class="btn btn-secondary btn-sm carrier-file-trigger" for="setup-carrier-png">
+                {{ _('carrier.choose_png') }}
+              </label>
+              <span class="carrier-file-name"
+                    data-carrier-file-name
+                    data-empty-label="{{ _('carrier.no_png_selected') }}">{{ _('carrier.no_png_selected') }}</span>
+            </div>
           </div>
           <div id="setup-carrier-error" class="carrier-error" role="alert" aria-live="polite"></div>
-          <button type="button"
-                  class="btn btn-secondary"
-                  id="setup-carrier-import"
-                  data-carrier-url="{{ url_for('main.session_import_carrier') }}">
-            {{ _('carrier.extract_setup') }}
-          </button>
+          <div class="carrier-panel-actions">
+            <button type="button"
+                    class="btn btn-secondary"
+                    id="setup-carrier-import"
+                    data-carrier-url="{{ url_for('main.session_import_carrier') }}">
+              {{ _('carrier.extract_setup') }}
+            </button>
+          </div>
         </div>
       </details>
 

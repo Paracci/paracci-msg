@@ -7,31 +7,45 @@
          data-carrier-url="{{ action_url }}"
          {% if source_form_id %}data-carrier-source-form="{{ source_form_id }}"{% endif %}>
   <summary class="carrier-panel-summary">
-    <span>
+    <span class="carrier-panel-badge" aria-hidden="true">PNG</span>
+    <span class="carrier-panel-summary-copy">
       <strong>{{ _('carrier.panel_title') }}</strong>
       <small>{{ _('carrier.panel_optional') }}</small>
     </span>
     <span class="carrier-panel-chevron" aria-hidden="true">+</span>
   </summary>
   <div class="carrier-panel-body">
-    <p class="carrier-note">{{ _('carrier.outer_wrapper_note') }}</p>
-    <p class="carrier-warning">{{ _('carrier.recompression_warning') }}</p>
-    {% if operation == 'download' %}
-      <p class="carrier-capacity-hint">{{ _('carrier.capacity_hint') }}</p>
-    {% endif %}
-    <div class="form-group">
-      <label for="{{ panel_id }}-png">
+    <div class="carrier-guidance">
+      <p class="carrier-note">{{ _('carrier.outer_wrapper_note') }}</p>
+      <p class="carrier-warning">{{ _('carrier.recompression_warning') }}</p>
+      {% if operation == 'download' %}
+        <p class="carrier-capacity-hint">{{ _('carrier.capacity_hint') }}</p>
+      {% endif %}
+    </div>
+    <div class="carrier-file-field">
+      <span class="carrier-file-label">
         {{ _('carrier.cover_file_label') if operation == 'download' else _('carrier.carrier_file_label') }}
-      </label>
-      <input type="file"
-             id="{{ panel_id }}-png"
-             accept="image/png,.png"
-             data-carrier-file>
+      </span>
+      <div class="carrier-file-control">
+        <input type="file"
+               class="carrier-file-input"
+               id="{{ panel_id }}-png"
+               accept="image/png,.png"
+               data-carrier-file>
+        <label class="btn btn-secondary btn-sm carrier-file-trigger" for="{{ panel_id }}-png">
+          {{ _('carrier.choose_png') }}
+        </label>
+        <span class="carrier-file-name"
+              data-carrier-file-name
+              data-empty-label="{{ _('carrier.no_png_selected') }}">{{ _('carrier.no_png_selected') }}</span>
+      </div>
     </div>
     <div class="carrier-error" data-carrier-error role="alert" aria-live="polite"></div>
-    <button type="button" class="btn btn-secondary" data-carrier-submit>
-      {{ action_label }}
-    </button>
+    <div class="carrier-panel-actions">
+      <button type="button" class="btn btn-secondary" data-carrier-submit>
+        {{ action_label }}
+      </button>
+    </div>
   </div>
 </details>
 {% endmacro %}

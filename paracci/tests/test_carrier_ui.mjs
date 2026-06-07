@@ -66,6 +66,7 @@ function makeHarness({ fetchImpl, nativeApi = null } = {}) {
     const window = {
         PARACCI_I18N: {
             carrier_generic_error: 'Localized generic carrier error.',
+            carrier_capacity_error: 'Localized capacity error.',
             carrier_processing: 'Carrier busy.'
         },
         URL: TestURL,
@@ -173,6 +174,13 @@ test('browser carrier output uses a blob URL download', async () => {
     const harness = makeHarness({
         fetchImpl: async () => ({
             ok: true,
+            headers: {
+                get(name) {
+                    return name === 'Content-Disposition'
+                        ? 'attachment; filename="holiday-photo-carrier.png"'
+                        : null;
+                }
+            },
             async blob() {
                 return blob;
             }
@@ -182,7 +190,7 @@ test('browser carrier output uses a blob URL download', async () => {
     await harness.api.submitDownload('/session/id/carrier/export', {});
 
     assert.equal(harness.anchors.length, 1);
-    assert.equal(harness.anchors[0].download, 'carrier.png');
+    assert.equal(harness.anchors[0].download, 'holiday-photo-carrier.png');
     assert.equal(harness.anchors[0].clicked, true);
     assert.equal(harness.anchors[0].removed, true);
     assert.equal(harness.objectUrls[0].blob, blob);
@@ -205,7 +213,10 @@ test('native carrier output consumes the existing one-shot save grant', async ()
             return {
                 ok: true,
                 async json() {
-                    return { native_save_token: 'one-shot-grant' };
+                    return {
+                        native_save_token: 'one-shot-grant',
+                        filename: 'holiday-photo-carrier.png'
+                    };
                 }
             };
         }
@@ -219,9 +230,74 @@ test('native carrier output consumes the existing one-shot save grant', async ()
         loopbackToken: 'loopback-token'
     }]);
     assert.deepEqual(harness.notices, [{
-        filename: 'carrier.png',
-        savedPath: null
+        filename: 'holiday-photo-carrier.png',
+        savedPath: 'managed-output'
     }]);
+});
+
+test('capacity failures use localized safe text without reading backend details', async () => {
+    let jsonRead = false;
+    let textRead = false;
+    const harness = makeHarness({
+        fetchImpl: async () => ({
+            ok: false,
+            status: 422,
+            async json() {
+                jsonRead = true;
+                return { error: 'capacity-byte-count-path-sentinel' };
+            },
+            async text() {
+                textRead = true;
+                return 'capacity-byte-count-path-sentinel';
+            }
+        })
+    });
+
+    await assert.rejects(
+        harness.api.submitDownload('/session/id/carrier/seal', {}),
+        error => {
+            assert.equal(error.kind, 'capacity');
+            assert.equal(error.message, 'Localized capacity error.');
+            assert.doesNotMatch(error.message, /byte|count|path|sentinel/);
+            return true;
+        }
+    );
+    assert.equal(jsonRead, false);
+    assert.equal(textRead, false);
+});
+
+test('carrier filenames reject path-like or unsafe response values', () => {
+    const { api } = makeHarness();
+
+    assert.equal(
+        api.safePngFilename('attachment; filename="holiday-photo-carrier.png"'),
+        'holiday-photo-carrier.png'
+    );
+    assert.equal(api.safePngFilename('../../private.png'), 'image-carrier.png');
+    assert.equal(api.safePngFilename('token sentinel.txt'), 'image-carrier.png');
+});
+
+test('selected carrier filenames render through textContent', () => {
+    const { api } = makeHarness();
+    const output = {
+        dataset: { emptyLabel: 'No PNG selected' },
+        textContent: ''
+    };
+    const input = {
+        files: [{ name: '<img src=x onerror=token-sentinel>.png' }],
+        closest() {
+            return {
+                querySelector() {
+                    return output;
+                }
+            };
+        }
+    };
+
+    api.updateSelectedFileName(input);
+
+    assert.equal(output.textContent, '<img src=x onerror=token-sentinel>.png');
+    assert.equal('innerHTML' in output, false);
 });
 
 test('page wiring uses explicit multipart carrier fields only', () => {
@@ -230,6 +306,16 @@ test('page wiring uses explicit multipart carrier fields only', () => {
     assert.match(SETUP_JS, /formData\.set\('carrier_png'/);
     assert.match(SESSION_JS, /formData\.set\('carrier_png'/);
     assert.match(SESSION_JS, /formData\.set\('cover_png'/);
+    assert.match(SESSION_JS, /new FormData\(sourceForm\)/);
+    for (const requiredField of [
+        'message',
+        'ttl_seconds',
+        'allow_download',
+        'attachments',
+        'staged_attachment_ids'
+    ]) {
+        assert.doesNotMatch(SESSION_JS, new RegExp(`formData\\.delete\\('${requiredField}'\\)`));
+    }
     assert.match(CARRIER_JS, /png_lossless_v1/);
 
     const combined = CARRIER_JS + SETUP_JS + SESSION_JS;

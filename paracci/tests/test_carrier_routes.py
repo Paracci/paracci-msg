@@ -12,6 +12,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.carrier import CARRIER_PUBLIC_ERROR, PNG_LOSSLESS_V1, QR_MATRIX_V1  # noqa: E402
 from core.carrier import registry as carrier_registry  # noqa: E402
+from core.envelope import open_envelope  # noqa: E402
+from core.package import extract_package  # noqa: E402
 from test_loopback_security import (  # noqa: E402
     HOST,
     ORIGIN,
@@ -304,7 +306,7 @@ def test_carrier_export_uses_purpose_scoped_ref_and_native_grant(tmp_path, monke
     assert routes_module._resolve_native_file_ref(normal_ref["id"]) is not None
     assert routes_module._resolve_native_file_ref(normal_ref["id"]) is not None
 
-    cover_path = tmp_path / "cover.png"
+    cover_path = tmp_path / "Holiday Photo.PNG"
     cover_path.write_bytes(png_cover_bytes())
     cover_ref = routes_module.register_native_file_path(
         cover_path,
@@ -320,10 +322,10 @@ def test_carrier_export_uses_purpose_scoped_ref_and_native_grant(tmp_path, monke
 
     assert response.status_code == 200
     payload = response.get_json()
-    assert payload["filename"] == "carrier.png"
+    assert payload["filename"] == "holiday-photo-carrier.png"
     grant = grants.consume(payload["native_save_token"])
     assert grant is not None
-    assert grant.filename == "carrier.png"
+    assert grant.filename == "holiday-photo-carrier.png"
     assert grant.file_bytes.startswith(PNG_SIGNATURE)
     assert grants.consume(payload["native_save_token"]) is None
     assert cover_path.exists()
@@ -353,7 +355,7 @@ def test_carrier_seal_returns_png_bytes_and_keeps_qr_unsupported(tmp_path, monke
         data={
             "message": "carrier sealed",
             "ttl_seconds": "0",
-            "cover_png": multipart_file(png_cover_bytes(), "cover.png"),
+            "cover_png": multipart_file(png_cover_bytes(), "Holiday Photo.PNG"),
         },
         headers=auth_headers(client),
         content_type="multipart/form-data",
@@ -361,6 +363,7 @@ def test_carrier_seal_returns_png_bytes_and_keeps_qr_unsupported(tmp_path, monke
 
     assert sealed.status_code == 200
     assert sealed.data.startswith(PNG_SIGNATURE)
+    assert "holiday-photo-carrier.png" in sealed.headers["Content-Disposition"]
     extracted = carrier_registry.extract_envelope(PNG_LOSSLESS_V1, sealed.data).envelope_bytes
     assert extracted.startswith(b"PARC")
     assert extracted[5] == 0x20
@@ -382,6 +385,189 @@ def test_carrier_seal_returns_png_bytes_and_keeps_qr_unsupported(tmp_path, monke
 
     assert_generic_carrier_response(unsupported, QR_MATRIX_V1)
     assert _load_meta(ag_app, meta_x).tx_count == meta_after.tx_count
+
+
+@pytest.mark.parametrize(
+    ("allow_download", "attachment_source"),
+    [
+        (False, "none"),
+        (True, "none"),
+        (False, "browser"),
+        (False, "staged"),
+        (True, "browser"),
+    ],
+)
+@oqs_required
+def test_carrier_seal_matches_normal_message_fields(
+    tmp_path,
+    monkeypatch,
+    allow_download,
+    attachment_source,
+):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    import app.routes as routes_module
+
+    client = flask_app.test_client()
+    bootstrap(client)
+    _unlock_test_client(ag_app, client)
+    meta_x, meta_y = _make_active_handshake()
+    _save_meta(ag_app, meta_x)
+
+    data = {
+        "message": "carrier parity",
+        "ttl_seconds": "3600",
+        "cover_png": multipart_file(png_cover_bytes(), "Travel Scan.PNG"),
+    }
+    if allow_download:
+        data["allow_download"] = "on"
+    expected_attachment = None
+    selected_source = None
+    if attachment_source == "browser":
+        expected_attachment = ("browser-note.txt", b"browser attachment bytes")
+        data["attachments"] = multipart_file(expected_attachment[1], expected_attachment[0])
+    elif attachment_source == "staged":
+        selected_source = tmp_path / "staged-note.txt"
+        selected_source.write_bytes(b"staged attachment bytes")
+        staged = routes_module.stage_native_attachment_paths([selected_source])
+        expected_attachment = ("staged-note.txt", b"staged attachment bytes")
+        data["staged_attachment_ids"] = staged[0]["id"]
+
+    response = client.post(
+        f"/session/{meta_x.session_id.hex()}/carrier/seal",
+        base_url=ORIGIN,
+        data=data,
+        headers=auth_headers(client),
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 200
+    if selected_source is not None:
+        assert selected_source.exists()
+    extracted = carrier_registry.extract_envelope(
+        PNG_LOSSLESS_V1,
+        response.data,
+    ).envelope_bytes
+    opened = open_envelope(extracted, meta_y)
+    package = extract_package(bytes(opened.payload))
+    try:
+        assert package.text == "carrier parity"
+        assert opened.allow_download is allow_download
+        assert package.allow_download is allow_download
+        if expected_attachment is None:
+            assert package.attachments == []
+        else:
+            assert len(package.attachments) == 1
+            assert package.attachments[0].filename == expected_attachment[0]
+            assert package.attachments[0].content == expected_attachment[1]
+    finally:
+        for attachment in package.attachments:
+            Path(attachment.content_path).unlink(missing_ok=True)
+
+
+@oqs_required
+def test_carrier_seal_insufficient_capacity_is_generic_422_without_state_change(
+    tmp_path,
+    monkeypatch,
+):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    client = flask_app.test_client()
+    bootstrap(client)
+    _unlock_test_client(ag_app, client)
+    meta_x, _meta_y = _make_active_handshake()
+    _save_meta(ag_app, meta_x)
+
+    sentinel_name = "capacity-filename-sentinel.png"
+    response = client.post(
+        f"/session/{meta_x.session_id.hex()}/carrier/seal",
+        base_url=ORIGIN,
+        data={
+            "message": "capacity payload sentinel",
+            "ttl_seconds": "0",
+            "cover_png": multipart_file(png_cover_bytes((32, 32)), sentinel_name),
+        },
+        headers=auth_headers(client),
+        content_type="multipart/form-data",
+    )
+
+    assert_generic_carrier_response(
+        response,
+        sentinel_name,
+        "capacity payload sentinel",
+        status=422,
+    )
+    assert _load_meta(ag_app, meta_x).tx_count == meta_x.tx_count
+
+
+@oqs_required
+def test_carrier_export_uses_422_only_for_insufficient_embed_capacity(
+    tmp_path,
+    monkeypatch,
+):
+    ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
+    client = flask_app.test_client()
+    bootstrap(client)
+    _unlock_test_client(ag_app, client)
+    _meta_x, meta_y = _make_active_handshake()
+    _save_meta(ag_app, meta_y)
+
+    insufficient = client.post(
+        f"/session/{meta_y.session_id.hex()}/carrier/export",
+        base_url=ORIGIN,
+        data={
+            "cover_png": multipart_file(
+                png_cover_bytes((32, 32)),
+                "small-cover-sentinel.png",
+            ),
+        },
+        headers=auth_headers(client),
+        content_type="multipart/form-data",
+    )
+    assert_generic_carrier_response(
+        insufficient,
+        "small-cover-sentinel.png",
+        status=422,
+    )
+
+    invalid = client.post(
+        f"/session/{meta_y.session_id.hex()}/carrier/export",
+        base_url=ORIGIN,
+        data={
+            "cover_png": multipart_file(
+                b"invalid-image-internals-sentinel",
+                "invalid-cover-sentinel.png",
+            ),
+        },
+        headers=auth_headers(client),
+        content_type="multipart/form-data",
+    )
+    assert_generic_carrier_response(
+        invalid,
+        "invalid-image-internals-sentinel",
+        "invalid-cover-sentinel.png",
+        status=400,
+    )
+
+
+@pytest.mark.parametrize(
+    ("source_name", "expected"),
+    [
+        ("Holiday Photo.PNG", "holiday-photo-carrier.png"),
+        ("../../Invoice Scan.png", "invoice-scan-carrier.png"),
+        (r"<local-user-path>\CON.png", "con-carrier.png"),
+        ("秘密.png", "image-carrier.png"),
+        ("", "image-carrier.png"),
+        ("a" * 300 + ".png", "a" * 168 + "-carrier.png"),
+    ],
+)
+def test_carrier_output_filename_is_safe_and_cover_derived(source_name, expected):
+    import app.routes as routes_module
+
+    output = routes_module._carrier_output_filename(source_name)
+
+    assert output == expected
+    assert "/" not in output
+    assert "\\" not in output
+    assert len(output) <= 180
 
 
 @oqs_required

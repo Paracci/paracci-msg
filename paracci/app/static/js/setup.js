@@ -128,7 +128,10 @@ function setupCarrierImport(importForm) {
     const errorContainer = document.getElementById('setup-carrier-error');
     if (!carrierUi || !importForm || !button || !fileInput) return;
 
-    fileInput.addEventListener('change', () => carrierUi.clearError(errorContainer));
+    fileInput.addEventListener('change', () => {
+        carrierUi.clearError(errorContainer);
+        carrierUi.updateSelectedFileName(fileInput);
+    });
     button.addEventListener('click', async () => {
         carrierUi.clearError(errorContainer);
         const labelInput = importForm.querySelector('[name="label"]');

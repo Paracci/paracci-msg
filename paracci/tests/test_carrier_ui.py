@@ -26,12 +26,15 @@ EXPECTED_CARRIER_KEYS = {
     "capacity_hint",
     "cover_file_label",
     "carrier_file_label",
+    "choose_png",
+    "no_png_selected",
     "extract_setup",
     "extract_responder",
     "extract_message",
     "export_setup",
     "export_responder",
     "export_message",
+    "insufficient_capacity",
     "generic_error",
     "processing",
 }
@@ -55,6 +58,10 @@ def test_carrier_controls_are_collapsed_secondary_and_explicit():
     assert "carrier.recompression_warning" in SETUP_TEMPLATE
     assert "carrier.recompression_warning" in SESSION_TEMPLATE
     assert "carrier.panel_optional" in combined
+    assert "carrier.choose_png" in combined
+    assert "carrier.no_png_selected" in combined
+    assert "carrier-panel-badge" in combined
+    assert "carrier-file-control" in combined
 
     for endpoint in (
         "main.session_import_carrier",
@@ -96,7 +103,10 @@ def test_carrier_inputs_are_explicit_png_pickers_without_path_or_drop_fields():
     assert 'name="carrier_png"' not in combined
     assert 'name="cover_png"' not in combined
 
-    carrier_input = re.search(r'<input type="file"[^>]+data-carrier-file[^>]*>', SESSION_TEMPLATE)
+    carrier_input = re.search(
+        r'<input type="file"[^>]+data-carrier-file[^>]*>',
+        SESSION_TEMPLATE,
+    )
     assert carrier_input
     assert "data-drop-target" not in carrier_input.group(0)
 
@@ -117,7 +127,8 @@ def test_normal_drop_resolver_does_not_detect_png_carriers():
 def test_carrier_frontend_uses_safe_generic_errors_and_managed_downloads():
     combined = CARRIER_JS + SETUP_JS + SESSION_JS
 
-    assert "alert.textContent = genericErrorText();" in CARRIER_JS
+    assert "alert.textContent = error?.kind === 'capacity'" in CARRIER_JS
+    assert ": genericErrorText();" in CARRIER_JS
     assert "response.text(" not in CARRIER_JS
     assert "data.error" not in CARRIER_JS
     assert "console." not in CARRIER_JS
@@ -127,7 +138,13 @@ def test_carrier_frontend_uses_safe_generic_errors_and_managed_downloads():
         assert forbidden not in combined
     assert "qr_matrix_v1" not in combined
     assert "carrier_generic_error" in BASE_TEMPLATE
+    assert "carrier_capacity_error" in BASE_TEMPLATE
     assert "carrier_processing" in BASE_TEMPLATE
+    assert "response.text(" not in CARRIER_JS
+    assert "response.json(" in CARRIER_JS
+    assert "data-carrier-file-name" in SETUP_TEMPLATE
+    assert "data-carrier-file-name" in SESSION_TEMPLATE
+    assert "output.textContent =" in CARRIER_JS
 
 
 def test_all_locales_define_conservative_carrier_strings():
@@ -150,3 +167,4 @@ def test_all_locales_define_conservative_carrier_strings():
     assert "resize" in english["recompression_warning"]
     assert "convert" in english["recompression_warning"]
     assert "outer transport wrapper" in english["outer_wrapper_note"]
+    assert "does not have enough room" in english["insufficient_capacity"]

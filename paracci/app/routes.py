@@ -55,6 +55,7 @@ from core.carrier import (
     extract_envelope,
 )
 from core.package import (
+    MAX_ATTACHMENT_FILENAME_LENGTH,
     PackageLimitError,
     create_package,
     extract_package,
@@ -770,6 +771,20 @@ class CarrierRouteError(Exception):
     """Frontend-safe carrier route failure."""
 
 
+class CarrierCapacityError(CarrierRouteError):
+    """Carrier embed failure caused only by insufficient cover capacity."""
+
+
+class CarrierRequestFile(NamedTuple):
+    file_bytes: bytes
+    filename: str
+
+
+class CarrierEmbedResult(NamedTuple):
+    carrier_bytes: bytes
+    filename: str
+
+
 def _contains_raw_path_field(value) -> bool:
     if isinstance(value, dict):
         return any(
@@ -819,37 +834,51 @@ def _carrier_kind_from_request() -> str:
     return kind
 
 
-def _read_carrier_upload(field_name: str) -> bytes | None:
+def _read_carrier_upload(field_name: str) -> CarrierRequestFile | None:
     upload = request.files.get(field_name)
     if not upload or not upload.filename:
         return None
     buffer = BytesIO()
     copy_stream_limited(upload.stream, buffer, MAX_CARRIER_FILE_BYTES, "Carrier file")
-    return buffer.getvalue()
+    return CarrierRequestFile(
+        file_bytes=buffer.getvalue(),
+        filename=sanitize_attachment_filename(upload.filename, fallback="image.png"),
+    )
 
 
-def _read_carrier_native_ref(field_name: str, purpose: str) -> bytes | None:
+def _read_carrier_native_ref(field_name: str, purpose: str) -> CarrierRequestFile | None:
     ref_id = str(request.form.get(field_name, "") or "").strip()
     if not ref_id:
         return None
     entry = _consume_native_file_ref(ref_id, purpose)
     if not entry:
         raise CarrierRouteError()
-    return read_path_limited(entry["path"], MAX_CARRIER_FILE_BYTES, "Carrier file")
+    return CarrierRequestFile(
+        file_bytes=read_path_limited(entry["path"], MAX_CARRIER_FILE_BYTES, "Carrier file"),
+        filename=sanitize_attachment_filename(entry.get("filename"), fallback="image.png"),
+    )
 
 
-def _carrier_bytes_from_request(upload_field: str, ref_field: str, purpose: str) -> bytes:
+def _carrier_file_from_request(
+    upload_field: str,
+    ref_field: str,
+    purpose: str,
+) -> CarrierRequestFile:
     upload_present = bool(request.files.get(upload_field) and request.files[upload_field].filename)
     ref_present = bool(str(request.form.get(ref_field, "") or "").strip())
     if upload_present == ref_present:
         raise CarrierRouteError()
     if upload_present:
-        data = _read_carrier_upload(upload_field)
+        carrier_file = _read_carrier_upload(upload_field)
     else:
-        data = _read_carrier_native_ref(ref_field, purpose)
-    if not data:
+        carrier_file = _read_carrier_native_ref(ref_field, purpose)
+    if not carrier_file or not carrier_file.file_bytes:
         raise CarrierRouteError()
-    return data
+    return carrier_file
+
+
+def _carrier_bytes_from_request(upload_field: str, ref_field: str, purpose: str) -> bytes:
+    return _carrier_file_from_request(upload_field, ref_field, purpose).file_bytes
 
 
 def _extract_carrier_payload_from_request(payload_kind: str, purpose: str) -> bytes:
@@ -862,9 +891,9 @@ def _extract_carrier_payload_from_request(payload_kind: str, purpose: str) -> by
         raise CarrierRouteError() from exc
 
 
-def _cover_bytes_from_request() -> bytes:
+def _cover_file_from_request() -> CarrierRequestFile:
     try:
-        return _carrier_bytes_from_request(
+        return _carrier_file_from_request(
             "cover_png",
             "cover_native_file_id",
             NATIVE_FILE_REF_PURPOSE_CARRIER_COVER,
@@ -873,34 +902,57 @@ def _cover_bytes_from_request() -> bytes:
         raise CarrierRouteError() from exc
 
 
-def _embed_payload_in_carrier(payload_bytes: bytes, payload_kind: str) -> bytes:
+def _carrier_output_filename(cover_filename: str | None) -> str:
+    fallback = "image-carrier.png"
+    safe_name = sanitize_attachment_filename(cover_filename, fallback="image.png")
+    stem = Path(safe_name).stem
+    ascii_stem = unicodedata.normalize("NFKD", stem).encode("ascii", "ignore").decode("ascii")
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", ascii_stem).strip("-._").lower()
+    if not slug:
+        slug = "image"
+    suffix = "-carrier.png"
+    max_stem_length = MAX_ATTACHMENT_FILENAME_LENGTH - len(suffix)
+    slug = slug[:max_stem_length].rstrip("-._") or "image"
+    candidate = f"{slug}{suffix}"
+    try:
+        return validate_native_download_filename(candidate)
+    except ValueError:
+        return fallback
+
+
+def _embed_payload_in_carrier(payload_bytes: bytes, payload_kind: str) -> CarrierEmbedResult:
     try:
         _reject_carrier_raw_path_fields()
         kind = _carrier_kind_from_request()
-        cover_bytes = _cover_bytes_from_request()
-        estimate = estimate_capacity(kind, cover_bytes, payload_size=len(payload_bytes))
+        cover_file = _cover_file_from_request()
+        estimate = estimate_capacity(kind, cover_file.file_bytes, payload_size=len(payload_bytes))
         if not estimate.fits:
-            raise CarrierRouteError()
+            raise CarrierCapacityError()
         output = embed_envelope(
             kind,
             payload_bytes,
-            carrier_bytes=cover_bytes,
+            carrier_bytes=cover_file.file_bytes,
             payload_kind=payload_kind,
         )
-        return output.carrier_bytes
+        return CarrierEmbedResult(
+            carrier_bytes=output.carrier_bytes,
+            filename=_carrier_output_filename(cover_file.filename),
+        )
+    except CarrierCapacityError:
+        raise
     except (CarrierRouteError, CarrierError, IngestionLimitError, OSError, TypeError, ValueError) as exc:
         raise CarrierRouteError() from exc
 
 
-def _carrier_png_response(carrier_bytes: bytes):
-    native_response = _native_save_response(carrier_bytes, "carrier.png")
+def _carrier_png_response(result: CarrierEmbedResult):
+    native_response = _native_save_response(result.carrier_bytes, result.filename)
     if native_response is not None:
         return native_response
     response = send_file(
-        io.BytesIO(carrier_bytes),
+        io.BytesIO(result.carrier_bytes),
         mimetype="image/png",
         as_attachment=True,
-        download_name="carrier.png",
+        download_name=result.filename,
     )
     return _mark_sensitive_no_store(response)
 
@@ -2758,6 +2810,38 @@ def _gather_attachments(upload_files, staged_ids=None):
 
     return files, None
 
+
+def _seal_message_to_path(
+    *,
+    text: str,
+    files,
+    allow_download: bool,
+    ttl_seconds: int,
+    meta,
+    temp_zip_path: Path,
+    envelope_path: Path,
+):
+    """Create the normal Paracci package and envelope at caller-owned temp paths."""
+    import inspect
+
+    sig = inspect.signature(create_package)
+    if "output_path" in sig.parameters:
+        create_package(text, files, allow_download=allow_download, output_path=temp_zip_path)
+    else:
+        pkg_bytes = create_package(text, files, allow_download)
+        with open(temp_zip_path, "wb") as output:
+            output.write(pkg_bytes)
+
+    return seal_envelope(
+        temp_zip_path,
+        meta,
+        single_use=True,
+        ttl_seconds=ttl_seconds,
+        allow_download=allow_download,
+        output_path=envelope_path,
+    )
+
+
 @bp.route("/session/<sid>/seal", methods=["POST"])
 def session_seal(sid: str):
     """Creates a Paracci envelope by encrypting the message and attachments."""
@@ -2803,21 +2887,14 @@ def session_seal(sid: str):
     envelope_path = temp_dir / f"envelope_{token}.paracci"
     
     try:
-        import inspect
-        sig = inspect.signature(create_package)
-        if "output_path" in sig.parameters:
-            create_package(text, files, allow_download=allow_download, output_path=temp_zip_path)
-        else:
-            pkg_bytes = create_package(text, files, allow_download)
-            with open(temp_zip_path, "wb") as f:
-                f.write(pkg_bytes)
-        sealed = seal_envelope(
-            temp_zip_path,
-            meta,
-            single_use=True,
-            ttl_seconds=ttl_seconds,
+        sealed = _seal_message_to_path(
+            text=text,
+            files=files,
             allow_download=allow_download,
-            output_path=envelope_path,
+            ttl_seconds=ttl_seconds,
+            meta=meta,
+            temp_zip_path=temp_zip_path,
+            envelope_path=envelope_path,
         )
         updated = meta._replace(tx_count=meta.tx_count + 1, send_seed=sealed.next_seed)
         _save_session(updated)
@@ -2886,29 +2963,23 @@ def session_seal_carrier(sid: str):
         temp_zip_path = temp_dir / f"package_{token}.zip"
         envelope_path = temp_dir / f"envelope_{token}.paracci"
 
-        import inspect
-
-        sig = inspect.signature(create_package)
-        if "output_path" in sig.parameters:
-            create_package(text, files, allow_download=allow_download, output_path=temp_zip_path)
-        else:
-            pkg_bytes = create_package(text, files, allow_download)
-            with open(temp_zip_path, "wb") as f:
-                f.write(pkg_bytes)
-
-        sealed = seal_envelope(
-            temp_zip_path,
-            meta,
-            single_use=True,
-            ttl_seconds=ttl_seconds,
+        sealed = _seal_message_to_path(
+            text=text,
+            files=files,
             allow_download=allow_download,
-            output_path=envelope_path,
+            ttl_seconds=ttl_seconds,
+            meta=meta,
+            temp_zip_path=temp_zip_path,
+            envelope_path=envelope_path,
         )
         payload_bytes = read_path_limited(envelope_path, MAX_MESSAGE_ENVELOPE_BYTES, "Message file")
-        carrier_bytes = _embed_payload_in_carrier(payload_bytes, "message")
+        carrier_result = _embed_payload_in_carrier(payload_bytes, "message")
 
         updated = meta._replace(tx_count=meta.tx_count + 1, send_seed=sealed.next_seed)
-        native_response = _native_save_response(carrier_bytes, "carrier.png")
+        native_response = _native_save_response(
+            carrier_result.carrier_bytes,
+            carrier_result.filename,
+        )
         if native_response is not None:
             status_code = native_response[1] if isinstance(native_response, tuple) else native_response.status_code
             if 200 <= status_code < 300:
@@ -2917,14 +2988,16 @@ def session_seal_carrier(sid: str):
 
         _save_session(updated)
         response = send_file(
-            io.BytesIO(carrier_bytes),
+            io.BytesIO(carrier_result.carrier_bytes),
             mimetype="image/png",
             as_attachment=True,
-            download_name="carrier.png",
+            download_name=carrier_result.filename,
         )
         return _mark_sensitive_no_store(response)
     except (MemoryError, KeyboardInterrupt, SystemExit):
         raise
+    except CarrierCapacityError:
+        return _carrier_json_error(422)
     except (
         CarrierRouteError,
         CarrierError,
@@ -3384,10 +3457,12 @@ def session_export_carrier(sid: str):
             )
         else:
             raise CarrierRouteError()
-        carrier_bytes = _embed_payload_in_carrier(file_bytes, "setup")
-        return _carrier_png_response(carrier_bytes)
+        carrier_result = _embed_payload_in_carrier(file_bytes, "setup")
+        return _carrier_png_response(carrier_result)
     except (MemoryError, KeyboardInterrupt, SystemExit):
         raise
+    except CarrierCapacityError:
+        return _carrier_json_error(422)
     except (
         CarrierRouteError,
         CarrierError,

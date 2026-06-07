@@ -272,7 +272,10 @@ function setupCarrierControls() {
         const errorContainer = panel.querySelector('[data-carrier-error]');
         if (!operation || !url || !fileInput || !button) return;
 
-        fileInput.addEventListener('change', () => carrierUi.clearError(errorContainer));
+        fileInput.addEventListener('change', () => {
+            carrierUi.clearError(errorContainer);
+            carrierUi.updateSelectedFileName(fileInput);
+        });
         button.addEventListener('click', async () => {
             carrierUi.clearError(errorContainer);
 
@@ -306,8 +309,8 @@ function setupCarrierControls() {
                     return;
                 }
                 throw new Error();
-            } catch {
-                carrierUi.showGenericError(errorContainer);
+            } catch (error) {
+                carrierUi.showError(errorContainer, error);
             } finally {
                 carrierUi.setBusy(button, false);
             }
