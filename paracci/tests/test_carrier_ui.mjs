@@ -28,6 +28,27 @@ function makeHarness({ fetchImpl, nativeApi = null } = {}) {
     const objectUrls = [];
     const revokedUrls = [];
     const notices = [];
+    class TestDataTransfer {
+        constructor() {
+            const files = [];
+            this.items = {
+                add(file) {
+                    files.push(file);
+                }
+            };
+            Object.defineProperty(this, 'files', {
+                get() {
+                    return files;
+                }
+            });
+        }
+    }
+    class TestEvent {
+        constructor(type, init = {}) {
+            this.type = type;
+            this.bubbles = init.bubbles === true;
+        }
+    }
 
     const document = {
         body: {
@@ -67,8 +88,11 @@ function makeHarness({ fetchImpl, nativeApi = null } = {}) {
         PARACCI_I18N: {
             carrier_generic_error: 'Localized generic carrier error.',
             carrier_capacity_error: 'Localized capacity error.',
+            carrier_select_png_error: 'Localized PNG selection error.',
             carrier_processing: 'Carrier busy.'
         },
+        DataTransfer: TestDataTransfer,
+        Event: TestEvent,
         URL: TestURL,
         fetch: fetchImpl || (async () => {
             throw new Error('network sentinel');
@@ -96,6 +120,84 @@ function makeHarness({ fetchImpl, nativeApi = null } = {}) {
         objectUrls,
         revokedUrls,
         window
+    };
+}
+
+function makeDropFixture(api) {
+    const dropListeners = new Map();
+    const inputListeners = new Map();
+    const activeClasses = new Set();
+    const errorChildren = [];
+    const output = {
+        dataset: { emptyLabel: 'No PNG selected. Drop one here.' },
+        textContent: 'No PNG selected. Drop one here.'
+    };
+    const errorContainer = {
+        replaceChildren() {
+            errorChildren.length = 0;
+        },
+        appendChild(child) {
+            errorChildren.push(child);
+        }
+    };
+    const dropZone = {
+        classList: {
+            add(value) {
+                activeClasses.add(value);
+            },
+            remove(value) {
+                activeClasses.delete(value);
+            }
+        },
+        addEventListener(type, listener) {
+            dropListeners.set(type, listener);
+        },
+        querySelector(selector) {
+            return selector === '[data-carrier-file-name]' ? output : null;
+        }
+    };
+    const input = {
+        files: [],
+        addEventListener(type, listener) {
+            inputListeners.set(type, listener);
+        },
+        closest() {
+            return dropZone;
+        },
+        dispatchEvent(event) {
+            inputListeners.get(event.type)?.(event);
+            return true;
+        }
+    };
+    input.addEventListener('change', () => {
+        api.clearError(errorContainer);
+        api.updateSelectedFileName(input);
+    });
+    api.bindPngDropTarget(dropZone, input, errorContainer);
+
+    function dispatch(type, files = []) {
+        const state = {
+            defaultPrevented: false,
+            propagationStopped: false
+        };
+        dropListeners.get(type)?.({
+            dataTransfer: { files },
+            preventDefault() {
+                state.defaultPrevented = true;
+            },
+            stopPropagation() {
+                state.propagationStopped = true;
+            }
+        });
+        return state;
+    }
+
+    return {
+        activeClasses,
+        dispatch,
+        errorChildren,
+        input,
+        output
     };
 }
 
@@ -300,6 +402,78 @@ test('selected carrier filenames render through textContent', () => {
     assert.equal('innerHTML' in output, false);
 });
 
+test('scoped carrier drop targets accept PNG files and update labels safely', () => {
+    const { api } = makeHarness();
+    const cover = makeDropFixture(api);
+    const carrier = makeDropFixture(api);
+    const coverFile = { name: 'cover-photo.png', type: 'image/png' };
+    const carrierFile = { name: 'received-carrier.PNG', type: '' };
+
+    const coverEvent = cover.dispatch('drop', [coverFile]);
+    const carrierEvent = carrier.dispatch('drop', [carrierFile]);
+
+    assert.equal(coverEvent.defaultPrevented, true);
+    assert.equal(coverEvent.propagationStopped, true);
+    assert.equal(carrierEvent.defaultPrevented, true);
+    assert.equal(carrierEvent.propagationStopped, true);
+    assert.equal(cover.input.files[0], coverFile);
+    assert.equal(carrier.input.files[0], carrierFile);
+    assert.equal(cover.output.textContent, 'cover-photo.png');
+    assert.equal(carrier.output.textContent, 'received-carrier.PNG');
+    assert.equal(cover.errorChildren.length, 0);
+    assert.equal(carrier.errorChildren.length, 0);
+});
+
+test('all scoped carrier drag events prevent default and stop propagation', () => {
+    const { api } = makeHarness();
+    const fixture = makeDropFixture(api);
+
+    for (const type of ['dragenter', 'dragover', 'dragleave', 'drop']) {
+        const state = fixture.dispatch(type, []);
+        assert.equal(state.defaultPrevented, true, `${type} should prevent default`);
+        assert.equal(state.propagationStopped, true, `${type} should stop propagation`);
+    }
+});
+
+test('non-PNG carrier drops remain unselected and show localized safe feedback', () => {
+    const { api } = makeHarness();
+    const fixture = makeDropFixture(api);
+    const sentinel = { name: 'private-path-token-sentinel.txt', type: 'text/plain' };
+
+    fixture.dispatch('drop', [sentinel]);
+
+    assert.equal(fixture.input.files.length, 0);
+    assert.equal(fixture.output.textContent, 'No PNG selected. Drop one here.');
+    assert.equal(fixture.errorChildren.length, 1);
+    assert.equal(
+        fixture.errorChildren[0].textContent,
+        'Localized PNG selection error.'
+    );
+    assert.doesNotMatch(
+        fixture.errorChildren[0].textContent,
+        /private|path|token|sentinel|\.txt/i
+    );
+});
+
+test('multiple carrier drops are rejected without replacing the selection', () => {
+    const { api } = makeHarness();
+    const fixture = makeDropFixture(api);
+    const existing = { name: 'existing.png', type: 'image/png' };
+    fixture.dispatch('drop', [existing]);
+
+    fixture.dispatch('drop', [
+        { name: 'one.png', type: 'image/png' },
+        { name: 'two.png', type: 'image/png' }
+    ]);
+
+    assert.equal(fixture.input.files[0], existing);
+    assert.equal(fixture.output.textContent, 'existing.png');
+    assert.equal(
+        fixture.errorChildren[0].textContent,
+        'Localized PNG selection error.'
+    );
+});
+
 test('page wiring uses explicit multipart carrier fields only', () => {
     assert.match(SETUP_JS, /formData\.delete\('paracci_file'\)/);
     assert.match(SETUP_JS, /formData\.delete\('native_file_id'\)/);
@@ -307,6 +481,10 @@ test('page wiring uses explicit multipart carrier fields only', () => {
     assert.match(SESSION_JS, /formData\.set\('carrier_png'/);
     assert.match(SESSION_JS, /formData\.set\('cover_png'/);
     assert.match(SESSION_JS, /new FormData\(sourceForm\)/);
+    assert.match(SETUP_JS, /bindPngDropTarget/);
+    assert.match(SESSION_JS, /bindPngDropTarget/);
+    assert.match(CARRIER_JS, /event\.preventDefault\(\)/);
+    assert.match(CARRIER_JS, /event\.stopPropagation\(\)/);
     for (const requiredField of [
         'message',
         'ttl_seconds',

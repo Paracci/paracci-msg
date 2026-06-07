@@ -125,9 +125,11 @@ function setupCarrierImport(importForm) {
     const carrierUi = window.ParacciCarrierUI;
     const button = document.getElementById('setup-carrier-import');
     const fileInput = document.getElementById('setup-carrier-png');
+    const dropZone = document.querySelector('#setup-carrier-panel [data-carrier-drop-zone]');
     const errorContainer = document.getElementById('setup-carrier-error');
     if (!carrierUi || !importForm || !button || !fileInput) return;
 
+    carrierUi.bindPngDropTarget(dropZone, fileInput, errorContainer);
     fileInput.addEventListener('change', () => {
         carrierUi.clearError(errorContainer);
         carrierUi.updateSelectedFileName(fileInput);

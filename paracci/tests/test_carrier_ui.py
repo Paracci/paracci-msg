@@ -28,6 +28,7 @@ EXPECTED_CARRIER_KEYS = {
     "carrier_file_label",
     "choose_png",
     "no_png_selected",
+    "select_png_error",
     "extract_setup",
     "extract_responder",
     "extract_message",
@@ -102,6 +103,9 @@ def test_carrier_inputs_are_explicit_png_pickers_without_path_or_drop_fields():
     assert "cover_native_file_id" not in combined
     assert 'name="carrier_png"' not in combined
     assert 'name="cover_png"' not in combined
+    assert combined.count("data-carrier-drop-zone") >= 2
+    assert "bindPngDropTarget" in SETUP_JS
+    assert "bindPngDropTarget" in SESSION_JS
 
     carrier_input = re.search(
         r'<input type="file"[^>]+data-carrier-file[^>]*>',
@@ -109,6 +113,12 @@ def test_carrier_inputs_are_explicit_png_pickers_without_path_or_drop_fields():
     )
     assert carrier_input
     assert "data-drop-target" not in carrier_input.group(0)
+    for carrier_control in re.findall(
+        r'<div class="carrier-file-control"[^>]*>',
+        SETUP_TEMPLATE + SESSION_TEMPLATE,
+    ):
+        assert "data-carrier-drop-zone" in carrier_control
+        assert "data-drop-target" not in carrier_control
 
 
 def test_normal_drop_resolver_does_not_detect_png_carriers():
@@ -139,6 +149,7 @@ def test_carrier_frontend_uses_safe_generic_errors_and_managed_downloads():
     assert "qr_matrix_v1" not in combined
     assert "carrier_generic_error" in BASE_TEMPLATE
     assert "carrier_capacity_error" in BASE_TEMPLATE
+    assert "carrier_select_png_error" in BASE_TEMPLATE
     assert "carrier_processing" in BASE_TEMPLATE
     assert "response.text(" not in CARRIER_JS
     assert "response.json(" in CARRIER_JS
@@ -167,4 +178,21 @@ def test_all_locales_define_conservative_carrier_strings():
     assert "resize" in english["recompression_warning"]
     assert "convert" in english["recompression_warning"]
     assert "outer transport wrapper" in english["outer_wrapper_note"]
-    assert "does not have enough room" in english["insufficient_capacity"]
+    assert "resolution" in english["capacity_hint"]
+    assert "not PNG file size" in english["capacity_hint"]
+    assert "attachments" in english["capacity_hint"].lower()
+    assert "high-resolution lossless PNG" in english["capacity_hint"]
+    assert "pixel capacity" in english["insufficient_capacity"]
+    assert "attachments" in english["insufficient_capacity"].lower()
+    assert "high-resolution lossless PNG" in english["insufficient_capacity"]
+    assert "drop one here" in english["no_png_selected"].lower()
+    assert "choose or drop a png file" in english["select_png_error"].lower()
+
+    for locale_file in locale_files:
+        carrier = json.loads(locale_file.read_text(encoding="utf-8"))["carrier"]
+        for key in ("capacity_hint", "insufficient_capacity"):
+            assert not re.search(
+                r"\b\d+\s*(?:bytes?|kb|mb|gb|pixels?)\b|\b\d+\s*[x×]\s*\d+\b",
+                carrier[key],
+                re.IGNORECASE,
+            )

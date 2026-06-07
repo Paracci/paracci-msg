@@ -21,12 +21,23 @@
     function capacityErrorText() {
         return i18n(
             'carrier_capacity_error',
-            'The selected PNG does not have enough room. Choose a larger lossless PNG.'
+            'The selected cover PNG does not have enough pixel capacity for this message. '
+                + 'Attachments need a larger high-resolution lossless PNG.'
         );
     }
 
+    function selectionErrorText() {
+        return i18n('carrier_select_png_error', 'Choose or drop a PNG file.');
+    }
+
     function carrierError(kind = 'generic') {
-        const error = new Error(kind === 'capacity' ? capacityErrorText() : genericErrorText());
+        const error = new Error(
+            kind === 'capacity'
+                ? capacityErrorText()
+                : kind === 'selection'
+                    ? selectionErrorText()
+                    : genericErrorText()
+        );
         error.name = 'CarrierUIError';
         error.kind = kind;
         return error;
@@ -47,7 +58,9 @@
         alert.className = 'alert alert-error';
         alert.textContent = error?.kind === 'capacity'
             ? capacityErrorText()
-            : genericErrorText();
+            : error?.kind === 'selection'
+                ? selectionErrorText()
+                : genericErrorText();
         container.appendChild(alert);
     }
 
@@ -62,6 +75,62 @@
         const output = container?.querySelector?.('[data-carrier-file-name]');
         if (!output) return;
         output.textContent = input.files?.[0]?.name || output.dataset.emptyLabel || '';
+    }
+
+    function isPngFile(file) {
+        if (!file) return false;
+        const mimeType = String(file.type || '').toLowerCase();
+        const filename = String(file.name || '');
+        return mimeType === 'image/png'
+            || (mimeType === '' && filename.toLowerCase().endsWith('.png'));
+    }
+
+    function bindPngDropTarget(dropZone, input, errorContainer) {
+        if (!dropZone || !input) return;
+
+        let dragDepth = 0;
+        const stopDropEvent = event => {
+            event.preventDefault();
+            event.stopPropagation();
+        };
+        const clearDragState = () => {
+            dragDepth = 0;
+            dropZone.classList.remove('is-dragging');
+        };
+
+        dropZone.addEventListener('dragenter', event => {
+            stopDropEvent(event);
+            dragDepth++;
+            dropZone.classList.add('is-dragging');
+        });
+        dropZone.addEventListener('dragover', event => {
+            stopDropEvent(event);
+            dropZone.classList.add('is-dragging');
+        });
+        dropZone.addEventListener('dragleave', event => {
+            stopDropEvent(event);
+            dragDepth = Math.max(0, dragDepth - 1);
+            if (dragDepth === 0) dropZone.classList.remove('is-dragging');
+        });
+        dropZone.addEventListener('drop', event => {
+            stopDropEvent(event);
+            clearDragState();
+
+            const files = Array.from(event.dataTransfer?.files || []);
+            if (files.length !== 1 || !isPngFile(files[0])) {
+                showError(errorContainer, carrierError('selection'));
+                return;
+            }
+
+            try {
+                const transfer = new global.DataTransfer();
+                transfer.items.add(files[0]);
+                input.files = transfer.files;
+                input.dispatchEvent(new global.Event('change', { bubbles: true }));
+            } catch {
+                showError(errorContainer, carrierError('selection'));
+            }
+        });
     }
 
     function setBusy(button, busy) {
@@ -192,6 +261,7 @@
 
     global.ParacciCarrierUI = Object.freeze({
         PNG_KIND,
+        bindPngDropTarget,
         clearError,
         safePngFilename,
         selectedFile,

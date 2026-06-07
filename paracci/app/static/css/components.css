@@ -598,6 +598,16 @@ input[type="checkbox"] {
   min-width: 0;
   align-items: center;
   gap: 0.65rem;
+  padding: 0.5rem;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.025);
+  transition: border-color var(--duration-sm) var(--ease), background-color var(--duration-sm) var(--ease);
+}
+
+.carrier-file-control.is-dragging {
+  border-color: var(--accent-secondary);
+  background: var(--accent-soft);
 }
 
 .carrier-file-input {
@@ -1453,6 +1463,17 @@ input[type="checkbox"] {
 }
 
 @media (max-width: 720px) {
+  .carrier-file-control {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .carrier-file-name {
+    flex: 1 1 10rem;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
   .card-header,
   .settings-item,
   .form-actions,

@@ -268,10 +268,12 @@ function setupCarrierControls() {
         const operation = panel.dataset.carrierOperation;
         const url = panel.dataset.carrierUrl;
         const fileInput = panel.querySelector('[data-carrier-file]');
+        const dropZone = panel.querySelector('[data-carrier-drop-zone]');
         const button = panel.querySelector('[data-carrier-submit]');
         const errorContainer = panel.querySelector('[data-carrier-error]');
         if (!operation || !url || !fileInput || !button) return;
 
+        carrierUi.bindPngDropTarget(dropZone, fileInput, errorContainer);
         fileInput.addEventListener('change', () => {
             carrierUi.clearError(errorContainer);
             carrierUi.updateSelectedFileName(fileInput);
