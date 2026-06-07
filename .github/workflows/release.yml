@@ -485,103 +485,12 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
           PACKAGE_VERSION: ${{ steps.resolve.outputs.package_version }}
         run: |
-          python - <<'PY'
-          import os
-          from pathlib import Path
-
-          results = []
-          for entry in filter(None, os.environ.get("VT_ANALYSIS", "").split(",")):
-              filename, separator, url = entry.partition("=")
-              if not separator or not url.startswith("https://"):
-                  raise SystemExit("VirusTotal action returned an unexpected analysis result.")
-              results.append(f"| `{Path(filename).name}` | [Report]({url}) |")
-
-          if results:
-              vt_section = "#### VirusTotal Scan\n\n| File | Analysis |\n|------|----------|\n" + "\n".join(results)
-          else:
-              vt_section = "#### VirusTotal Scan\n\n_VirusTotal scan links are unavailable._"
-
-          tag = os.environ["RELEASE_TAG"]
-          version = os.environ["PACKAGE_VERSION"]
-
-          body = f"""## Paracci {tag}
-          <!-- paracci-update: {{"protocol_version": 4}} -->
-
-          ### 📦 Download
-
-          | Platform | File | Notes |
-          |----------|------|-------|
-          | Windows installer | `Paracci-Setup-{tag}.exe` | Standard Mode; per-user installation with uninstaller |
-          | Windows portable | `Paracci-Portable-{tag}.zip` | Extract and run; keeps data beside the executable |
-          """
-          
-          # Add macOS downloads to table only if they exist in the workspace
-          if list(Path("release-assets/macos").glob("Paracci-*-macOS.dmg")) or list(Path("release-assets/macos").glob("Paracci-macOS.zip")):
-              body += f"""| macOS DMG | `Paracci-{version}-macOS.dmg` | Drag to Applications; not notarized, so first launch may require Open Anyway |\n| macOS compatibility | `Paracci-macOS.zip` | Retained bundle archive |\n"""
-
-          body += f"""| Linux AppImage | `Paracci-{version}-x86_64.AppImage` | Universal package; run `chmod +x` after download |
-          | Linux Debian/Ubuntu | `paracci_{version}_amd64.deb` | Installs desktop and `.paracci` MIME registration |
-          | Linux compatibility | `Paracci-Linux.zip` | Retained complete onedir archive |
-
-          ---
-
-          ### 🔐 Security & Integrity
-
-          #### SHA-256 Checksums
-          Published releases attach `SHA256SUMS.txt` and its offline Ed25519
-          signature `SHA256SUMS.txt.sig`. Paracci verifies this signature
-          before trusting installer checksums.
-
-          To verify a downloaded package checksum after verifying the manifest signature:
-          ```
-          # Windows (PowerShell):  Get-FileHash Paracci-Setup-{tag}.exe -Algorithm SHA256
-          # Windows portable:     Get-FileHash Paracci-Portable-{tag}.zip -Algorithm SHA256
-          ```
-          """
-          
-          if list(Path("release-assets/macos").glob("Paracci-*-macOS.dmg")):
-              body += f"""# macOS:                 shasum -a 256 Paracci-{version}-macOS.dmg\n"""
-          
-          body += f"""# Linux:                 sha256sum Paracci-Linux.zip Paracci-{version}-x86_64.AppImage paracci_{version}_amd64.deb
-          ```
-
-          #### Build Provenance (Sigstore / SLSA Level 2)
-          Each published application artifact has GitHub Actions build provenance.
-          You can verify the attestation without trusting us:
-          ```bash
-          gh attestation verify Paracci-Setup-{tag}.exe \\
-            --repo {os.environ.get("GITHUB_REPOSITORY")}
-          ```
-          Or browse the attestations tab:
-          https://github.com/{os.environ.get("GITHUB_REPOSITORY")}/attestations
-
-          {vt_section}
-
-          > **Why might antivirus flag it?** PyInstaller bundles the Python interpreter
-          > inside the executable. This "packing" technique is sometimes flagged as
-          > heuristic-suspicious by AV engines even when the code is clean.
-          > The source code is fully open and auditable above.
-
-          ---
-
-          > 🔍 Source code: All application logic is in this repository and open for audit.
-          """
-
-          # Clean up indentation for markdown compatibility
-          lines = []
-          in_code_block = False
-          for line in body.splitlines():
-              stripped = line.strip()
-              if stripped.startswith("```"):
-                  in_code_block = not in_code_block
-              if in_code_block:
-                  lines.append(line)  # keep indentation inside code blocks
-              else:
-                  lines.append(stripped)
-          body_cleaned = "\n".join(lines)
-
-          Path("RELEASE_NOTE_BODY.md").write_text(body_cleaned, encoding="utf-8")
-          PY
+          python tools/ci/release_notes.py generate-body \
+            --release-tag "$RELEASE_TAG" \
+            --package-version "$PACKAGE_VERSION" \
+            --repository "$GITHUB_REPOSITORY" \
+            --release-assets release-assets \
+            --output RELEASE_NOTE_BODY.md
 
       - name: Create GitHub Release
         id: gh_release

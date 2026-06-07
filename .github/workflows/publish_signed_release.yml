@@ -156,7 +156,7 @@ jobs:
             vt-scan/Paracci-Linux.AppImage
             vt-scan/Paracci-Linux.deb
 
-      - name: Append VirusTotal links to release body
+      - name: Upsert VirusTotal links in release body
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ inputs.release_tag }}
@@ -164,27 +164,5 @@ jobs:
         run: |
           set -euo pipefail
           gh release view "$RELEASE_TAG" --json body --jq '.body' > release-body.md
-          python - <<'PY'
-          import os
-          from pathlib import Path
-
-          results = []
-          for entry in filter(None, os.environ["VT_ANALYSIS"].split(",")):
-              filename, separator, url = entry.partition("=")
-              if not separator or not url.startswith("https://"):
-                  raise SystemExit("VirusTotal action returned an unexpected analysis result.")
-              results.append(f"| `{Path(filename).name}` | [Report]({url}) |")
-          if not results:
-              raise SystemExit("VirusTotal action returned no analysis results.")
-
-          section = "#### VirusTotal Scan\n\n| File | Analysis |\n|------|----------|\n" + "\n".join(results)
-          body_path = Path("release-body.md")
-          body = body_path.read_text(encoding="utf-8")
-          placeholder = "#### VirusTotal Scan\n\n_VirusTotal scan links are added automatically after the signed draft is published._"
-          if placeholder in body:
-              body = body.replace(placeholder, section)
-          else:
-              body = body.rstrip() + "\n\n" + section + "\n"
-          body_path.write_text(body, encoding="utf-8")
-          PY
+          python tools/ci/release_notes.py upsert-virustotal --body release-body.md
           gh release edit "$RELEASE_TAG" --notes-file release-body.md

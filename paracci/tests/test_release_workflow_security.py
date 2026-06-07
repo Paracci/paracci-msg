@@ -52,6 +52,22 @@ def test_release_workflow_recomputes_manifest_and_creates_draft_release():
     assert "draft: false" not in workflow
 
 
+def test_release_workflows_use_shared_idempotent_release_note_helper():
+    release_workflow = _workflow("release.yml")
+    publish_workflow = _workflow("publish_signed_release.yml")
+
+    assert "python tools/ci/release_notes.py generate-body" in release_workflow
+    assert "--output RELEASE_NOTE_BODY.md" in release_workflow
+    assert (
+        "python tools/ci/release_notes.py upsert-virustotal --body release-body.md"
+        in publish_workflow
+    )
+    assert "- name: Upsert VirusTotal links in release body" in publish_workflow
+    assert "body = body.rstrip()" not in publish_workflow
+    assert "body.replace(placeholder, section)" not in publish_workflow
+    assert "Append VirusTotal links to release body" not in publish_workflow
+
+
 def test_python_runtime_browser_console_smoke_runs_in_ci_gates():
     release_workflow = _workflow("release.yml")
     native_workflow = _workflow("native_verify.yml")
