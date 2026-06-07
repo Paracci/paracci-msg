@@ -17,6 +17,7 @@ CARRIER_JS = (STATIC_ROOT / "js" / "carrier.js").read_text(encoding="utf-8")
 SETUP_JS = (STATIC_ROOT / "js" / "setup.js").read_text(encoding="utf-8")
 SESSION_JS = (STATIC_ROOT / "js" / "session.js").read_text(encoding="utf-8")
 APP_JS = (STATIC_ROOT / "js" / "app.js").read_text(encoding="utf-8")
+SESSION_CSS = (STATIC_ROOT / "css" / "pages" / "session.css").read_text(encoding="utf-8")
 
 EXPECTED_CARRIER_KEYS = {
     "panel_title",
@@ -55,6 +56,9 @@ def test_carrier_controls_are_collapsed_secondary_and_explicit():
 
     assert "<details class=\"carrier-panel" in combined
     assert not re.search(r"<details[^>]*carrier-panel[^>]*\sopen(?:\s|=|>)", combined)
+    assert 'class="carrier-panel carrier-option"' in SESSION_TEMPLATE
+    assert 'class="carrier-panel mt-5"' not in SESSION_TEMPLATE
+    assert ".carrier-option" in SESSION_CSS
     assert 'class="btn btn-secondary"' in combined
     assert "carrier.recompression_warning" in SETUP_TEMPLATE
     assert "carrier.recompression_warning" in SESSION_TEMPLATE
@@ -91,11 +95,18 @@ def test_normal_paracci_flows_and_drop_targets_remain_primary():
 
 
 def test_post_bond_composer_state_is_rendered_hidden_and_backend_driven():
-    assert 'id="bonded-checklist"{% if not meta.is_bonded %} hidden{% endif %}' in SESSION_TEMPLATE
+    assert 'id="bonded-checklist"{% if not meta.can_send %} hidden{% endif %}' in SESSION_TEMPLATE
+    assert "{% if meta.role == 'Y' and not meta.can_send %}" in SESSION_TEMPLATE
     assert 'id="bond-pending-composer"' in SESSION_TEMPLATE
-    assert '{% if meta.is_bonded %} hidden{% endif %}' in SESSION_TEMPLATE
-    assert 'id="message-composer"{% if meta.role == \'Y\' and not meta.is_bonded %} hidden{% endif %}' in SESSION_TEMPLATE
+    assert 'id="message-composer"{% if not meta.can_send %} hidden{% endif %}' in SESSION_TEMPLATE
+    pending_tag = re.search(r'<div id="bond-pending-composer"[^>]*>', SESSION_TEMPLATE)
+    assert pending_tag
+    assert "style=" not in pending_tag.group(0)
+    assert 'class="bond-pending-composer"' in pending_tag.group(0)
+    assert "shell_can_send = shell_meta.can_send" in BASE_TEMPLATE
+    assert "shell_can_attach = endpoint == 'main.session_detail' and shell_can_send" in BASE_TEMPLATE
     assert "if (data?.session_can_send !== true) return;" in SESSION_JS
+    assert "pendingComposer.remove();" in SESSION_JS
     assert "document.body.dataset.dropAttach = 'true';" in SESSION_JS
     assert SESSION_JS.count("applyPostOpenSessionState(data);") == 2
     assert "location.reload(" not in SESSION_JS

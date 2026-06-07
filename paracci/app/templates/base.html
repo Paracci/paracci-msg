@@ -5,11 +5,11 @@
 {% set shell_meta = meta if meta is defined else none %}
 {% set shell_role = shell_meta.role if shell_meta else '' %}
 {% set shell_state = shell_meta.state if shell_meta else '' %}
-{% set shell_is_bonded = shell_meta.is_bonded if shell_meta else false %}
+{% set shell_can_send = shell_meta.can_send if shell_meta else false %}
 {% set shell_can_import = endpoint == 'main.session_import' %}
 {% set shell_can_finalize = endpoint == 'main.session_detail' and shell_role == 'X' and shell_state == 'pending' %}
 {% set shell_can_open = endpoint == 'main.session_detail' and shell_state == 'active' %}
-{% set shell_can_attach = endpoint == 'main.session_detail' and shell_state == 'active' and shell_is_bonded %}
+{% set shell_can_attach = endpoint == 'main.session_detail' and shell_can_send %}
 {% set locale_next = request.full_path if request.query_string else request.path %}
 <!DOCTYPE html>
 <html lang="{{ g.locale }}">

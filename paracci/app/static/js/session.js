@@ -329,7 +329,7 @@ function applyPostOpenSessionState(data) {
     const responderWarning = document.getElementById('y-responder-warning');
     const bondedChecklist = document.getElementById('bonded-checklist');
 
-    if (pendingComposer) pendingComposer.hidden = true;
+    if (pendingComposer) pendingComposer.remove();
     if (composer) composer.hidden = false;
     if (responderWarning) responderWarning.hidden = true;
     if (bondedChecklist) bondedChecklist.hidden = false;

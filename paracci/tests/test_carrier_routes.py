@@ -1,4 +1,5 @@
 import io
+import re
 import sys
 from pathlib import Path
 
@@ -60,6 +61,14 @@ def assert_generic_carrier_response(response, *sentinels, status=400):
             assert sentinel not in response.data
         else:
             assert str(sentinel) not in body
+
+
+def element_start_tag(body: str, element_id: str) -> str | None:
+    match = re.search(
+        rf"<[^>]+\bid=[\"']{re.escape(element_id)}[\"'][^>]*>",
+        body,
+    )
+    return match.group(0) if match else None
 
 
 @pytest.mark.parametrize(
@@ -265,6 +274,17 @@ def test_normal_paracci_seal_and_export_routes_remain_unchanged(tmp_path, monkey
     assert not sealed.data.startswith(PNG_SIGNATURE)
 
     _save_meta(ag_app, meta_y)
+    pending_page = client.get(
+        f"/session/{meta_y.session_id.hex()}",
+        base_url=ORIGIN,
+        headers=auth_headers(client),
+    )
+    assert pending_page.status_code == 200
+    pending_body = pending_page.get_data(as_text=True)
+    assert element_start_tag(pending_body, "bond-pending-composer") is not None
+    assert "hidden" in element_start_tag(pending_body, "message-composer")
+    assert 'data-drop-attach="false"' in pending_body
+
     opened = client.post(
         f"/session/{meta_y.session_id.hex()}/open?ajax=1",
         base_url=ORIGIN,
@@ -277,6 +297,16 @@ def test_normal_paracci_seal_and_export_routes_remain_unchanged(tmp_path, monkey
     assert opened.get_json()["text"] == "normal route"
     assert opened.get_json()["session_can_send"] is True
     assert _load_meta(ag_app, meta_y).can_send is True
+    refreshed = client.get(
+        f"/session/{meta_y.session_id.hex()}",
+        base_url=ORIGIN,
+        headers=auth_headers(client),
+    )
+    assert refreshed.status_code == 200
+    refreshed_body = refreshed.get_data(as_text=True)
+    assert element_start_tag(refreshed_body, "bond-pending-composer") is None
+    assert "hidden" not in element_start_tag(refreshed_body, "message-composer")
+    assert 'data-drop-attach="true"' in refreshed_body
 
     exported = client.get(
         f"/session/{meta_y.session_id.hex()}/export",
@@ -644,6 +674,16 @@ def test_carrier_open_uses_existing_validation_and_generic_failures(tmp_path, mo
     assert opened.get_json()["session_can_send"] is True
     assert _load_meta(ag_app, meta_y).can_send is True
     assert carrier_path.exists()
+    refreshed = client.get(
+        f"/session/{meta_y.session_id.hex()}",
+        base_url=ORIGIN,
+        headers=auth_headers(client),
+    )
+    assert refreshed.status_code == 200
+    refreshed_body = refreshed.get_data(as_text=True)
+    assert element_start_tag(refreshed_body, "bond-pending-composer") is None
+    assert "hidden" not in element_start_tag(refreshed_body, "message-composer")
+    assert 'data-drop-attach="true"' in refreshed_body
 
     replay_ref = routes_module.register_native_file_path(
         carrier_path,

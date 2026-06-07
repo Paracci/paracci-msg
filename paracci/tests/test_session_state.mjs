@@ -13,13 +13,22 @@ const SESSION_JS = fs.readFileSync(
 
 function makeHarness() {
     const navigationCalls = [];
-    const elements = new Map([
-        ['bond-pending-composer', { hidden: false }],
-        ['message-composer', { hidden: true }],
-        ['y-responder-warning', { hidden: false }],
-        ['bonded-checklist', { hidden: true }],
-        ['rendered-message', { textContent: 'opened-message-sentinel' }]
-    ]);
+    const elements = new Map();
+    function addElement(id, initial) {
+        const element = {
+            ...initial,
+            remove() {
+                elements.delete(id);
+            }
+        };
+        elements.set(id, element);
+        return element;
+    }
+    addElement('bond-pending-composer', { hidden: false });
+    addElement('message-composer', { hidden: true });
+    addElement('y-responder-warning', { hidden: false });
+    addElement('bonded-checklist', { hidden: true });
+    addElement('rendered-message', { textContent: 'opened-message-sentinel' });
     const document = {
         body: { dataset: { dropAttach: 'false' } },
         addEventListener() {},
@@ -81,7 +90,7 @@ test('authoritative post-open state unlocks the composer without disturbing the 
 
     harness.applyState({ session_can_send: true });
 
-    assert.equal(harness.elements.get('bond-pending-composer').hidden, true);
+    assert.equal(harness.elements.has('bond-pending-composer'), false);
     assert.equal(harness.elements.get('message-composer').hidden, false);
     assert.equal(harness.elements.get('y-responder-warning').hidden, true);
     assert.equal(harness.elements.get('bonded-checklist').hidden, false);

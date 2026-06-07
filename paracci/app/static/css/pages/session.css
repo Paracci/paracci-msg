@@ -208,6 +208,77 @@
   margin-bottom: var(--space-8);
 }
 
+.bond-pending-composer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-8) var(--space-6);
+  border: 1px solid rgba(255, 179, 64, 0.15);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 179, 64, 0.05);
+  text-align: center;
+}
+
+.bond-pending-composer-icon {
+  display: flex;
+  width: 48px;
+  height: 48px;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: var(--space-4);
+  border-radius: 50%;
+  background: rgba(255, 179, 64, 0.15);
+  color: var(--state-warn-text, #ffb340);
+}
+
+.bond-pending-composer h3 {
+  margin: 0 0 var(--space-2);
+  color: var(--text-primary);
+  font-size: var(--text-body-lg);
+  font-weight: 700;
+}
+
+.bond-pending-composer p {
+  max-width: 360px;
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-body-sm);
+  line-height: 1.5;
+}
+
+.carrier-option {
+  margin-top: var(--space-3);
+  border-width: 1px 0 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.carrier-option .carrier-panel-summary {
+  min-height: 44px;
+  padding: var(--space-3) 0 0;
+}
+
+.carrier-option .carrier-panel-summary:hover {
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.carrier-option .carrier-panel-badge {
+  width: 30px;
+  height: 22px;
+  font-size: 0.6rem;
+}
+
+.carrier-option .carrier-panel-body {
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.025);
+}
+
 .permit-box {
   padding: var(--space-4);
   border: 1px solid var(--border-subtle);
