@@ -1,23 +1,23 @@
 # Carrier Transport
 
-This document records the 1.8.0 carrier transport skeleton and PNG lossless
-core adapter. It defines the security model and implementation boundaries
-before carrier transport is exposed through user-facing flows.
+This document defines the Paracci 1.8.0 PNG lossless carrier transport security
+model, user workflow, and implementation boundaries.
 
 ## Status
 
 - Carrier mode is optional and disabled by default.
 - Normal `.paracci` export, import, and open flows remain the default behavior.
-- `png_lossless_v1` is implemented as a core-only PNG lossless carrier adapter.
+- `png_lossless_v1` is the only supported carrier kind.
 - `qr_matrix_v1` remains a planned carrier kind constant only. It remains
   unsupported until a dedicated adapter and regressions are added.
-- An internal service bridge can extract supported carrier payloads into the
-  existing setup import and message open services.
-- A headless trusted-ref command boundary exists for future native UI use.
-  Carrier commands consume one-shot trusted file references and return managed
-  save grants for output.
-- The current implementation does not add QR/Matrix logic, UI routes, frontend
-  controls, public native-save routes, file associations, or new dependencies.
+- Explicit PNG carrier controls are available as collapsed, secondary UI
+  actions. They do not alter or auto-detect files in normal `.paracci` forms or
+  drop zones.
+- Browser carrier operations use bounded multipart uploads and PNG downloads.
+  Native carrier operations use purpose-scoped, one-shot trusted references
+  and existing one-shot managed save grants.
+- The implementation does not add QR/Matrix logic, public native-save routes,
+  file associations, or carrier-specific dependencies.
 
 ## Security Model
 
@@ -40,6 +40,10 @@ Carrier import and export command helpers must use trusted file references for
 input. Carrier output must use managed save or download grant patterns, never
 caller-provided destination paths. Source carrier and cover files are not
 auto-deleted by carrier operations.
+
+Carrier routes remain protected by the existing loopback bearer, CSRF,
+same-origin/source-header, no-store, and redaction controls. Raw path-shaped
+fields are rejected before file, trusted-reference, or carrier helpers run.
 
 ## Limits
 
@@ -65,8 +69,29 @@ that extracted bytes are a valid Paracci envelope, and does not replace the
 existing `.paracci` validation, open, or decrypt path.
 
 Users must be warned that social platforms and messengers may recompress,
-resize, or strip image data. Carrier PNGs should be sent as a file or document,
-not as an inline photo.
+resize, convert, or strip image data. Carrier PNGs should be sent as a
+file/document, not as an inline photo.
+
+PNG carrier transport does not guarantee invisibility, resistance to
+steganalysis, or survival after image transformation. Existing Paracci
+envelope authentication and AEAD decryption remain the security authority for
+extracted content.
+
+## User Workflow
+
+- Keep the normal `.paracci` export, import, seal, and open actions as the
+  primary workflow.
+- Expand the optional PNG carrier panel only when carrier transport is wanted.
+- For export, select a lossless PNG cover and use the explicit carrier action.
+  Insufficient capacity fails without producing output.
+- For import or open, select the explicit carrier action. Extraction returns
+  bounded, untrusted bytes to the normal setup or message validation path.
+- Importing an initiator setup carrier still produces the normal responder
+  `.paracci` file as the primary result. Exporting that responder into a PNG
+  carrier is a separate action.
+- Browser output is a PNG download. Native output uses the existing one-shot,
+  size-limited save grant flow.
+- Carrier and cover source files are not automatically deleted or modified.
 
 ## Planned MVP Kinds
 
@@ -83,3 +108,4 @@ guarantee.
 - Tor or network routing.
 - File association for carrier files.
 - Any default carrier export behavior.
+- Automatic carrier detection in normal `.paracci` controls.

@@ -53,6 +53,31 @@ not high-volume or out-of-order messaging.
 
 ---
 
+## Optional PNG Carrier Transport
+
+PNG carrier mode is optional, disabled by default, and exposed only through
+explicit secondary controls. Normal `.paracci` files remain the primary
+transport and are not automatically interpreted as, or converted into, PNG
+carriers.
+
+A carrier PNG is only an outer transport wrapper. Extraction does not establish
+that the contained bytes are a valid Paracci setup, responder, or message
+envelope. Extracted bytes still pass through normal signature, envelope
+authentication, AEAD decryption, bonding, BurnDB replay, package, and preview
+checks.
+
+The PNG adapter uses CRC32 only to detect carrier corruption or transport
+damage. CRC32 is not cryptographic authentication. The existing Paracci
+envelope validation and AEAD checks remain the security authority.
+
+Carrier PNGs should be sent as files/documents. Social platforms and messengers
+may recompress, resize, convert, or strip image data and make extraction fail.
+PNG carrier mode does not guarantee invisibility, resistance to steganalysis,
+or survival after image transformation. Carrier and cover source files are not
+automatically deleted.
+
+---
+
 ## Local Loopback Threat Model
 
 Paracci runs a local Flask server wrapped by a `pywebview` shell. This loopback architecture is not a native IPC channel, and its security relies on several strict boundaries:
@@ -88,4 +113,4 @@ When the UI is opened in browser-only mode, it cannot add the Windows native his
 ## Contributor Copywriting Rules
 
 - **Recommended Terms**: Use "best-effort", "attempts", "reduces exposure", "drops references", and "auto-clears after a delay".
-- **Prohibited Terms**: Avoid "prevents screenshots", "guarantees deletion", "wipes instantly", "securely deletes", "erases RAM", and "cannot be recovered".
+- **Prohibited Terms**: Avoid "prevents screenshots", "guarantees deletion", "wipes instantly", "securely deletes", "erases RAM", "cannot be recovered", and claims of guaranteed carrier concealment, tamper resistance, or independent authentication.

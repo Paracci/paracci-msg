@@ -18,7 +18,12 @@ RELEASE_SIGNING_DOC_PATHS = [
     REPO_ROOT / "paracci" / "docs" / "SECURITY_ENGINEERING.md",
 ]
 
+README_PATH = REPO_ROOT / "README.md"
+SECURITY_PATH = REPO_ROOT / "SECURITY.md"
 CARRIER_TRANSPORT_DOC_PATH = REPO_ROOT / "paracci" / "docs" / "CARRIER_TRANSPORT.md"
+CARRIER_ENGINEERING_DOC_PATH = REPO_ROOT / "paracci" / "docs" / "SECURITY_ENGINEERING.md"
+CARRIER_SHIELDS_DOC_PATH = REPO_ROOT / "paracci" / "docs" / "SECURITY_SHIELDS.md"
+CARRIER_TESTS_DOC_PATH = REPO_ROOT / "paracci" / "docs" / "TESTS.md"
 
 EXPECTED_LEDGER_COMMITS = [
     "df35a2f07638df74ab745f0ec0cb3cdf1bd6c7d6",
@@ -58,6 +63,7 @@ REQUIRED_ENGINEERING_PHRASES = [
     "## Service Worker, Bootstrap, And Bearer Token Flow",
     "## pywebview Bridge",
     "## Preview And Content Routes",
+    "## Carrier Transport",
     "## Native Filesystem Save, Open, Import, And Reveal Flows",
     "## UIApi And JSON-RPC Boundary",
     "## Release And Updater Trust",
@@ -80,6 +86,9 @@ REQUIRED_ENGINEERING_PHRASES = [
     "Linux Secret Service fallback must require explicit user consent",
     "Preview windows must block external navigation consistently",
     "Committed docs, tests, and code must not contain local machine paths",
+    "Carrier mode remains optional, disabled by default, and separate from normal `.paracci` forms and drop zones.",
+    "Extracted bytes remain untrusted and must enter the existing setup import or message open validation",
+    "CRC32 is carrier corruption and transport-damage detection only.",
 ]
 
 FORBIDDEN_PRIVATE_REFERENCES = [
@@ -161,19 +170,19 @@ def test_security_guardrail_docs_exist():
         assert path.is_file(), f"{path.relative_to(REPO_ROOT)} is missing"
 
 
-def test_carrier_transport_doc_records_skeleton_security_model():
+def test_carrier_transport_doc_records_completed_png_mvp_security_model():
     doc = " ".join(_read(CARRIER_TRANSPORT_DOC_PATH).split())
     required_phrases = [
         "Carrier mode is optional and disabled by default.",
         "Normal `.paracci` export, import, and open flows remain the default behavior.",
-        "`png_lossless_v1` is implemented as a core-only PNG lossless carrier adapter.",
+        "`png_lossless_v1` is the only supported carrier kind.",
         "`qr_matrix_v1` remains a planned carrier kind constant only.",
         "It remains unsupported until a dedicated adapter and regressions are added.",
-        "An internal service bridge can extract supported carrier payloads into",
-        "the existing setup import and message open services.",
-        "A headless trusted-ref command boundary exists for future native UI use.",
-        "Carrier commands consume one-shot trusted file references",
-        "return managed save grants for output.",
+        "Explicit PNG carrier controls are available as collapsed, secondary UI actions.",
+        "They do not alter or auto-detect files in normal `.paracci` forms or drop zones.",
+        "Browser carrier operations use bounded multipart uploads and PNG downloads.",
+        "Native carrier operations use purpose-scoped, one-shot trusted references",
+        "existing one-shot managed save grants.",
         "Carrier transport is an outer wrapper only.",
         "It must not change the existing",
         "`.paracci` setup, responder, or message envelope formats.",
@@ -186,11 +195,14 @@ def test_carrier_transport_doc_records_skeleton_security_model():
         "Carrier import and export command helpers must use trusted file references",
         "managed save or download grant patterns, never caller-provided destination paths.",
         "Source carrier and cover files are not auto-deleted",
+        "Raw path-shaped fields are rejected before file, trusted-reference, or carrier helpers run.",
         "CRC32 is used only to detect carrier corruption or transport damage.",
         "It is not cryptographic authentication",
         "does not replace the existing `.paracci` validation, open, or decrypt path.",
         "does not auto-detect carrier files in normal",
-        "sent as a file or document, not as an inline photo.",
+        "sent as a file/document, not as an inline photo.",
+        "does not guarantee invisibility, resistance to steganalysis, or survival after image transformation.",
+        "Importing an initiator setup carrier still produces the normal responder `.paracci` file as the primary result.",
         "QR/Matrix carrier work must be described as visible robust transport",
         "not invisible steganography",
     ]
@@ -202,12 +214,85 @@ def test_carrier_transport_doc_records_skeleton_security_model():
         "authenticated carrier",
         "tamper-proof carrier",
     ]
+    stale_claims = [
+        "core-only PNG lossless carrier adapter",
+        "before carrier transport is exposed through user-facing flows",
+        "headless trusted-ref command boundary exists for future native UI use",
+        "does not add QR/Matrix logic, UI routes, frontend controls",
+    ]
 
     for phrase in required_phrases:
         assert phrase in doc
     doc_lower = doc.lower()
     for claim in forbidden_claims:
         assert claim not in doc_lower
+    for claim in stale_claims:
+        assert claim.lower() not in doc_lower
+
+
+def test_carrier_docs_link_and_record_user_visible_limitations():
+    readme = " ".join(_read(README_PATH).split())
+    security = _read(SECURITY_PATH)
+    shields = " ".join(_read(CARRIER_SHIELDS_DOC_PATH).split())
+
+    assert "[CARRIER_TRANSPORT.md](paracci/docs/CARRIER_TRANSPORT.md)" in readme
+    assert "[CARRIER_TRANSPORT.md](paracci/docs/CARRIER_TRANSPORT.md)" in security
+    assert "Carrier mode is disabled by default" in readme
+    assert "Normal `.paracci` setup, responder, seal, import, and open flows remain primary and unchanged." in readme
+    assert "Send carrier PNGs as files/documents." in readme
+    assert "recompress, resize, convert, or strip image data" in readme
+    assert "Carrier and cover source files are not automatically deleted." in readme
+
+    assert "PNG carrier mode is optional, disabled by default" in shields
+    assert "CRC32 is not cryptographic authentication." in shields
+    assert "envelope validation and AEAD checks remain the security authority." in shields
+    assert "Carrier PNGs should be sent as files/documents." in shields
+    assert "does not guarantee invisibility, resistance to steganalysis" in shields
+    assert "Carrier and cover source files are not automatically deleted." in shields
+
+
+def test_carrier_docs_record_focused_validation_and_release_gates():
+    tests_doc = _read(CARRIER_TESTS_DOC_PATH)
+
+    required_phrases = [
+        "## PNG Carrier Manual Validation",
+        "## Test Gaps & 1.8.0 Release Checklist",
+        "node --test paracci/tests/test_carrier_ui.mjs",
+        "paracci/tests/test_carrier_core.py paracci/tests/test_carrier_png.py",
+        "paracci/tests/test_carrier_services.py",
+        "paracci/tests/test_carrier_routes.py",
+        "paracci/tests/test_carrier_ui.py paracci/tests/test_security_docs.py",
+        "Confirm normal `.paracci` drop zones do not auto-detect PNG files",
+        "Keep root `VERSION` unchanged during Task 6.",
+        "Preserve the 1.7.1 offline Ed25519 release-signing model.",
+        "Do not commit generated carriers, `.paracci` files, screenshots, logs, release artifacts",
+    ]
+
+    for phrase in required_phrases:
+        assert phrase in tests_doc
+
+
+def test_carrier_documentation_avoids_security_overclaims():
+    combined = "\n".join(
+        _read(path).lower()
+        for path in (
+            README_PATH,
+            CARRIER_TRANSPORT_DOC_PATH,
+            CARRIER_ENGINEERING_DOC_PATH,
+            CARRIER_SHIELDS_DOC_PATH,
+        )
+    )
+    forbidden_claims = [
+        "undetectable carrier",
+        "carrier cannot be detected",
+        "authenticated carrier",
+        "tamper-proof carrier",
+        "carrier guarantees invisibility",
+        "carrier survives recompression",
+    ]
+
+    for claim in forbidden_claims:
+        assert claim not in combined
 
 
 def test_agents_doc_records_required_agent_workflow():

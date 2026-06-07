@@ -70,6 +70,7 @@ Paracci is designed with specific architectural trade-offs to enable a serverles
 - [README.md](README.md) (Security Model section) — For a high-level overview of our security design.
 - [SECURITY_SHIELDS.md](paracci/docs/SECURITY_SHIELDS.md) — For details on platform-native device key binding (shields) and their platform-specific limitations.
 - [ARCHITECTURE.md](paracci/docs/ARCHITECTURE.md) — For the threat model governing our Flask + pywebview loopback backend architecture.
+- [CARRIER_TRANSPORT.md](paracci/docs/CARRIER_TRANSPORT.md) - For the optional PNG carrier trust boundary, workflow, and transport limitations.
 
 - [SECURITY_ENGINEERING.md](paracci/docs/SECURITY_ENGINEERING.md) - For non-negotiable engineering invariants that must not be weakened.
 - [SECURITY_REGRESSION_LEDGER.md](paracci/docs/SECURITY_REGRESSION_LEDGER.md) - For sanitized fixed vulnerability classes and regression expectations.

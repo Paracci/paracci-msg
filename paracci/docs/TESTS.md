@@ -64,6 +64,22 @@ Run the focused pre-push release validation contract tests:
 .venv\Scripts\python.exe -m pytest paracci/tests/test_security_docs.py -q
 ```
 
+Run the focused PNG carrier transport tests:
+
+```powershell
+.venv\Scripts\python.exe -m pytest paracci/tests/test_carrier_core.py paracci/tests/test_carrier_png.py -q
+.venv\Scripts\python.exe -m pytest paracci/tests/test_carrier_services.py -q
+.venv\Scripts\python.exe -m pytest paracci/tests/test_carrier_routes.py -q
+.venv\Scripts\python.exe -m pytest paracci/tests/test_carrier_ui.py paracci/tests/test_security_docs.py -q
+node --test paracci/tests/test_carrier_ui.mjs
+```
+
+These suites cover carrier limits and generic errors, PNG round trips and image
+budgets, downstream setup/message validation, BurnDB replay behavior, trusted
+file-reference and save-grant scopes, loopback route protections, raw-path
+rejection, secondary/default-off UI behavior, conservative locale wording, and
+the absence of PNG auto-detection in normal `.paracci` controls.
+
 Run the Python-runtime browser console smoke before release candidates or when
 frontend/bootstrap/runtime validation changes. This is not part of the quick
 unit-test loop because it launches Paracci plus a real Chromium browser:
@@ -172,9 +188,42 @@ The `Build & Release` workflow still owns CI-only release steps: Windows package
 - Header validation (Host, Origin, Referer, and Fetch Metadata).
 - CSRF validation and cookie flag checks.
 
+### 7. Optional PNG Carrier Transport
+- Shared carrier and extracted-payload limits, stable generic errors, and unsupported carrier-kind handling.
+- Lossless PNG capacity estimation, exact extracted bytes, metadata stripping, and image decode budgets.
+- Existing setup, responder, message, bonding, decrypt, package, and BurnDB validation after extraction.
+- Purpose-scoped one-shot trusted references and size-limited managed save grants.
+- Protected Flask routes, bounded multipart input, raw-path rejection, no-store behavior, and redacted failures.
+- Collapsed secondary controls, explicit PNG selection, safe localized errors, and unchanged normal `.paracci` forms and drop zones.
+
 ---
 
-## Test Gaps & Release Checklist
+## PNG Carrier Manual Validation
+
+Use temporary test files outside the repository and do not commit generated PNG
+or `.paracci` files.
+
+1. Complete the normal initiator/responder setup ceremony and verify the normal `.paracci` outputs remain primary.
+2. Explicitly expand the optional carrier panel, select a sufficiently large lossless PNG cover, and export initiator setup into a PNG carrier.
+3. Import that setup carrier and verify the normal responder `.paracci` file is the primary result.
+4. Export the responder into a PNG carrier only through the separate secondary action, then import it into the initiator session.
+5. Seal a message through both the normal `.paracci` flow and the explicit PNG carrier flow; open both through their matching controls.
+6. Verify wrong, corrupt, truncated, or modified PNGs fail with localized generic errors and no backend detail.
+7. Verify a cover with insufficient capacity produces no output and exposes no capacity internals.
+8. Confirm browser output downloads PNG bytes and Windows native output consumes the existing one-shot save grant.
+9. Confirm carrier and cover source files remain present and unchanged after import, open, export, and seal.
+10. Confirm normal `.paracci` drop zones do not auto-detect PNG files and all affected pages render without console errors.
+
+## Test Gaps & 1.8.0 Release Checklist
+
+- **Focused Carrier Gate**: Run all carrier Python and Node commands listed above.
+- **Normal Flow Regression Gate**: Run the full Python suite so setup, responder, message seal/open, package, loopback, broker, and native behavior remain covered outside carrier-specific tests.
+- **Browser Render Gate**: Run the unchanged Python-runtime browser-console smoke. Carrier protocol behavior remains in focused Python and Node tests rather than browser smoke.
+- **Windows Candidate Gate**: After a later version bump and package build, run executable and portable-ZIP browser smoke, packaged runtime smoke, artifact validation, and the manual native save-grant checks above.
+- **Linux Candidate Gate**: Run Docker/Linux parity before release and packaged-runtime validation after building Linux candidates.
+- **Version Gate**: Keep root `VERSION` unchanged during Task 6. Perform the 1.8.0 version bump only after carrier acceptance and release-candidate validation.
+- **Signing Gate**: Preserve the 1.7.1 offline Ed25519 release-signing model. CI may create a draft, but publication must continue through the signed-manifest verification workflow.
+- **Artifact Hygiene Gate**: Do not commit generated carriers, `.paracci` files, screenshots, logs, release artifacts, local paths, tokens, keys, passphrases, or secrets.
 - **WebView Interface Manual Check**: Launch the application locally under different platforms using `--debug` mode to manually verify the UI layout, attachments drawer, and configuration settings.
 - **Multi-User Simulation**: Isolated profile tests cover the generated X-to-Y first-message route. Run parallel debug modes (`run.py --user x` and `run.py --user y`) to verify the full WebView ceremony and subsequent message delivery.
 - **Standalone Binary Packaging Gates**: Packaged executables require confirmation on clean target operating systems to verify native shell loading, anti-screenshot behaviors, and proper device key storage registration.

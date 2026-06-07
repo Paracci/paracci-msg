@@ -34,6 +34,26 @@ Think of it as a **locked envelope** that only the intended recipient can open, 
 
 ---
 
+## Optional PNG Carrier Transport
+
+Paracci 1.8.0 includes optional PNG lossless carrier transport as a secondary,
+explicit workflow. Normal `.paracci` setup, responder, seal, import, and open
+flows remain primary and unchanged. Carrier mode is disabled by default and is
+never auto-detected by the normal `.paracci` file controls.
+
+A PNG carrier is only an outer transport wrapper. Extracted bytes still pass
+through the normal Paracci envelope validation, authentication, decryption,
+bonding, replay protection, and package limits. The carrier does not provide a
+separate cryptographic security boundary or guarantee invisibility.
+
+Send carrier PNGs as files/documents. Social platforms and messengers may
+recompress, resize, convert, or strip image data and make extraction fail.
+Carrier and cover source files are not automatically deleted. See
+[CARRIER_TRANSPORT.md](paracci/docs/CARRIER_TRANSPORT.md) for the detailed
+security model and limitations.
+
+---
+
 ## Security Model
 
 ### Cryptographic Design
@@ -173,6 +193,7 @@ The generated X profile must send the first message. Y remains active but unbond
 - [paracci/desktop/](paracci/desktop/): Native desktop helper services, including platform-specific credential store integration (Windows DPAPI, macOS Keychain, Linux Secret Service).
 - [paracci/audits/](paracci/audits/): Internal QA, dependency, performance, and translation auditing suite.
 - [paracci/docs/](paracci/docs/): Security model documentation and shield guarantees.
+- [paracci/docs/CARRIER_TRANSPORT.md](paracci/docs/CARRIER_TRANSPORT.md): Optional PNG carrier workflow, security boundary, and transport limitations.
 - [paracci/docs/SECURITY_ENGINEERING.md](paracci/docs/SECURITY_ENGINEERING.md): Non-negotiable security engineering invariants for maintainers and coding agents.
 - [paracci/docs/SECURITY_REGRESSION_LEDGER.md](paracci/docs/SECURITY_REGRESSION_LEDGER.md): Sanitized fixed-vulnerability-class ledger and regression expectations.
 

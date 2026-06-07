@@ -190,6 +190,34 @@ Regression-test style:
 
 - Preview route and template tests should prove unsafe MIME types are rejected or downloaded safely, image limits fail closed, non-downloadable bytes are not exposed inline, and external navigation is blocked.
 
+## Carrier Transport
+
+What must remain true:
+
+- Carrier mode remains optional, disabled by default, and separate from normal `.paracci` forms and drop zones.
+- A carrier is an outer transport wrapper only. It does not change or replace the setup, responder, or message envelope format.
+- Carrier and image size, pixel, dimension, frame-count, and decompression budgets are enforced before expensive decoding or transformation.
+- Extracted bytes remain untrusted and must enter the existing setup import or message open validation, authentication, decryption, bonding, BurnDB, package, and preview paths.
+- Carrier routes retain the same bearer, CSRF, same-origin/source-header, no-store, and redaction protections as equivalent session routes.
+- Browser inputs use bounded multipart uploads. Native inputs use purpose-scoped, one-shot trusted references; output uses browser PNG bytes or existing one-shot, size-limited managed save grants.
+- Raw source or destination paths are rejected before file, trusted-reference, or carrier helpers run.
+- Carrier and cover source files are not automatically deleted or modified.
+- Public carrier failures remain stable and generic. Errors and logs must not expose payload bytes, filenames, local paths, tokens, carrier internals, image metadata, validation state, replay state, or cryptographic failure details.
+- CRC32 is carrier corruption and transport-damage detection only. Existing envelope authentication and AEAD validation remain the security authority.
+
+Unsafe changes to avoid:
+
+- Auto-detecting PNG carriers in normal `.paracci` import, open, or drop flows.
+- Treating successful carrier extraction as proof that the extracted bytes are a valid Paracci envelope.
+- Adding raw path fields, caller-selected destination paths, broad native-save methods, or reusable carrier file references.
+- Describing PNG carrier transport as invisible, resistant to steganalysis, tamper-proof, or safe across recompression, resizing, or conversion.
+
+Regression-test style:
+
+- Core and PNG tests should enforce carrier, extracted-payload, and image budgets; exact byte round trips; metadata stripping; unsupported-kind rejection; and generic failure behavior.
+- Service, UIApi, and route tests should prove extraction reaches existing validation and replay controls, trusted references and save grants retain their scopes, raw paths fail before helpers, and source files remain untouched.
+- Template and JavaScript tests should prove carrier controls remain collapsed and secondary, normal `.paracci` flows remain primary, PNGs are not auto-detected, errors use localized text-safe rendering, and no raw-save fallback is introduced.
+
 ## Native Filesystem Save, Open, Import, And Reveal Flows
 
 What must remain true:
