@@ -109,6 +109,12 @@ asset failures, or app/static 4xx/5xx responses needed for page load. Failure
 output is redacted and must not include bearer tokens, CSRF tokens, local paths,
 or temporary profile/data directories.
 
+Paracci E2E viewport checks target Windows and Linux desktop use. Compact
+desktop window cases are desktop narrow-window regressions for
+pywebview/browser window layout stability: they verify desktop layout stability
+and no horizontal overflow at supported desktop window sizes. Viewport
+dimensions do not imply additional platform coverage.
+
 After building a Windows release candidate, run the same browser-console policy
 against the frozen executable before preparing release assets:
 

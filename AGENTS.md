@@ -70,5 +70,6 @@ Use these repo-safe references when planning security-sensitive work:
 - Keep the deterministic release-facing configuration at one worker and zero retries. Do not hide regressions with skips, xfails, broad console/network allowlists, or automatic retries.
 - Scope expected negative network responses by exact method, path, and status. Unexpected console errors, page errors, request failures, same-origin application errors, or external requests must fail the test.
 - A browser mock is not proof of native save, native attachment staging, UIApi, or pywebview behavior. Keep those claims in focused native-boundary tests.
+- Describe compact viewport coverage as a desktop narrow-window regression for pywebview/browser window layout stability. Verify desktop layout stability and no horizontal overflow at supported desktop window sizes; viewport dimensions alone do not expand platform coverage.
 - Update the E2E locator contract and affected release-gate test in the same change as a session UI behavior change.
 - Before committing E2E work, verify ignored artifacts remain untracked and scan the staged diff for generated files, traces, screenshots, logs, local paths, tokens, keys, passphrases, and secrets.
