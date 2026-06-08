@@ -80,6 +80,134 @@ file-reference and save-grant scopes, loopback route protections, raw-path
 rejection, secondary/default-off UI behavior, conservative locale wording, and
 the absence of PNG auto-detection in normal `.paracci` controls.
 
+## Playwright Session Workspace E2E
+
+The local Playwright suite is the deterministic browser-level replacement for
+repeatable manual QA of the unified session workspace. It launches the real
+`run.py --no-gui` source runtime with fresh temporary profiles, uses Chromium
+with one worker and no retries, binds and navigates only to `127.0.0.1`, and
+fails external requests or unexpected browser, console, network, and
+same-origin HTTP errors.
+
+The current ten-test suite covers:
+
+- Phase 1 bootstrap, service-worker bearer setup, CSRF state, and loopback-only
+  browser policy.
+- Phase 2 standard `.paracci` first-message round trip, attachment presentation,
+  single-open state, and a precisely scoped replay rejection.
+- Phase 3 PNG carrier message round trip, insufficient-capacity handling, and
+  isolation between standard and carrier drop targets.
+- Phase 4A desktop layout stability at `1280x900` and the `900x700` compact
+  desktop window, including no document-level horizontal overflow, reachable
+  session controls, obvious-overlap checks, accessible names, keyboard
+  reachability, tab behavior, and visible focus indicators.
+- Phase 4B attachment removal through a standard round trip, saving-disabled
+  attachment presentation, and global routing for standard-message and
+  attachment drops.
+
+This is a Windows/Linux desktop application harness. Compact viewport checks
+are desktop narrow-window regressions for pywebview/browser window layout
+stability. They do not expand platform coverage beyond supported desktop
+window sizes. The accessibility checks cover basic names, keyboard reachability,
+tab behavior, and focus visibility; they are not a full accessibility audit.
+
+Browser E2E proves the source-runtime browser workflow only. It does not prove
+native save grants, native attachment staging, UIApi or pywebview bridge
+behavior, operating-system file dialogs, credential-store integration, or
+packaged executable behavior. Keep those claims in focused Python and native
+boundary tests and in the packaged-runtime validation described below.
+
+### Local Pre-Release Commands
+
+Set the source runtime used by Playwright:
+
+```powershell
+$env:PARACCI_E2E_PYTHON = (Resolve-Path '.\.venv\Scripts\python.exe').Path
+```
+
+Run the P0 release-gate E2E set:
+
+```powershell
+npx playwright test paracci/tests/e2e/bootstrap-policy.spec.mjs paracci/tests/e2e/p0-standard.spec.mjs paracci/tests/e2e/p0-carrier.spec.mjs --config playwright.config.mjs
+```
+
+Run the full local Playwright E2E suite, including the P1 desktop layout,
+accessibility, attachment-editing, saving-disabled, and drop-routing coverage:
+
+```powershell
+npx playwright test --config playwright.config.mjs
+```
+
+Run the focused Node session-state and carrier-UI tests:
+
+```powershell
+node --test paracci/tests/test_session_state.mjs paracci/tests/test_carrier_ui.mjs
+```
+
+Run the focused Python profile-provisioning, carrier route/UI, and documentation
+guard tests:
+
+```powershell
+.venv\Scripts\python.exe -m pytest paracci/tests/test_e2e_profile_provisioner.py paracci/tests/test_carrier_ui.py paracci/tests/test_carrier_routes.py paracci/tests/test_security_docs.py -q
+```
+
+Finish with diff validation:
+
+```powershell
+git diff --check
+git diff --cached --check
+```
+
+The browser suite, Node tests, and Python tests protect different boundaries.
+Do not substitute one for another: Playwright covers real browser workflows,
+Node covers session and frontend state contracts, Python covers provisioning,
+routes, security policy, and native-boundary logic, and focused native
+bridge/save-grant tests remain required because browser E2E cannot prove those
+privileged operations.
+
+### Artifacts And Debugging
+
+Playwright traces, screenshots, reports, videos, downloads, and redacted failure
+logs belong only under the ignored `output/playwright/` tree. Use traces locally
+to diagnose failures, then leave them untracked. Do not publish them or attach
+them to releases. Treat traces as locally sensitive because they may contain
+synthetic decrypted content or ephemeral authentication context.
+
+Never stage Playwright output, generated `.paracci` files, carrier PNGs,
+downloads, traces, screenshots, logs, local paths, secrets, tokens, keys,
+passphrases, release artifacts, or files under `prototypes/`. Before committing,
+inspect the staged names and content:
+
+```powershell
+git diff --cached --name-only
+git diff --cached --check
+git diff --cached --name-only | Select-String 'output[\\/]playwright|prototypes|\.(paracci|png|zip|log)$'
+$localPathPattern = '[A-Za-z]:' + '[\\/]|/' + 'home/'
+$privateKeyPattern = 'BEGIN .*PRIVATE' + ' KEY'
+git diff --cached -- | Select-String "$localPathPattern|$privateKeyPattern"
+git status --short --untracked-files=all
+```
+
+The two `Select-String` scans should produce no matches. Also inspect the staged
+diff directly for credentials or sensitive values that do not match those
+patterns.
+
+### E2E Maintenance
+
+- Update the affected E2E helper and specs in the same change as a session UI
+  behavior or locator change.
+- Keep page-driver helpers thin and assertion-free. Assertions belong in specs.
+- Prefer accessible roles and labels, followed by existing stable IDs. Add
+  `data-e2e` only when necessary for a dynamic or ambiguous behavior-oriented
+  locator.
+- Do not add broad console, network, or HTTP allowlists, skips, xfails, or
+  retries to hide regressions.
+- Scope every expected negative HTTP response to the exact method, path, status,
+  and test step. All other 4xx/5xx responses, console errors, page errors,
+  request failures, and external requests remain failures.
+- Use only synthetic in-memory or temporary files and isolated temporary
+  profiles. Never use caller-provided files or persistent user data.
+
 Run the Python-runtime browser console smoke before release candidates or when
 frontend/bootstrap/runtime validation changes. This is not part of the quick
 unit-test loop because it launches Paracci plus a real Chromium browser:
@@ -224,12 +352,12 @@ or `.paracci` files.
 
 - **Focused Carrier Gate**: Run all carrier Python and Node commands listed above.
 - **Normal Flow Regression Gate**: Run the full Python suite so setup, responder, message seal/open, package, loopback, broker, and native behavior remain covered outside carrier-specific tests.
-- **Browser Render Gate**: Run the unchanged Python-runtime browser-console smoke. Carrier protocol behavior remains in focused Python and Node tests rather than browser smoke.
+- **Browser Session Workspace Gate**: Run the P0 Playwright release gate, then the full local Playwright suite. Keep the Python-runtime browser-console smoke as the separate bootstrap/render policy check.
 - **Windows Candidate Gate**: After a later version bump and package build, run executable and portable-ZIP browser smoke, packaged runtime smoke, artifact validation, and the manual native save-grant checks above.
 - **Linux Candidate Gate**: Run Docker/Linux parity before release and packaged-runtime validation after building Linux candidates.
 - **Version Gate**: Keep root `VERSION` unchanged during Task 6. Perform the 1.8.0 version bump only after carrier acceptance and release-candidate validation.
 - **Signing Gate**: Preserve the 1.7.1 offline Ed25519 release-signing model. CI may create a draft, but publication must continue through the signed-manifest verification workflow.
-- **Artifact Hygiene Gate**: Do not commit generated carriers, `.paracci` files, screenshots, logs, release artifacts, local paths, tokens, keys, passphrases, or secrets.
-- **WebView Interface Manual Check**: Launch the application locally under different platforms using `--debug` mode to manually verify the UI layout, attachments drawer, and configuration settings.
-- **Multi-User Simulation**: Isolated profile tests cover the generated X-to-Y first-message route. Run parallel debug modes (`run.py --user x` and `run.py --user y`) to verify the full WebView ceremony and subsequent message delivery.
+- **Artifact Hygiene Gate**: Do not commit generated carriers, `.paracci` files, screenshots, logs, release artifacts, local paths, tokens, keys, passphrases, or secrets. Traces and downloads are also local-only artifacts.
+- **Native WebView Manual Check**: Use platform-local debug runs only for pywebview and operating-system behavior that browser E2E cannot prove. Do not repeat the automated desktop layout stability, attachment-editing, saving-disabled, or drop-routing checks as routine manual browser QA.
+- **Multi-User Simulation**: The isolated Playwright profile pair covers the source-runtime X-to-Y first-message route and subsequent receiver send capability. Reserve parallel debug runs (`run.py --user x` and `run.py --user y`) for native integration investigation rather than the routine browser pre-release gate.
 - **Standalone Binary Packaging Gates**: Packaged executables require confirmation on clean target operating systems to verify native shell loading, anti-screenshot behaviors, and proper device key storage registration.
