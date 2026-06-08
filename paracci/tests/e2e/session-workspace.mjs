@@ -40,6 +40,10 @@ export class SessionWorkspace {
         this.attachmentLabel = page.locator('label[for="attachments"]');
         this.attachmentInput = page.locator('#attachments');
         this.attachmentDropZone = page.locator('#attachment-drop-zone');
+        this.selectedAttachmentsContainer = page.locator('#selected-attachments-container');
+        this.selectedAttachmentItems = page.locator(
+            '#selected-attachments-list .selected-attachment-item'
+        );
         this.ttlControl = page.locator('.session-ttl-field .apple-custom-select-wrapper');
         this.ttlTrigger = this.ttlControl.locator('.apple-custom-select-trigger');
         this.allowDownload = page.getByLabel('Allow Saving / Downloading', { exact: true });
@@ -79,6 +83,7 @@ export class SessionWorkspace {
         this.allowDownloadAlert = page.locator('#allow-download-alert');
         this.noDownloadAlert = page.locator('#no-download-alert');
         this.attachmentsContainer = page.locator('#attachments-container');
+        this.openedAttachmentItems = page.locator('#attachments-list-items .attachment-item');
     }
 
     async bootstrapAndOpenSession(entrypoint, passphrase) {
@@ -119,14 +124,10 @@ export class SessionWorkspace {
         await (format === 'carrier' ? this.openCarrierFormat : this.openStandardFormat).click();
     }
 
-    async prepareMessage({ text, attachment, ttlSeconds, allowDownload }) {
+    async prepareMessage({ text, attachment, attachments, ttlSeconds, allowDownload }) {
         await this.selectCreate();
         await this.messageInput.fill(text);
-        if (attachment) {
-            await this.attachmentInput.setInputFiles(attachment);
-        } else {
-            await this.attachmentInput.setInputFiles([]);
-        }
+        await this.stageAttachments(attachments ?? (attachment ? [attachment] : []));
         await this.ttlTrigger.click();
         await this.ttlControl.locator(
             `.apple-custom-option[data-value="${String(ttlSeconds)}"]`
@@ -138,8 +139,38 @@ export class SessionWorkspace {
         }
     }
 
-    async sealStandardMessage({ text, attachment, ttlSeconds, allowDownload }) {
-        await this.prepareMessage({ text, attachment, ttlSeconds, allowDownload });
+    async stageAttachments(attachments) {
+        await this.attachmentInput.setInputFiles(attachments);
+    }
+
+    selectedAttachmentRow(filename) {
+        return this.selectedAttachmentItems.filter({ hasText: filename });
+    }
+
+    async removeSelectedAttachment(filename) {
+        await this.selectedAttachmentRow(filename)
+            .getByRole('button', { name: 'Remove file', exact: true })
+            .click();
+    }
+
+    async selectedAttachmentNames() {
+        return this.attachmentInput.evaluate(input => (
+            Array.from(input.files || [], file => file.name)
+        ));
+    }
+
+    async sealStandardMessage({ text, attachment, attachments, ttlSeconds, allowDownload }) {
+        await this.prepareMessage({
+            text,
+            attachment,
+            attachments,
+            ttlSeconds,
+            allowDownload,
+        });
+        return this.sealPreparedStandardMessage();
+    }
+
+    async sealPreparedStandardMessage() {
         await this.createStandardFormat.click();
 
         const downloadPromise = this.page.waitForEvent('download');
@@ -193,7 +224,10 @@ export class SessionWorkspace {
     async openStandardFile(file) {
         await this.selectOpenFormat('standard');
         await this.openFileInput.setInputFiles(file);
+        return this.openSelectedStandard();
+    }
 
+    async openSelectedStandard() {
         const pathname = `/session/${this.sessionId}/open`;
         const responsePromise = this.page.waitForResponse(response => {
             const request = response.request();
@@ -233,18 +267,23 @@ export class SessionWorkspace {
         await this.dropFile(this.carrierOpenDropZone, file);
     }
 
-    async dropFile(dropZone, file) {
+    async dropOnAttachmentZone(files) {
+        await this.dropFile(this.attachmentDropZone, files);
+    }
+
+    async dropFile(dropZone, files) {
         const sourceId = `paracci-e2e-drop-source-${Date.now()}`;
         await this.page.evaluate(id => {
             const input = document.createElement('input');
             input.id = id;
             input.type = 'file';
+            input.multiple = true;
             input.hidden = true;
             document.body.appendChild(input);
         }, sourceId);
         const source = this.page.locator(`#${sourceId}`);
         try {
-            await source.setInputFiles(file);
+            await source.setInputFiles(files);
             await dropZone.evaluate((element, id) => {
                 const input = document.getElementById(id);
                 const transfer = new DataTransfer();
