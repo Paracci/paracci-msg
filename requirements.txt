@@ -28,7 +28,7 @@ Pillow>=10.3.0
 packaging>=24.0
 
 # Database migrations
-yoyo-migrations>=8.2.0
+yoyo-migrations>=9.0.0
 
 # SQLCipher for full-database encryption
 sqlcipher3-wheels==0.5.7
