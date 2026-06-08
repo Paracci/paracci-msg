@@ -194,7 +194,7 @@ Regression-test style:
 
 What must remain true:
 
-- Carrier mode remains optional, disabled by default, and separate from normal `.paracci` forms and drop zones.
+- Carrier mode remains optional, disabled by default, and explicitly selected. Normal `.paracci` forms and drop zones remain the default and do not auto-detect carrier files.
 - A carrier is an outer transport wrapper only. It does not change or replace the setup, responder, or message envelope format.
 - Carrier and image size, pixel, dimension, frame-count, and decompression budgets are enforced before expensive decoding or transformation.
 - Extracted bytes remain untrusted and must enter the existing setup import or message open validation, authentication, decryption, bonding, BurnDB, package, and preview paths.
@@ -216,7 +216,7 @@ Regression-test style:
 
 - Core and PNG tests should enforce carrier, extracted-payload, and image budgets; exact byte round trips; metadata stripping; unsupported-kind rejection; and generic failure behavior.
 - Service, UIApi, and route tests should prove extraction reaches existing validation and replay controls, trusted references and save grants retain their scopes, raw paths fail before helpers, and source files remain untouched.
-- Template and JavaScript tests should prove carrier controls remain collapsed and secondary, normal `.paracci` flows remain primary, PNGs are not auto-detected, errors use localized text-safe rendering, and no raw-save fallback is introduced.
+- Template and JavaScript tests should prove carrier controls remain explicit, optional, and secondary within the session workflow, normal `.paracci` flows remain primary, PNGs are not auto-detected, errors use localized text-safe rendering, and no raw-save fallback is introduced.
 
 ## Native Filesystem Save, Open, Import, And Reveal Flows
 

@@ -1,6 +1,14 @@
 <!-- app/templates/session.html -->
 {% extends "base.html" %}
-{% macro png_carrier_panel(panel_id, action_url, action_label, operation, source_form_id='') %}
+{% macro png_carrier_panel(panel_id, action_url, action_label, operation, source_form_id='', integrated=false) %}
+{% if integrated %}
+<div class="carrier-panel carrier-option carrier-option-integrated"
+     id="{{ panel_id }}"
+     data-carrier-operation="{{ operation }}"
+     data-carrier-url="{{ action_url }}"
+     {% if source_form_id %}data-carrier-source-form="{{ source_form_id }}"{% endif %}
+     hidden>
+{% else %}
 <details class="carrier-panel carrier-option"
          id="{{ panel_id }}"
          data-carrier-operation="{{ operation }}"
@@ -14,6 +22,7 @@
     </span>
     <span class="carrier-panel-chevron" aria-hidden="true">+</span>
   </summary>
+{% endif %}
   <div class="carrier-panel-body">
     <div class="carrier-guidance">
       <p class="carrier-note">{{ _('carrier.outer_wrapper_note') }}</p>
@@ -47,7 +56,11 @@
       </button>
     </div>
   </div>
+{% if integrated %}
+</div>
+{% else %}
 </details>
+{% endif %}
 {% endmacro %}
 {% block title %}Paracci - {{ meta.label }}{% endblock %}
 
@@ -66,7 +79,7 @@
         <span class="badge badge-{{ meta.state }} badge-lg {{ 'badge-active-pulse' if meta.state == 'active' else '' }}"
               style="{% if meta.state == 'active' %}--badge-color: {{ meta.color }};{% endif %}">
           {% if meta.state != 'active' %}<span class="badge-dot"></span>{% endif %}
-          {{ _('session.bonded_active') if meta.state == 'active' and meta.safety_confirmed else (_('session.state_unverified') if meta.peer_pub and (meta.state == 'unverified' or not meta.safety_confirmed) else _('session.bonded_pending')) }}
+          {{ _('session.bonded_active') if meta.state == 'active' and meta.safety_confirmed and meta.can_send else (_('session.state_unverified') if meta.peer_pub and (meta.state == 'unverified' or not meta.safety_confirmed) else _('session.bonded_pending')) }}
         </span>
         <a href="{{ url_for('main.session_settings', sid=sid) }}" class="btn btn-icon btn-ghost btn-sm" title="{{ _('session.settings_btn', default='Session Settings') }}">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="20" height="20">
@@ -282,7 +295,7 @@
 
 <!-- Y Responder Warning Banner -->
 {% if meta.role == 'Y' and not meta.can_send %}
-<div class="card card-warn session-warning-banner" id="y-responder-warning">
+<div class="card card-warn session-warning-banner session-bond-file-notice" id="y-responder-warning">
   <button type="button" id="dismiss-y-warning" data-session-id="{{ sid }}" class="banner-close-btn" title="{{ _('common.close') }}">&times;</button>
   <div class="card-body">
     <h2 class="text-warn">{{ _('session.ready_title') }}</h2>
@@ -309,132 +322,281 @@
 </div>
 {% endif %}
 
-<!-- Action Grid -->
-<div class="action-grid">
-  <!-- ENCRYPT MESSAGE -->
-  <div class="card">
-    <div class="card-header">
-      <div>
-        <h2>{{ _('session.seal_title') }}</h2>
+{% set open_action_selected = (not meta.can_send) or open_native_file_id %}
+<section class="session-unified-workspace {{ 'is-send-capable' if meta.can_send else 'is-bond-pending' }}"
+         id="session-unified-workspace"
+         data-bonded-label="{{ _('session.bonded_active') }}"
+         data-bonded-detail="{{ _('session.ready_title') }}">
+  <header class="session-workspace-status" aria-live="polite">
+    <span class="session-workspace-status-icon" aria-hidden="true">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="22" height="22">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M12 2.25l7.5 3v5.25c0 4.65-3.15 8.25-7.5 9.75-4.35-1.5-7.5-5.1-7.5-9.75V5.25l7.5-3z" />
+      </svg>
+    </span>
+    <span class="session-workspace-status-copy">
+      <small>{{ _('session.role_label') }} {{ meta.role }}</small>
+      <strong id="session-workspace-status-label">
+        {{ _('session.bonded_active') if meta.can_send else _('session.bonded_pending') }}
+      </strong>
+      <span id="session-workspace-status-detail">
+        {{ _('session.ready_title') if meta.can_send else _('session.bond_not_established_y') }}
+      </span>
+    </span>
+    <span class="session-workspace-once-note">{{ _('session.seal_subtitle') }}</span>
+  </header>
+
+  <div class="session-action-switch" role="tablist" aria-label="{{ meta.label }}">
+    <button type="button"
+            class="session-action-tab"
+            id="session-action-create"
+            role="tab"
+            aria-controls="session-create-panel"
+            aria-selected="{{ 'false' if open_action_selected else 'true' }}"
+            tabindex="{{ '-1' if open_action_selected else '0' }}"
+            data-session-action-tab="create">
+      <span class="session-action-tab-icon" aria-hidden="true">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="20" height="20">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 3.487a2.25 2.25 0 013.182 3.182L8.1 18.613 3.75 20.25l1.637-4.35L17.332 3.956a2.25 2.25 0 00-.47-.469z" />
+        </svg>
+      </span>
+      <span>
+        <strong>{{ _('session.seal_title') }}</strong>
         <small>{{ _('session.seal_subtitle') }}</small>
+      </span>
+      <span class="session-action-tab-state" id="session-create-tab-state">
+        {{ _('session.bonded_active') if meta.can_send else _('session.bonded_pending') }}
+      </span>
+    </button>
+    <button type="button"
+            class="session-action-tab"
+            id="session-action-open"
+            role="tab"
+            aria-controls="session-open-panel"
+            aria-selected="{{ 'true' if open_action_selected else 'false' }}"
+            tabindex="{{ '0' if open_action_selected else '-1' }}"
+            data-session-action-tab="open">
+      <span class="session-action-tab-icon" aria-hidden="true">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="20" height="20">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21 8.25l-9 5.25-9-5.25m18 0L12 3 3 8.25m18 0v7.5L12 21l-9-5.25v-7.5M12 13.5V21" />
+        </svg>
+      </span>
+      <span>
+        <strong>{{ _('session.open_title') }}</strong>
+        <small>{{ _('session.open_subtitle') }}</small>
+      </span>
+      <span class="session-action-tab-state">{{ _('session.open_btn') }}</span>
+    </button>
+  </div>
+
+  <div class="session-action-panel"
+       id="session-create-panel"
+       role="tabpanel"
+       aria-labelledby="session-action-create"
+       {% if open_action_selected %}hidden{% endif %}>
+    {% if meta.role == 'Y' and not meta.can_send %}
+    <div id="bond-pending-composer" class="bond-pending-composer">
+      <div class="bond-pending-composer-icon">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="24" height="24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+        </svg>
       </div>
-    </div>
-    <div class="card-body">
-      {% if meta.role == 'Y' and not meta.can_send %}
-      <div id="bond-pending-composer" class="bond-pending-composer">
-        <div class="bond-pending-composer-icon">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="24" height="24">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-          </svg>
-        </div>
+      <div>
         <h3>{{ _('session.bond_not_established_y') }}</h3>
         <p>{{ _('session.waiting_initiator_msg_desc') }}</p>
       </div>
-      {% endif %}
-      <div id="message-composer"{% if not meta.can_send %} hidden{% endif %}>
+      <button type="button" class="btn btn-secondary" data-session-go-open>
+        {{ _('session.open_title') }}
+      </button>
+    </div>
+    {% endif %}
+
+    <div id="message-composer"{% if not meta.can_send %} hidden{% endif %}>
       <form method="POST" action="{{ url_for('main.session_seal', sid=sid) }}" enctype="multipart/form-data"
         id="seal-form">
-
-        <div class="form-group">
-          <label for="message">{{ _('session.message_label') }} <span class="text-muted fw-400">{{ _('session.markdown_supported') }}</span></label>
-          <textarea id="message" name="message" rows="5" placeholder="{{ _('session.message_placeholder') }}"
-            required></textarea>
-        </div>
-
-        <div class="form-group">
-          <label for="attachments">{{ _('session.add_files_label') }} <span class="text-muted fw-400">{{ _('session.multiple_hint') }}</span></label>
-          <div id="attachment-drop-zone" class="card drop-zone attachment-drop-box" data-drop-target="attach">
-            <span class="file-icon-lg font-lg mb-2 block text-center">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="24" height="24" class="mx-auto">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
-              </svg>
-            </span>
-            <strong>{{ _('session.add_files_hint') }}</strong>
-            <p class="font-xs text-dim mt-2">{{ _('session.add_files_desc') }}</p>
-            <input type="file" id="attachments" name="attachments" multiple class="file-input hidden">
+        <div class="session-compose-grid">
+          <div class="form-group session-message-field">
+            <label for="message">{{ _('session.message_label') }} <span class="text-muted fw-400">{{ _('session.markdown_supported') }}</span></label>
+            <textarea id="message" name="message" rows="5" placeholder="{{ _('session.message_placeholder') }}"
+              required></textarea>
           </div>
-          <div id="selected-attachments-container" style="margin-top: 0.5rem; display: none;">
-            <div class="selected-attachments-list" id="selected-attachments-list"></div>
+
+          <div class="form-group session-attachments-field">
+            <label for="attachments">{{ _('session.add_files_label') }} <span class="text-muted fw-400">{{ _('session.multiple_hint') }}</span></label>
+            <div id="attachment-drop-zone" class="card drop-zone attachment-drop-box" data-drop-target="attach">
+              <span class="file-icon-lg font-lg mb-2 block text-center">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="24" height="24" class="mx-auto">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
+                </svg>
+              </span>
+              <strong>{{ _('session.add_files_hint') }}</strong>
+              <p class="font-xs text-dim mt-2">{{ _('session.add_files_desc') }}</p>
+              <input type="file" id="attachments" name="attachments" multiple class="file-input hidden">
+            </div>
+            <div id="selected-attachments-container" style="margin-top: 0.5rem; display: none;">
+              <div class="selected-attachments-list" id="selected-attachments-list"></div>
+            </div>
           </div>
         </div>
 
-        <div class="form-group">
-          <label for="ttl_seconds">{{ _('session.msg_ttl_label') }}</label>
-          <select id="ttl_seconds" name="ttl_seconds" class="apple-select" data-style="form">
-            <option value="0">{{ _('time.infinite') }}</option>
-            <option value="3600">{{ _('time.1h') }}</option>
-            <option value="86400">{{ _('time.1d') }}</option>
-            <option value="604800">{{ _('time.1w') }}</option>
-          </select>
-          <small>{{ _('session.msg_ttl_hint') }}</small>
-        </div>
+        <div class="session-compose-settings">
+          <div class="form-group session-ttl-field">
+            <label for="ttl_seconds">{{ _('session.msg_ttl_label') }}</label>
+            <select id="ttl_seconds" name="ttl_seconds" class="apple-select" data-style="form">
+              <option value="0">{{ _('time.infinite') }}</option>
+              <option value="3600">{{ _('time.1h') }}</option>
+              <option value="86400">{{ _('time.1d') }}</option>
+              <option value="604800">{{ _('time.1w') }}</option>
+            </select>
+            <small>{{ _('session.msg_ttl_hint') }}</small>
+          </div>
 
-        <div class="permit-box form-group">
-          <label class="checkbox-label">
-            <input type="checkbox" id="allow_download" name="allow_download">
-            <span class="permit-text">{{ _('session.allow_download_label') }}</span>
-          </label>
-          <small class="mt-2 block text-muted">
-            {{ _('session.allow_download_hint1') }}
-            <strong class="text-warn">{{ _('session.allow_download_hint2') }}</strong>
-          </small>
+          <div class="permit-box form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="allow_download" name="allow_download">
+              <span class="permit-text">{{ _('session.allow_download_label') }}</span>
+            </label>
+            <small class="mt-2 block text-muted">
+              {{ _('session.allow_download_hint1') }}
+              <strong class="text-warn">{{ _('session.allow_download_hint2') }}</strong>
+            </small>
+          </div>
         </div>
 
         <input type="hidden" name="staged_attachment_ids" id="staged_attachment_ids" value="">
         <input type="hidden" name="single_use" value="on">
-        <button type="submit" class="btn btn-primary" id="seal-submit">
-          {{ _('session.seal_btn') }}
-        </button>
+
+        <div class="session-format-block">
+          <span class="session-format-label">{{ _('session.seal_btn') }}</span>
+          <div class="session-format-switch" role="group" aria-label="{{ _('session.seal_btn') }}">
+            <button type="button"
+                    class="session-format-option"
+                    aria-pressed="true"
+                    data-session-format-action="create"
+                    data-session-format="standard">
+              <span class="session-format-option-icon" aria-hidden="true">P</span>
+              <span>
+                <strong>.paracci</strong>
+                <small>{{ _('session.seal_subtitle') }}</small>
+              </span>
+            </button>
+            <button type="button"
+                    class="session-format-option"
+                    aria-pressed="false"
+                    data-session-format-action="create"
+                    data-session-format="carrier">
+              <span class="session-format-option-icon" aria-hidden="true">PNG</span>
+              <span>
+                <strong>{{ _('carrier.panel_title') }}</strong>
+                <small>{{ _('carrier.panel_optional') }}</small>
+              </span>
+            </button>
+          </div>
+        </div>
+
+        <div class="session-primary-action" data-session-standard-action="create">
+          <span>
+            <strong>.paracci</strong>
+            <small>{{ _('session.allow_download_label') }} - {{ _('session.msg_ttl_label') }} - {{ _('session.add_files_label') }}</small>
+          </span>
+          <button type="submit" class="btn btn-primary" id="seal-submit">
+            {{ _('session.seal_btn') }}
+          </button>
+        </div>
       </form>
+
       {{ png_carrier_panel(
         'message-carrier-seal',
         url_for('main.session_seal_carrier', sid=sid),
         _('carrier.export_message'),
         'download',
-        'seal-form'
+        'seal-form',
+        true
       ) }}
-      </div>
     </div>
   </div>
 
-  <!-- DECRYPT MESSAGE -->
-  <div class="card">
-    <div class="card-header">
-      <div>
-        <h2>{{ _('session.open_title') }}</h2>
-        <small>{{ _('session.open_subtitle') }}</small>
-      </div>
-    </div>
-    <div class="card-body">
-      <form id="open-message-form" enctype="multipart/form-data" novalidate>
-        <input type="hidden" name="native_file_id" id="open-native-file-id" value="{{ open_native_file_id|default('', true) }}">
-        <div id="session-drop-zone" class="card drop-zone attachment-drop-box mb-4" data-drop-target="open">
-            <span class="file-icon-lg font-lg mb-2 block text-center">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="24" height="24" class="mx-auto">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-              </svg>
-            </span>
-            <strong id="file-label">{{ open_native_filename|default(_('session.open_file_not_selected'), true) }}</strong>
-            <p class="font-xs text-dim mt-2">{{ _('session.open_file_hint') }}</p>
-            <input type="file" id="paracci_file" name="paracci_file" accept=".paracci" {% if not open_native_file_id %}required{% endif %} class="hidden">
-        </div>
-        <button type="submit" class="btn btn-secondary" id="btn-open-msg">
-          {{ _('session.open_btn') }}
+  <div class="session-action-panel"
+       id="session-open-panel"
+       role="tabpanel"
+       aria-labelledby="session-action-open"
+       {% if not open_action_selected %}hidden{% endif %}>
+    <div class="session-format-block">
+      <span class="session-format-label">{{ _('session.open_btn') }}</span>
+      <div class="session-format-switch" role="group" aria-label="{{ _('session.open_btn') }}">
+        <button type="button"
+                class="session-format-option"
+                aria-pressed="true"
+                data-session-format-action="open"
+                data-session-format="standard">
+          <span class="session-format-option-icon" aria-hidden="true">P</span>
+          <span>
+            <strong>.paracci</strong>
+            <small>{{ _('session.open_file_hint') }}</small>
+          </span>
         </button>
-      </form>
-      {{ png_carrier_panel(
-        'message-carrier-open',
-        url_for('main.session_open_carrier', sid=sid),
-        _('carrier.extract_message'),
-        'open'
-      ) }}
+        <button type="button"
+                class="session-format-option"
+                aria-pressed="false"
+                data-session-format-action="open"
+                data-session-format="carrier">
+          <span class="session-format-option-icon" aria-hidden="true">PNG</span>
+          <span>
+            <strong>{{ _('carrier.panel_title') }}</strong>
+            <small>{{ _('carrier.panel_optional') }}</small>
+          </span>
+        </button>
+      </div>
     </div>
-  </div>
 
-</div><!-- /action-grid -->
+    <form id="open-message-form" enctype="multipart/form-data" novalidate data-session-standard-action="open">
+      <input type="hidden" name="native_file_id" id="open-native-file-id" value="{{ open_native_file_id|default('', true) }}">
+      <div id="session-drop-zone" class="card drop-zone attachment-drop-box mb-4" data-drop-target="open">
+        <span class="file-icon-lg font-lg mb-2 block text-center">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="24" height="24" class="mx-auto">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+          </svg>
+        </span>
+        <strong id="file-label">{{ open_native_filename|default(_('session.open_file_not_selected'), true) }}</strong>
+        <p class="font-xs text-dim mt-2">{{ _('session.open_file_hint') }}</p>
+        <input type="file" id="paracci_file" name="paracci_file" accept=".paracci" {% if not open_native_file_id %}required{% endif %} class="hidden">
+      </div>
+      <button type="submit" class="btn btn-primary" id="btn-open-msg">
+        {{ _('session.open_btn') }}
+      </button>
+    </form>
+
+    {{ png_carrier_panel(
+      'message-carrier-open',
+      url_for('main.session_open_carrier', sid=sid),
+      _('carrier.extract_message'),
+      'open',
+      '',
+      true
+    ) }}
+  </div>
+</section>
 
   <!-- MESSAGE VIEW CONTAINER -->
-  <div id="message-view-container" style="display: none;">
+  <section class="session-result-region" id="session-result-region" aria-live="polite">
+    <header class="session-result-header">
+      <div>
+        <small id="session-result-state" hidden>{{ _('session.msg_opened') }}</small>
+        <h2>{{ _('session.open_title') }}</h2>
+      </div>
+      <span>{{ _('session.seal_subtitle') }}</span>
+    </header>
+    <div class="session-result-empty" id="session-result-empty">
+      <span class="session-result-empty-icon" aria-hidden="true">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="22" height="22">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21 8.25l-9 5.25-9-5.25m18 0L12 3 3 8.25m18 0v7.5L12 21l-9-5.25v-7.5M12 13.5V21" />
+        </svg>
+      </span>
+      <span>
+        <strong>{{ _('session.open_file_not_selected') }}</strong>
+        <small>{{ _('session.open_subtitle') }}</small>
+      </span>
+    </div>
+    <div id="message-view-container" style="display: none;">
     <div class="opened-message">
       <div class="opened-message-header">
         <div class="flex items-center gap-2">
@@ -500,7 +662,8 @@
         <span>{{ _('session.msg_id_label') }} <strong id="msg-id-short"></strong></span>
       </div>
     </div>
-  </div>
+    </div>
+  </section>
 
 {% endif %}
 {% endif %}

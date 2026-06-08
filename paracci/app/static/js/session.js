@@ -91,6 +91,91 @@ function renderSafeMarkdown(text, sanitizer = requireSafeDompurify()) {
     return sanitizeRenderedMarkdown(rawHtml, sanitizer);
 }
 
+function activateSessionAction(action, { focus = false } = {}) {
+    if (!['create', 'open'].includes(action)) return false;
+
+    const tabs = Array.from(document.querySelectorAll('[data-session-action-tab]'));
+    const panels = {
+        create: document.getElementById('session-create-panel'),
+        open: document.getElementById('session-open-panel')
+    };
+    if (!tabs.length || !panels.create || !panels.open) return false;
+
+    let selectedTab = null;
+    tabs.forEach(tab => {
+        const selected = tab.dataset.sessionActionTab === action;
+        tab.setAttribute('aria-selected', selected ? 'true' : 'false');
+        tab.setAttribute('tabindex', selected ? '0' : '-1');
+        if (selected) selectedTab = tab;
+    });
+    panels.create.hidden = action !== 'create';
+    panels.open.hidden = action !== 'open';
+    if (focus) selectedTab?.focus();
+    return true;
+}
+
+function setSessionFormat(action, format) {
+    if (!['create', 'open'].includes(action) || !['standard', 'carrier'].includes(format)) {
+        return false;
+    }
+
+    const options = Array.from(document.querySelectorAll(
+        `[data-session-format-action="${action}"]`
+    ));
+    if (!options.length) return false;
+
+    options.forEach(option => {
+        option.setAttribute(
+            'aria-pressed',
+            option.dataset.sessionFormat === format ? 'true' : 'false'
+        );
+    });
+
+    const standardAction = document.querySelector(
+        `[data-session-standard-action="${action}"]`
+    );
+    const carrierAction = document.getElementById(
+        action === 'create' ? 'message-carrier-seal' : 'message-carrier-open'
+    );
+    if (standardAction) standardAction.hidden = format !== 'standard';
+    if (carrierAction) carrierAction.hidden = format !== 'carrier';
+    return true;
+}
+
+function setupSessionWorkspace() {
+    const tabs = Array.from(document.querySelectorAll('[data-session-action-tab]'));
+    tabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+            activateSessionAction(tab.dataset.sessionActionTab);
+        });
+        tab.addEventListener('keydown', event => {
+            if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+            event.preventDefault();
+            const action = tab.dataset.sessionActionTab === 'create' ? 'open' : 'create';
+            activateSessionAction(action, { focus: true });
+        });
+    });
+
+    document.querySelectorAll('[data-session-format-action]').forEach(option => {
+        option.addEventListener('click', () => {
+            setSessionFormat(option.dataset.sessionFormatAction, option.dataset.sessionFormat);
+        });
+    });
+
+    document.querySelector('[data-session-go-open]')?.addEventListener('click', () => {
+        activateSessionAction('open', { focus: true });
+    });
+
+    const selectedTab = tabs.find(tab => tab.getAttribute('aria-selected') === 'true');
+    if (selectedTab) activateSessionAction(selectedTab.dataset.sessionActionTab);
+    setSessionFormat('create', 'standard');
+    setSessionFormat('open', 'standard');
+}
+
+window.ParacciSessionUI = Object.freeze({
+    activateAction: activateSessionAction
+});
+
 document.addEventListener('DOMContentLoaded', () => {
     const configEl = document.getElementById('paracci-config');
     if (configEl) {
@@ -120,6 +205,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // 2. Drop Zone Logic
     setupAttachmentDropZone();
     setupSessionDropZone();
+    setupSessionWorkspace();
 
     // 3. Global Message Form Handling
     setupForms();
@@ -328,12 +414,30 @@ function applyPostOpenSessionState(data) {
     const composer = document.getElementById('message-composer');
     const responderWarning = document.getElementById('y-responder-warning');
     const bondedChecklist = document.getElementById('bonded-checklist');
+    const workspace = document.getElementById('session-unified-workspace');
+    const statusLabel = document.getElementById('session-workspace-status-label');
+    const statusDetail = document.getElementById('session-workspace-status-detail');
+    const createTabState = document.getElementById('session-create-tab-state');
 
     if (pendingComposer) pendingComposer.remove();
     if (composer) composer.hidden = false;
     if (responderWarning) responderWarning.hidden = true;
     if (bondedChecklist) bondedChecklist.hidden = false;
+    if (workspace) {
+        workspace.classList.remove('is-bond-pending');
+        workspace.classList.add('is-send-capable');
+        if (statusLabel && workspace.dataset.bondedLabel) {
+            statusLabel.textContent = workspace.dataset.bondedLabel;
+        }
+        if (statusDetail && workspace.dataset.bondedDetail) {
+            statusDetail.textContent = workspace.dataset.bondedDetail;
+        }
+        if (createTabState && workspace.dataset.bondedLabel) {
+            createTabState.textContent = workspace.dataset.bondedLabel;
+        }
+    }
     if (document.body?.dataset) document.body.dataset.dropAttach = 'true';
+    activateSessionAction('create');
 }
 
 function updateAttachmentBadge() {
@@ -583,7 +687,10 @@ function setupForms() {
 
             if (!data.success) {
                 const errLabel = window.PARACCI_I18N?.error || 'Error';
-                appendAlert(errorContainer, 'error', `${errLabel}:`, data.error);
+                const safeMessage = window.PARACCI_I18N?.msg_not_processed
+                    || window.PARACCI_CONFIG?.open_error
+                    || 'Message could not be processed.';
+                appendAlert(errorContainer, 'error', `${errLabel}:`, safeMessage);
                 return;
             }
 
@@ -663,6 +770,10 @@ function clearOpenMessageState({ clearServer = true, keepalive = false } = {}) {
 
     const messageContainer = document.getElementById('message-view-container');
     if (messageContainer) messageContainer.style.display = 'none';
+    const resultEmpty = document.getElementById('session-result-empty');
+    if (resultEmpty) resultEmpty.hidden = false;
+    const resultState = document.getElementById('session-result-state');
+    if (resultState) resultState.hidden = true;
     const attachmentsContainer = document.getElementById('attachments-container');
     if (attachmentsContainer) attachmentsContainer.style.display = 'none';
     const copyBtn = document.getElementById('btn-copy-msg');
@@ -794,6 +905,10 @@ function renderDecryptedMessage(data) {
     document.getElementById('msg-id-short').textContent = data.msg_id_hex.substring(0, 16);
     
     container.style.display = 'block';
+    const resultEmpty = document.getElementById('session-result-empty');
+    if (resultEmpty) resultEmpty.hidden = true;
+    const resultState = document.getElementById('session-result-state');
+    if (resultState) resultState.hidden = false;
 }
 
 function cancelClipboardClearRetry() {

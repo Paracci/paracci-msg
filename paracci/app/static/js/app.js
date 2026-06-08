@@ -531,6 +531,7 @@ async function executeDropIntent(intent, payload) {
             break;
         }
         case 'open': {
+            window.ParacciSessionUI?.activateAction('open');
             const form = document.getElementById('open-message-form');
             if (payload.isNative) {
                 setNativeFileRef(form, payload.fileRef);
@@ -542,6 +543,7 @@ async function executeDropIntent(intent, payload) {
             break;
         }
         case 'attach': {
+            window.ParacciSessionUI?.activateAction('create');
             if (payload.isNative) {
                 receiveNativeStagedAttachments({ success: true, attachments: payload.attachments || [] });
             } else {

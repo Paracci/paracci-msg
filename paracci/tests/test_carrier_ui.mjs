@@ -548,3 +548,30 @@ test('normal drop intent remains limited to paracci files and attachments', () =
     assert.match(match[1], /\.paracci/);
     assert.doesNotMatch(match[1], /\.png|carrier/i);
 });
+
+test('valid session drops only activate the matching existing workspace action', () => {
+    const openCase = APP_JS.match(/case 'open': \{([\s\S]*?)\n\s*break;/);
+    const attachCase = APP_JS.match(/case 'attach': \{([\s\S]*?)\n\s*break;/);
+
+    assert.ok(openCase);
+    assert.ok(attachCase);
+    assert.match(openCase[1], /ParacciSessionUI\?\.activateAction\('open'\)/);
+    assert.match(attachCase[1], /ParacciSessionUI\?\.activateAction\('create'\)/);
+    assert.doesNotMatch(openCase[1], /resolveDropIntent|\.png|carrier/i);
+    assert.doesNotMatch(attachCase[1], /resolveDropIntent|\.png|carrier/i);
+});
+
+test('session workspace keeps standard format default and carrier explicit', () => {
+    assert.match(SESSION_JS, /setSessionFormat\('create', 'standard'\)/);
+    assert.match(SESSION_JS, /setSessionFormat\('open', 'standard'\)/);
+    assert.match(SESSION_JS, /format !== 'carrier'/);
+    assert.doesNotMatch(SESSION_JS, /autoDetect|detectCarrier/i);
+});
+
+test('normal open failures render generic localized copy instead of backend details', () => {
+    assert.match(SESSION_JS, /PARACCI_I18N\?\.msg_not_processed/);
+    assert.doesNotMatch(
+        SESSION_JS,
+        /appendAlert\(errorContainer,\s*'error',\s*`\$\{errLabel\}:`,\s*data\.error\)/
+    );
+});

@@ -283,6 +283,11 @@ def test_normal_paracci_seal_and_export_routes_remain_unchanged(tmp_path, monkey
     pending_body = pending_page.get_data(as_text=True)
     assert element_start_tag(pending_body, "bond-pending-composer") is not None
     assert "hidden" in element_start_tag(pending_body, "message-composer")
+    assert 'aria-selected="false"' in element_start_tag(pending_body, "session-action-create")
+    assert 'aria-selected="true"' in element_start_tag(pending_body, "session-action-open")
+    assert "hidden" in element_start_tag(pending_body, "session-create-panel")
+    assert "hidden" not in element_start_tag(pending_body, "session-open-panel")
+    assert element_start_tag(pending_body, "session-result-region") is not None
     assert 'data-drop-attach="false"' in pending_body
 
     opened = client.post(
@@ -306,6 +311,10 @@ def test_normal_paracci_seal_and_export_routes_remain_unchanged(tmp_path, monkey
     refreshed_body = refreshed.get_data(as_text=True)
     assert element_start_tag(refreshed_body, "bond-pending-composer") is None
     assert "hidden" not in element_start_tag(refreshed_body, "message-composer")
+    assert 'aria-selected="true"' in element_start_tag(refreshed_body, "session-action-create")
+    assert 'aria-selected="false"' in element_start_tag(refreshed_body, "session-action-open")
+    assert "hidden" not in element_start_tag(refreshed_body, "session-create-panel")
+    assert "hidden" in element_start_tag(refreshed_body, "session-open-panel")
     assert 'data-drop-attach="true"' in refreshed_body
 
     exported = client.get(
@@ -683,6 +692,8 @@ def test_carrier_open_uses_existing_validation_and_generic_failures(tmp_path, mo
     refreshed_body = refreshed.get_data(as_text=True)
     assert element_start_tag(refreshed_body, "bond-pending-composer") is None
     assert "hidden" not in element_start_tag(refreshed_body, "message-composer")
+    assert 'aria-selected="true"' in element_start_tag(refreshed_body, "session-action-create")
+    assert 'aria-selected="false"' in element_start_tag(refreshed_body, "session-action-open")
     assert 'data-drop-attach="true"' in refreshed_body
 
     replay_ref = routes_module.register_native_file_path(

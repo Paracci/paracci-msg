@@ -51,14 +51,25 @@ def test_carrier_templates_compile():
     env.get_template("session.html")
 
 
-def test_carrier_controls_are_collapsed_secondary_and_explicit():
+def test_carrier_controls_are_explicit_secondary_and_default_off():
     combined = SETUP_TEMPLATE + SESSION_TEMPLATE
 
     assert "<details class=\"carrier-panel" in combined
     assert not re.search(r"<details[^>]*carrier-panel[^>]*\sopen(?:\s|=|>)", combined)
     assert 'class="carrier-panel carrier-option"' in SESSION_TEMPLATE
+    assert 'class="carrier-panel carrier-option carrier-option-integrated"' in SESSION_TEMPLATE
+    assert "'message-carrier-seal'" in SESSION_TEMPLATE
+    assert "'message-carrier-open'" in SESSION_TEMPLATE
+    assert 'data-session-format="standard"' in SESSION_TEMPLATE
+    assert 'data-session-format="carrier"' in SESSION_TEMPLATE
+    assert SESSION_TEMPLATE.count('data-session-format="standard"') == 2
+    assert SESSION_TEMPLATE.count('data-session-format="carrier"') == 2
+    assert SESSION_TEMPLATE.count('aria-pressed="true"') >= 2
+    assert 'carrier-option-integrated"' in SESSION_TEMPLATE
+    assert len(re.findall(r"'message-carrier-(?:seal|open)'[\s\S]*?\btrue\s*\)\s*}}", SESSION_TEMPLATE)) == 2
     assert 'class="carrier-panel mt-5"' not in SESSION_TEMPLATE
     assert ".carrier-option" in SESSION_CSS
+    assert ".carrier-option-integrated" in SESSION_CSS
     assert 'class="btn btn-secondary"' in combined
     assert "carrier.recompression_warning" in SETUP_TEMPLATE
     assert "carrier.recompression_warning" in SESSION_TEMPLATE
@@ -92,9 +103,37 @@ def test_normal_paracci_flows_and_drop_targets_remain_primary():
     assert 'id="paracci_file" name="paracci_file" accept=".paracci"' in SESSION_TEMPLATE
     assert 'data-drop-target="open"' in SESSION_TEMPLATE
     assert "url_for('main.session_export', sid=sid)" in SESSION_TEMPLATE
+    assert 'data-session-standard-action="create"' in SESSION_TEMPLATE
+    assert 'data-session-standard-action="open"' in SESSION_TEMPLATE
+    assert SESSION_TEMPLATE.count('data-session-format="standard"') == 2
+
+
+def test_unified_workspace_keeps_real_forms_and_results_in_one_surface():
+    assert 'id="session-unified-workspace"' in SESSION_TEMPLATE
+    assert 'id="session-action-create"' in SESSION_TEMPLATE
+    assert 'id="session-action-open"' in SESSION_TEMPLATE
+    assert 'id="session-create-panel"' in SESSION_TEMPLATE
+    assert 'id="session-open-panel"' in SESSION_TEMPLATE
+    assert 'id="session-result-region"' in SESSION_TEMPLATE
+    assert 'id="session-result-empty"' in SESSION_TEMPLATE
+    assert 'id="session-result-state" hidden' in SESSION_TEMPLATE
+    assert 'id="message-view-container"' in SESSION_TEMPLATE
+    assert SESSION_TEMPLATE.index('id="session-result-region"') > SESSION_TEMPLATE.index(
+        'id="session-unified-workspace"'
+    )
+    assert 'name="message"' in SESSION_TEMPLATE
+    assert 'name="ttl_seconds"' in SESSION_TEMPLATE
+    assert 'name="allow_download"' in SESSION_TEMPLATE
+    assert 'name="attachments"' in SESSION_TEMPLATE
+    assert 'name="staged_attachment_ids"' in SESSION_TEMPLATE
+    assert 'name="single_use" value="on"' in SESSION_TEMPLATE
+    assert 'name="native_file_id" id="open-native-file-id"' in SESSION_TEMPLATE
+    assert 'name="paracci_file" accept=".paracci"' in SESSION_TEMPLATE
+    assert "raw_path" not in SESSION_TEMPLATE
 
 
 def test_post_bond_composer_state_is_rendered_hidden_and_backend_driven():
+    assert "meta.state == 'active' and meta.safety_confirmed and meta.can_send" in SESSION_TEMPLATE
     assert 'id="bonded-checklist"{% if not meta.can_send %} hidden{% endif %}' in SESSION_TEMPLATE
     assert "{% if meta.role == 'Y' and not meta.can_send %}" in SESSION_TEMPLATE
     assert 'id="bond-pending-composer"' in SESSION_TEMPLATE
@@ -108,6 +147,7 @@ def test_post_bond_composer_state_is_rendered_hidden_and_backend_driven():
     assert "if (data?.session_can_send !== true) return;" in SESSION_JS
     assert "pendingComposer.remove();" in SESSION_JS
     assert "document.body.dataset.dropAttach = 'true';" in SESSION_JS
+    assert "activateSessionAction('create');" in SESSION_JS
     assert SESSION_JS.count("applyPostOpenSessionState(data);") == 2
     assert "location.reload(" not in SESSION_JS
 
@@ -156,6 +196,25 @@ def test_normal_drop_resolver_does_not_detect_png_carriers():
     assert "carrier" not in body.lower()
 
 
+def test_valid_drop_routing_only_activates_existing_session_tabs():
+    open_case = re.search(
+        r"case 'open': \{(?P<body>.*?)\n\s*break;",
+        APP_JS,
+        re.DOTALL,
+    )
+    attach_case = re.search(
+        r"case 'attach': \{(?P<body>.*?)\n\s*break;",
+        APP_JS,
+        re.DOTALL,
+    )
+    assert open_case
+    assert attach_case
+    assert "window.ParacciSessionUI?.activateAction('open');" in open_case.group("body")
+    assert "window.ParacciSessionUI?.activateAction('create');" in attach_case.group("body")
+    assert "resolveDropIntent" not in open_case.group("body")
+    assert "resolveDropIntent" not in attach_case.group("body")
+
+
 def test_carrier_frontend_uses_safe_generic_errors_and_managed_downloads():
     combined = CARRIER_JS + SETUP_JS + SESSION_JS
 
@@ -178,6 +237,8 @@ def test_carrier_frontend_uses_safe_generic_errors_and_managed_downloads():
     assert "data-carrier-file-name" in SETUP_TEMPLATE
     assert "data-carrier-file-name" in SESSION_TEMPLATE
     assert "output.textContent =" in CARRIER_JS
+    assert "appendAlert(errorContainer, 'error', `${errLabel}:`, data.error);" not in SESSION_JS
+    assert "window.PARACCI_I18N?.msg_not_processed" in SESSION_JS
 
 
 def test_all_locales_define_conservative_carrier_strings():

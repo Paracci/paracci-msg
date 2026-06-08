@@ -10,9 +10,10 @@ model, user workflow, and implementation boundaries.
 - `png_lossless_v1` is the only supported carrier kind.
 - `qr_matrix_v1` remains a planned carrier kind constant only. It remains
   unsupported until a dedicated adapter and regressions are added.
-- Explicit PNG carrier controls are available as collapsed, secondary UI
-  actions. They do not alter or auto-detect files in normal `.paracci` forms or
-  drop zones.
+- Explicit PNG carrier controls are available as secondary, default-off format
+  choices in the message workspace. Setup and responder controls remain
+  collapsed. Carrier controls do not alter or auto-detect files in normal
+  `.paracci` forms or drop zones.
 - Browser carrier operations use bounded multipart uploads and PNG downloads.
   Native carrier operations use purpose-scoped, one-shot trusted references
   and existing one-shot managed save grants.
@@ -81,7 +82,8 @@ extracted content.
 
 - Keep the normal `.paracci` export, import, seal, and open actions as the
   primary workflow.
-- Expand the optional PNG carrier panel only when carrier transport is wanted.
+- Select the optional PNG carrier format only when carrier transport is wanted.
+  The normal `.paracci` format remains selected by default.
 - For export, select a lossless PNG cover and use the explicit carrier action.
   Insufficient capacity fails without producing output.
 - For import or open, select the explicit carrier action. Extraction returns
