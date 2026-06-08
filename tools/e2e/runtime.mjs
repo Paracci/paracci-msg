@@ -127,6 +127,7 @@ async function runProvisioner(python, root, passphrase) {
     if (JSON.stringify(result.profiles) !== JSON.stringify(['x', 'y'])) {
         throw new Error('E2E profile provisioner returned an unexpected profile set.');
     }
+    return result;
 }
 
 function assertSafeProfileRoot(root) {
@@ -143,6 +144,18 @@ function assertSafeProfileRoot(root) {
     return resolved;
 }
 
+async function resolveProvisionedFile(root, relativePath) {
+    if (!relativePath || path.isAbsolute(relativePath)) {
+        throw new Error('E2E provisioner returned an invalid fixture path.');
+    }
+    const resolved = path.resolve(root, relativePath);
+    const relative = path.relative(root, resolved);
+    if (relative.startsWith('..') || path.isAbsolute(relative) || !await isFile(resolved)) {
+        throw new Error('E2E provisioner returned an unsafe fixture path.');
+    }
+    return resolved;
+}
+
 export async function createProfileSet() {
     const python = await resolvePython();
     const root = assertSafeProfileRoot(
@@ -154,20 +167,30 @@ export async function createProfileSet() {
     });
     const passphrase = randomBytes(24).toString('base64url');
 
+    let provisioned;
     try {
-        await runProvisioner(python, root, passphrase);
+        provisioned = await runProvisioner(python, root, passphrase);
     } catch (error) {
         await cleanupProfileSet({ root }).catch(() => {});
         throw error;
     }
 
-    return {
-        root,
-        python,
-        passphrase,
-        dataX: path.join(root, 'data_x'),
-        dataY: path.join(root, 'data_y'),
-    };
+    try {
+        return {
+            root,
+            python,
+            passphrase,
+            dataX: path.join(root, 'data_x'),
+            dataY: path.join(root, 'data_y'),
+            covers: {
+                large: await resolveProvisionedFile(root, provisioned.covers?.large),
+                tiny: await resolveProvisionedFile(root, provisioned.covers?.tiny),
+            },
+        };
+    } catch (error) {
+        await cleanupProfileSet({ root }).catch(() => {});
+        throw error;
+    }
 }
 
 export async function cleanupProfileSet(profileSet) {

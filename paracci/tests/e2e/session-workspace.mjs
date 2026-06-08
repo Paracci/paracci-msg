@@ -16,6 +16,18 @@ export class SessionWorkspace {
 
         this.createTab = page.getByRole('tab', { name: /encrypt message/i });
         this.openTab = page.getByRole('tab', { name: /open message/i });
+        this.createStandardFormat = page.locator(
+            '[data-session-format-action="create"][data-session-format="standard"]'
+        );
+        this.createCarrierFormat = page.locator(
+            '[data-session-format-action="create"][data-session-format="carrier"]'
+        );
+        this.openStandardFormat = page.locator(
+            '[data-session-format-action="open"][data-session-format="standard"]'
+        );
+        this.openCarrierFormat = page.locator(
+            '[data-session-format-action="open"][data-session-format="carrier"]'
+        );
         this.pendingComposer = page.locator('#bond-pending-composer');
         this.messageComposer = page.locator('#message-composer');
         this.workspaceStatus = page.locator('#session-workspace-status-label');
@@ -26,7 +38,21 @@ export class SessionWorkspace {
         this.allowDownload = page.getByLabel('Allow Saving / Downloading', { exact: true });
         this.sealButton = page.getByRole('button', { name: 'Encrypt and download', exact: true });
         this.openFileInput = page.locator('#paracci_file');
+        this.standardOpenDropZone = page.locator('#session-drop-zone');
+        this.standardOpenFileLabel = page.locator('#file-label');
         this.openButton = page.getByRole('button', { name: 'Open and show', exact: true });
+        this.carrierSealPanel = page.locator('#message-carrier-seal');
+        this.carrierSealInput = this.carrierSealPanel.locator('[data-carrier-file]');
+        this.carrierSealDropZone = this.carrierSealPanel.locator('[data-carrier-drop-zone]');
+        this.carrierSealFilename = this.carrierSealPanel.locator('[data-carrier-file-name]');
+        this.carrierSealButton = this.carrierSealPanel.locator('[data-carrier-submit]');
+        this.carrierSealError = this.carrierSealPanel.locator('[data-carrier-error]');
+        this.carrierOpenPanel = page.locator('#message-carrier-open');
+        this.carrierOpenInput = this.carrierOpenPanel.locator('[data-carrier-file]');
+        this.carrierOpenDropZone = this.carrierOpenPanel.locator('[data-carrier-drop-zone]');
+        this.carrierOpenFilename = this.carrierOpenPanel.locator('[data-carrier-file-name]');
+        this.carrierOpenButton = this.carrierOpenPanel.locator('[data-carrier-submit]');
+        this.carrierOpenError = this.carrierOpenPanel.locator('[data-carrier-error]');
         this.errorContainer = page.locator('#dynamic-error-container');
         this.messageView = page.locator('#message-view-container');
         this.renderedMessage = page.locator('#rendered-message');
@@ -67,11 +93,23 @@ export class SessionWorkspace {
         await this.openTab.click();
     }
 
-    async sealStandardMessage({ text, attachment, ttlSeconds, allowDownload }) {
+    async selectCreateFormat(format) {
+        await this.selectCreate();
+        await (format === 'carrier' ? this.createCarrierFormat : this.createStandardFormat).click();
+    }
+
+    async selectOpenFormat(format) {
+        await this.selectOpen();
+        await (format === 'carrier' ? this.openCarrierFormat : this.openStandardFormat).click();
+    }
+
+    async prepareMessage({ text, attachment, ttlSeconds, allowDownload }) {
         await this.selectCreate();
         await this.messageInput.fill(text);
         if (attachment) {
             await this.attachmentInput.setInputFiles(attachment);
+        } else {
+            await this.attachmentInput.setInputFiles([]);
         }
         await this.ttlTrigger.click();
         await this.ttlControl.locator(
@@ -82,6 +120,11 @@ export class SessionWorkspace {
         } else {
             await this.allowDownload.uncheck();
         }
+    }
+
+    async sealStandardMessage({ text, attachment, ttlSeconds, allowDownload }) {
+        await this.prepareMessage({ text, attachment, ttlSeconds, allowDownload });
+        await this.createStandardFormat.click();
 
         const downloadPromise = this.page.waitForEvent('download');
         await this.sealButton.click();
@@ -97,8 +140,42 @@ export class SessionWorkspace {
         }
     }
 
+    async sealCarrierMessage({ text, attachment, ttlSeconds, allowDownload, cover }) {
+        await this.prepareMessage({ text, attachment, ttlSeconds, allowDownload });
+        await this.createCarrierFormat.click();
+        await this.carrierSealInput.setInputFiles(cover);
+
+        const responsePromise = this.waitForCarrierResponse('seal');
+        const downloadPromise = this.page.waitForEvent('download');
+        await this.carrierSealButton.click();
+        const response = await responsePromise;
+        const download = await downloadPromise;
+        const filename = download.suggestedFilename();
+        try {
+            return {
+                status: response.status(),
+                filename,
+                buffer: await downloadBuffer(download),
+            };
+        } finally {
+            await download.delete().catch(() => {});
+        }
+    }
+
+    async submitCarrierMessage({ text, attachment, ttlSeconds, allowDownload, cover }) {
+        await this.prepareMessage({ text, attachment, ttlSeconds, allowDownload });
+        await this.createCarrierFormat.click();
+        await this.carrierSealInput.setInputFiles(cover);
+
+        const responsePromise = this.waitForCarrierResponse('seal');
+        await this.carrierSealButton.click();
+        const response = await responsePromise;
+        await this.waitForCarrierIdle('#message-carrier-seal');
+        return response.status();
+    }
+
     async openStandardFile(file) {
-        await this.selectOpen();
+        await this.selectOpenFormat('standard');
         await this.openFileInput.setInputFiles(file);
 
         const pathname = `/session/${this.sessionId}/open`;
@@ -114,5 +191,80 @@ export class SessionWorkspace {
         await this.openButton.click();
         const response = await responsePromise;
         return response.status();
+    }
+
+    async openCarrierFile(file) {
+        await this.selectOpenFormat('carrier');
+        await this.carrierOpenInput.setInputFiles(file);
+        return this.openSelectedCarrier();
+    }
+
+    async openSelectedCarrier() {
+        const responsePromise = this.waitForCarrierResponse('open');
+        await this.carrierOpenButton.click();
+        const response = await responsePromise;
+        await this.waitForCarrierIdle('#message-carrier-open');
+        return response.status();
+    }
+
+    async dropOnStandardOpen(file) {
+        await this.selectOpenFormat('standard');
+        await this.dropFile(this.standardOpenDropZone, file);
+    }
+
+    async dropOnCarrierOpen(file) {
+        await this.selectOpenFormat('carrier');
+        await this.dropFile(this.carrierOpenDropZone, file);
+    }
+
+    async dropFile(dropZone, file) {
+        const sourceId = `paracci-e2e-drop-source-${Date.now()}`;
+        await this.page.evaluate(id => {
+            const input = document.createElement('input');
+            input.id = id;
+            input.type = 'file';
+            input.hidden = true;
+            document.body.appendChild(input);
+        }, sourceId);
+        const source = this.page.locator(`#${sourceId}`);
+        try {
+            await source.setInputFiles(file);
+            await dropZone.evaluate((element, id) => {
+                const input = document.getElementById(id);
+                const transfer = new DataTransfer();
+                for (const selected of input?.files || []) {
+                    transfer.items.add(selected);
+                }
+                for (const type of ['dragenter', 'dragover', 'drop']) {
+                    element.dispatchEvent(new DragEvent(type, {
+                        bubbles: true,
+                        cancelable: true,
+                        dataTransfer: transfer,
+                    }));
+                }
+            }, sourceId);
+        } finally {
+            await source.evaluate(element => element.remove()).catch(() => {});
+        }
+    }
+
+    waitForCarrierResponse(action) {
+        const pathname = `/session/${this.sessionId}/carrier/${action}`;
+        return this.page.waitForResponse(response => {
+            const request = response.request();
+            const url = new URL(response.url());
+            return (
+                request.method() === 'POST'
+                && url.pathname === pathname
+                && url.search === ''
+            );
+        });
+    }
+
+    async waitForCarrierIdle(panelSelector) {
+        await this.page.waitForFunction(selector => {
+            const button = document.querySelector(`${selector} [data-carrier-submit]`);
+            return Boolean(button && !button.disabled);
+        }, panelSelector);
     }
 }

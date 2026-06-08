@@ -10,11 +10,16 @@ import sys
 import tempfile
 from pathlib import Path
 
+from PIL import Image
+
 
 MARKER_NAME = ".paracci-e2e-root"
 MARKER_VALUE = "paracci-e2e-v1"
 ROOT_PREFIX = "paracci-e2e-"
 REPO_ROOT = Path(__file__).resolve().parents[2]
+COVER_DIR_NAME = "covers"
+LARGE_COVER_NAME = "phase3-large-cover.png"
+TINY_COVER_NAME = "phase3-tiny-cover.png"
 
 
 def validate_root(raw_root: str) -> Path:
@@ -36,7 +41,24 @@ def validate_root(raw_root: str) -> Path:
     return root
 
 
-def provision_profiles(root: Path, passphrase: str) -> dict[str, list[str]]:
+def provision_covers(root: Path) -> dict[str, str]:
+    cover_dir = root / COVER_DIR_NAME
+    cover_dir.mkdir(mode=0o700)
+
+    covers = {
+        "large": (LARGE_COVER_NAME, (1024, 1024), (32, 96, 160)),
+        "tiny": (TINY_COVER_NAME, (32, 32), (160, 64, 32)),
+    }
+    result = {}
+    for key, (filename, size, color) in covers.items():
+        cover_path = cover_dir / filename
+        with Image.new("RGB", size, color) as image:
+            image.save(cover_path, format="PNG")
+        result[key] = cover_path.relative_to(root).as_posix()
+    return result
+
+
+def provision_profiles(root: Path, passphrase: str) -> dict[str, object]:
     if not 12 <= len(passphrase) <= 128:
         raise ValueError("E2E passphrase length is invalid.")
 
@@ -52,7 +74,10 @@ def provision_profiles(root: Path, passphrase: str) -> dict[str, list[str]]:
         finally:
             dev_setup.DEFAULT_PIN = previous_pin
 
-    return {"profiles": ["x", "y"]}
+    return {
+        "profiles": ["x", "y"],
+        "covers": provision_covers(root),
+    }
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
