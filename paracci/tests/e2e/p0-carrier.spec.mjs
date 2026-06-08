@@ -7,6 +7,7 @@ const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0
 const MESSAGE_TEXT = 'Phase 3 PNG carrier round trip message.';
 const ATTACHMENT_NAME = 'phase3-carrier-attachment.txt';
 const ATTACHMENT_BYTES = Buffer.from('Synthetic Phase 3 carrier attachment.\n', 'utf8');
+const WINDOWS_USER_HOME_PATTERN = new RegExp(['C:', 'Users', ''].join('\\\\'), 'i');
 
 async function bootstrapSessionPair(sessionPair) {
     const xWorkspace = new SessionWorkspace(sessionPair.x.page);
@@ -83,7 +84,7 @@ function assertNoSensitiveBodyDetails(bodyText, sessionPair) {
         /\bX-Paracci-Token\b/i,
         /\bX-CSRF-Token\b/i,
         /\bparacci-e2e-[^\s]+/i,
-        /C:\\Users\\/i,
+        WINDOWS_USER_HOME_PATTERN,
         /\/(?:tmp|private\/tmp)\//i,
     ]) {
         expect(bodyText).not.toMatch(pattern);

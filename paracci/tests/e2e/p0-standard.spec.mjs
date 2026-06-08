@@ -4,6 +4,7 @@ import { expect, test } from './fixtures.mjs';
 const MESSAGE_TEXT = 'Phase 2 standard round trip message.';
 const ATTACHMENT_NAME = 'phase2-attachment.txt';
 const ATTACHMENT_BYTES = Buffer.from('Synthetic Phase 2 attachment content.\n', 'utf8');
+const WINDOWS_USER_HOME_PATTERN = new RegExp(['C:', 'Users', ''].join('\\\\'), 'i');
 
 function assertNoSensitiveBodyDetails(bodyText, sessionPair) {
     const forbiddenPatterns = [
@@ -15,7 +16,7 @@ function assertNoSensitiveBodyDetails(bodyText, sessionPair) {
         /\bX-CSRF-Token\b/i,
         /\bopen_upload_[0-9a-f]+\b/i,
         /\bparacci-e2e-[^\s]+/i,
-        /C:\\Users\\/i,
+        WINDOWS_USER_HOME_PATTERN,
         /\/(?:tmp|private\/tmp)\//i,
     ];
     for (const pattern of forbiddenPatterns) {
