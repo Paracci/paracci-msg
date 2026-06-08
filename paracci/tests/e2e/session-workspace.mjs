@@ -28,14 +28,25 @@ export class SessionWorkspace {
         this.openCarrierFormat = page.locator(
             '[data-session-format-action="open"][data-session-format="carrier"]'
         );
+        this.workspace = page.locator('#session-unified-workspace');
+        this.createPanel = page.locator('#session-create-panel');
+        this.openPanel = page.locator('#session-open-panel');
+        this.createFormatSwitch = this.createPanel.locator('.session-format-switch');
+        this.openFormatSwitch = this.openPanel.locator('.session-format-switch');
         this.pendingComposer = page.locator('#bond-pending-composer');
         this.messageComposer = page.locator('#message-composer');
         this.workspaceStatus = page.locator('#session-workspace-status-label');
         this.messageInput = page.getByRole('textbox', { name: /^Message\b/i });
+        this.attachmentLabel = page.locator('label[for="attachments"]');
         this.attachmentInput = page.locator('#attachments');
+        this.attachmentDropZone = page.locator('#attachment-drop-zone');
         this.ttlControl = page.locator('.session-ttl-field .apple-custom-select-wrapper');
         this.ttlTrigger = this.ttlControl.locator('.apple-custom-select-trigger');
         this.allowDownload = page.getByLabel('Allow Saving / Downloading', { exact: true });
+        this.createPrimaryAction = page.locator(
+            '[data-session-standard-action="create"].session-primary-action'
+        );
+        this.createPrimarySummary = this.createPrimaryAction.locator(':scope > span');
         this.sealButton = page.getByRole('button', { name: 'Encrypt and download', exact: true });
         this.openFileInput = page.locator('#paracci_file');
         this.standardOpenDropZone = page.locator('#session-drop-zone');
@@ -43,17 +54,22 @@ export class SessionWorkspace {
         this.openButton = page.getByRole('button', { name: 'Open and show', exact: true });
         this.carrierSealPanel = page.locator('#message-carrier-seal');
         this.carrierSealInput = this.carrierSealPanel.locator('[data-carrier-file]');
+        this.carrierSealFileControl = this.carrierSealPanel.locator('.carrier-file-control');
+        this.carrierSealFileTrigger = this.carrierSealPanel.locator('.carrier-file-trigger');
         this.carrierSealDropZone = this.carrierSealPanel.locator('[data-carrier-drop-zone]');
         this.carrierSealFilename = this.carrierSealPanel.locator('[data-carrier-file-name]');
         this.carrierSealButton = this.carrierSealPanel.locator('[data-carrier-submit]');
         this.carrierSealError = this.carrierSealPanel.locator('[data-carrier-error]');
         this.carrierOpenPanel = page.locator('#message-carrier-open');
         this.carrierOpenInput = this.carrierOpenPanel.locator('[data-carrier-file]');
+        this.carrierOpenFileControl = this.carrierOpenPanel.locator('.carrier-file-control');
+        this.carrierOpenFileTrigger = this.carrierOpenPanel.locator('.carrier-file-trigger');
         this.carrierOpenDropZone = this.carrierOpenPanel.locator('[data-carrier-drop-zone]');
         this.carrierOpenFilename = this.carrierOpenPanel.locator('[data-carrier-file-name]');
         this.carrierOpenButton = this.carrierOpenPanel.locator('[data-carrier-submit]');
         this.carrierOpenError = this.carrierOpenPanel.locator('[data-carrier-error]');
         this.errorContainer = page.locator('#dynamic-error-container');
+        this.resultRegion = page.locator('#session-result-region');
         this.messageView = page.locator('#message-view-container');
         this.renderedMessage = page.locator('#rendered-message');
         this.singleUseAlert = page.locator('#single-use-alert');
