@@ -12,7 +12,7 @@ import {
 function safeRequestLabel(request) {
     try {
         const url = new URL(request.url());
-        return `${request.method()} ${url.origin}${url.pathname} [${request.resourceType()}]`;
+        return `${request.method()} ${url.origin}${url.pathname}${url.search} [${request.resourceType()}]`;
     } catch {
         return `${request.method()} <invalid-url> [${request.resourceType()}]`;
     }
@@ -27,24 +27,72 @@ function isAllowedLoopbackUrl(rawUrl) {
     }
 }
 
-function isRelevantAppRequest(request) {
-    let pathname;
+function requestParts(request) {
     try {
-        pathname = new URL(request.url()).pathname;
+        const url = new URL(request.url());
+        return {
+            method: request.method().toUpperCase(),
+            origin: url.origin,
+            pathname: url.pathname,
+            search: url.search,
+        };
     } catch {
-        return false;
+        return null;
     }
-    return (
-        pathname === '/favicon.ico'
-        || pathname.startsWith('/static/')
-        || pathname.startsWith('/api/')
-        || ['document', 'script', 'stylesheet', 'font'].includes(request.resourceType())
+}
+
+function createExpectedHttpFailure(scope) {
+    const expected = {
+        method: String(scope.method || '').toUpperCase(),
+        pathname: String(scope.pathname || ''),
+        search: String(scope.search || ''),
+        status: Number(scope.status),
+        step: String(scope.step || ''),
+        active: true,
+        matched: false,
+    };
+    if (
+        !expected.method
+        || !expected.pathname.startsWith('/')
+        || !Number.isInteger(expected.status)
+        || expected.status < 400
+        || !expected.step
+    ) {
+        throw new Error('Expected negative HTTP scope must include method, pathname, status, and step.');
+    }
+    return expected;
+}
+
+function expectedHttpFailureMatches(scope, response) {
+    const request = response.request();
+    const parts = requestParts(request);
+    return Boolean(
+        scope.active
+        && parts
+        && parts.method === scope.method
+        && parts.pathname === scope.pathname
+        && parts.search === scope.search
+        && response.status() === scope.status
     );
 }
 
-function createPolicyCollector(context, origin) {
+function isExpectedBrowserAbort(request, failure, origin) {
+    const parts = requestParts(request);
+    return Boolean(
+        failure.includes('net::ERR_ABORTED')
+        && parts
+        && parts.origin === origin
+        && parts.method === 'GET'
+        && parts.pathname === '/'
+        && parts.search === ''
+        && request.resourceType() === 'fetch'
+    );
+}
+
+function createPolicyCollector(context, origin, label = 'app') {
     const failures = new Set();
-    const record = message => failures.add(message);
+    const expectedHttpFailures = new Set();
+    const record = message => failures.add(`[${label}] ${message}`);
 
     context.route('**/*', async route => {
         const request = route.request();
@@ -63,26 +111,22 @@ function createPolicyCollector(context, origin) {
     });
     context.on('response', response => {
         const request = response.request();
-        let responseOrigin;
-        try {
-            responseOrigin = new URL(request.url()).origin;
-        } catch {
-            return;
+        const parts = requestParts(request);
+        if (!parts || parts.origin !== origin || response.status() < 400) return;
+        for (const scope of expectedHttpFailures) {
+            if (expectedHttpFailureMatches(scope, response)) {
+                scope.matched = true;
+                return;
+            }
         }
-        if (responseOrigin !== origin || response.status() < 400) return;
-        if (!isRelevantAppRequest(request)) return;
         record(`http ${response.status()}: ${safeRequestLabel(request)}`);
     });
     context.on('requestfailed', request => {
-        let requestOrigin;
-        try {
-            requestOrigin = new URL(request.url()).origin;
-        } catch {
-            return;
-        }
-        if (requestOrigin !== origin || !isRelevantAppRequest(request)) return;
+        const parts = requestParts(request);
+        if (!parts || parts.origin !== origin) return;
         const failure = request.failure()?.errorText || 'request failed';
         if (request.isNavigationRequest() && failure.includes('net::ERR_ABORTED')) return;
+        if (isExpectedBrowserAbort(request, failure, origin)) return;
         record(`request failed: ${safeRequestLabel(request)} ${failure}`);
     });
 
@@ -100,18 +144,42 @@ function createPolicyCollector(context, origin) {
         failures() {
             return [...failures];
         },
+        async expectHttpFailure(scope, action) {
+            const expected = createExpectedHttpFailure(scope);
+            expectedHttpFailures.add(expected);
+            try {
+                const result = await action();
+                return { result, matched: expected.matched };
+            } finally {
+                expected.active = false;
+                expectedHttpFailures.delete(expected);
+            }
+        },
     };
 }
 
-async function attachFailureLog(testInfo, runtime, policyFailures) {
+function normalizeRuntimes(runtimes) {
+    return Array.isArray(runtimes) ? runtimes : [runtimes];
+}
+
+function redactWithRuntimes(runtimes, value) {
+    return normalizeRuntimes(runtimes).reduce(
+        (current, runtime) => redactE2EText(runtime, current),
+        value
+    );
+}
+
+async function attachFailureLog(testInfo, runtimes, policyFailures) {
     if (testInfo.status === testInfo.expectedStatus && policyFailures.length === 0) return;
     const sections = [];
     if (policyFailures.length > 0) {
         sections.push('--- browser policy failures ---', ...policyFailures);
     }
-    const runtimeOutput = redactedRuntimeOutput(runtime);
-    if (runtimeOutput) {
-        sections.push('--- redacted runtime output ---', runtimeOutput);
+    for (const runtime of normalizeRuntimes(runtimes)) {
+        const runtimeOutput = redactedRuntimeOutput(runtime);
+        if (runtimeOutput) {
+            sections.push('--- redacted runtime output ---', runtimeOutput);
+        }
     }
     await testInfo.attach('paracci-e2e-failure.log', {
         body: Buffer.from(sections.join('\n'), 'utf8'),
@@ -136,6 +204,39 @@ async function lockIfUnlocked(page) {
     }).catch(() => {});
 }
 
+async function createAppContext(browser, runtime, { acceptDownloads = false, label = 'app' } = {}) {
+    const context = await browser.newContext({
+        locale: 'en-US',
+        viewport: { width: 1280, height: 900 },
+        serviceWorkers: 'allow',
+        acceptDownloads,
+    });
+    const policy = createPolicyCollector(context, runtime.entrypoint.origin, label);
+    await context.addInitScript(() => {
+        window.addEventListener('unhandledrejection', event => {
+            const reason = event.reason;
+            const name = reason?.name || '';
+            const message = reason?.message || String(reason || 'Unhandled promise rejection');
+            if (name === 'AbortError' || message === 'Transition was skipped') return;
+            console.error(`[ParacciE2EUnhandledRejection] ${message}`);
+        });
+    });
+    const page = await context.newPage();
+    policy.attachPage(page);
+    return { context, page, policy };
+}
+
+async function lockAppContext(appContext) {
+    if (!appContext) return;
+    await lockIfUnlocked(appContext.page);
+    await appContext.page?.waitForTimeout(100).catch(() => {});
+}
+
+async function closeAppContext(appContext) {
+    if (!appContext) return;
+    await appContext.context?.close().catch(() => {});
+}
+
 export const test = base.extend({
     profileSet: async ({}, use) => {
         const profileSet = await createProfileSet();
@@ -156,35 +257,72 @@ export const test = base.extend({
     },
 
     app: async ({ browser, profileSet, runtime }, use, testInfo) => {
-        const context = await browser.newContext({
-            locale: 'en-US',
-            viewport: { width: 1280, height: 900 },
-            serviceWorkers: 'allow',
-            acceptDownloads: false,
-        });
-        const policy = createPolicyCollector(context, runtime.entrypoint.origin);
-        await context.addInitScript(() => {
-            window.addEventListener('unhandledrejection', event => {
-                const reason = event.reason;
-                const name = reason?.name || '';
-                const message = reason?.message || String(reason || 'Unhandled promise rejection');
-                if (name === 'AbortError' || message === 'Transition was skipped') return;
-                console.error(`[ParacciE2EUnhandledRejection] ${message}`);
-            });
-        });
-        const page = await context.newPage();
-        policy.attachPage(page);
+        const appContext = await createAppContext(browser, runtime);
 
         try {
-            await use({ page, policy, profileSet, runtime });
+            await use({
+                page: appContext.page,
+                policy: appContext.policy,
+                profileSet,
+                runtime,
+            });
         } finally {
-            await lockIfUnlocked(page);
-            await page.waitForTimeout(100).catch(() => {});
-            const policyFailures = policy.failures().map(
+            await lockAppContext(appContext);
+            const policyFailures = appContext.policy.failures().map(
                 failure => redactE2EText(runtime, failure)
             );
             await attachFailureLog(testInfo, runtime, policyFailures);
-            await context.close().catch(() => {});
+            await closeAppContext(appContext);
+            if (policyFailures.length > 0) {
+                throw new Error(`Unexpected browser policy failures:\n${policyFailures.join('\n')}`);
+            }
+        }
+    },
+
+    sessionPair: async ({ browser, profileSet }, use, testInfo) => {
+        const runtimes = [];
+        let xContext;
+        let yContext;
+        try {
+            const runtimeX = await startSourceRuntime(profileSet, profileSet.dataX);
+            runtimes.push(runtimeX);
+            const runtimeY = await startSourceRuntime(profileSet, profileSet.dataY);
+            runtimes.push(runtimeY);
+            xContext = await createAppContext(browser, runtimeX, {
+                acceptDownloads: true,
+                label: 'x',
+            });
+            yContext = await createAppContext(browser, runtimeY, {
+                acceptDownloads: true,
+                label: 'y',
+            });
+
+            await use({
+                profileSet,
+                x: {
+                    page: xContext.page,
+                    policy: xContext.policy,
+                    runtime: runtimeX,
+                },
+                y: {
+                    page: yContext.page,
+                    policy: yContext.policy,
+                    runtime: runtimeY,
+                },
+            });
+        } finally {
+            await lockAppContext(yContext);
+            await lockAppContext(xContext);
+            const policyFailures = [
+                ...(xContext?.policy.failures() || []),
+                ...(yContext?.policy.failures() || []),
+            ].map(failure => redactWithRuntimes(runtimes, failure));
+            await attachFailureLog(testInfo, runtimes, policyFailures);
+            await closeAppContext(yContext);
+            await closeAppContext(xContext);
+            for (const runtime of runtimes.reverse()) {
+                await stopProcess(runtime.proc);
+            }
             if (policyFailures.length > 0) {
                 throw new Error(`Unexpected browser policy failures:\n${policyFailures.join('\n')}`);
             }
