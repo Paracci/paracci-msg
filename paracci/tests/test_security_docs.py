@@ -45,11 +45,16 @@ REQUIRED_AGENT_PHRASES = [
     "Identify the affected trust boundary before coding.",
     "## Before Editing",
     "## Before Committing",
+    "## Playwright E2E Guardrails",
     "Analysis, audit, review, and reporting tasks must not create commits",
     "Implementation and fix tasks must run focused validation and create one local commit",
     "Never run `git push` from this repository.",
     "Verify no raw audit reports, scratch artifacts, private scan outputs",
     "Never commit local user-home, Desktop, temp/cache, or absolute workspace paths",
+    "Playwright E2E tests must exercise the real `run.py --no-gui` source runtime.",
+    "bind and navigate only to `127.0.0.1`, and block all external browser requests.",
+    "only beneath ignored `output/playwright/`.",
+    "A browser mock is not proof of native save",
 ]
 
 REQUIRED_ENGINEERING_PHRASES = [

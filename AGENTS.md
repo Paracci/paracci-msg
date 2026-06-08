@@ -59,3 +59,16 @@ Use these repo-safe references when planning security-sensitive work:
 - Keep local-only security work under ignored scratch locations and verify those files remain untracked.
 - Documentation intended for the repository must describe sanitized vulnerability classes, fixed invariants, expected reasoning, and regression expectations only.
 - If a task asks for security memory or guardrails, write repo-safe summaries. Do not copy private report text or sensitive investigation notes into tracked files.
+
+## Playwright E2E Guardrails
+
+- Playwright E2E tests must exercise the real `run.py --no-gui` source runtime. Do not add test-only routes or bypass cryptography, BurnDB, bearer authentication, CSRF, service-worker bootstrap, UIApi, or native file boundaries.
+- Create fresh marked profiles beneath the system temporary directory, pass an absolute isolated `DATA_DIR`, bind and navigate only to `127.0.0.1`, and block all external browser requests.
+- Use synthetic test files only. Do not use real user files, private keys, secrets, release assets, or caller-provided local paths.
+- Write Playwright traces, screenshots, reports, videos, downloads, and redacted failure logs only beneath ignored `output/playwright/`. Treat traces as locally sensitive and never stage or publish them.
+- Prefer accessible roles and labels, then stable IDs. Add `data-e2e` only for dynamic or ambiguous controls; do not locate elements by layout ancestry, translated prose, timestamps, generated identifiers, or positional selectors.
+- Keep the deterministic release-facing configuration at one worker and zero retries. Do not hide regressions with skips, xfails, broad console/network allowlists, or automatic retries.
+- Scope expected negative network responses by exact method, path, and status. Unexpected console errors, page errors, request failures, same-origin application errors, or external requests must fail the test.
+- A browser mock is not proof of native save, native attachment staging, UIApi, or pywebview behavior. Keep those claims in focused native-boundary tests.
+- Update the E2E locator contract and affected release-gate test in the same change as a session UI behavior change.
+- Before committing E2E work, verify ignored artifacts remain untracked and scan the staged diff for generated files, traces, screenshots, logs, local paths, tokens, keys, passphrases, and secrets.
