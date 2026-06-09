@@ -12,6 +12,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PROVISIONER = REPO_ROOT / "tools" / "e2e" / "provision_profiles.py"
 MARKER_NAME = ".paracci-e2e-root"
 MARKER_VALUE = "paracci-e2e-v1\n"
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+EXPECTED_COVERS = {
+    "large": "covers/phase3-large-cover.png",
+    "tiny": "covers/phase3-tiny-cover.png",
+}
 
 
 def _run_provisioner(root: Path, passphrase: str):
@@ -47,8 +52,30 @@ def test_profile_provisioner_creates_isolated_profiles_without_logging_passphras
         result = _run_provisioner(root, passphrase)
 
         assert result.returncode == 0, result.stderr
-        assert json.loads(result.stdout) == {"profiles": ["x", "y"]}
+        assert json.loads(result.stdout) == {
+            "profiles": ["x", "y"],
+            "covers": EXPECTED_COVERS,
+        }
         assert result.stderr == ""
         assert passphrase not in result.stdout
         assert (root / "data_x" / "sessions.db").is_file()
         assert (root / "data_y" / "sessions.db").is_file()
+
+        resolved_root = root.resolve(strict=True)
+        resolved_repo = REPO_ROOT.resolve(strict=True)
+        for relative_text in EXPECTED_COVERS.values():
+            relative_path = Path(relative_text)
+            assert not relative_path.is_absolute()
+            assert ".." not in relative_path.parts
+
+            cover_path = (root / relative_path).resolve(strict=True)
+            assert cover_path.relative_to(resolved_root) == relative_path
+            assert resolved_repo not in cover_path.parents
+            assert cover_path.read_bytes().startswith(PNG_SIGNATURE)
+
+        assert {path.name for path in (root / "covers").iterdir()} == {
+            "phase3-large-cover.png",
+            "phase3-tiny-cover.png",
+        }
+
+    assert not root.exists()
