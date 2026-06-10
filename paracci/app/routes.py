@@ -163,7 +163,7 @@ RAW_PATH_SHAPED_CARRIER_FIELDS = {
     "save_path",
     "source_path",
 }
-RAW_PATH_FIELD_PART_RE = re.compile(r"\[([^\]]+)\]")
+MAX_CARRIER_FIELD_NAME_LENGTH = 256
 
 # ── Security Configuration ──
 MAX_ATTACHMENT_SIZE = 50 * 1024 * 1024  # 50MB
@@ -832,8 +832,24 @@ def _contains_raw_path_field(value) -> bool:
 
 def _carrier_field_name_is_raw_path(name: str) -> bool:
     raw_name = str(name or "").strip()
+    if len(raw_name) > MAX_CARRIER_FIELD_NAME_LENGTH:
+        return True
+
     candidates = {raw_name, raw_name.split(".")[-1]}
-    candidates.update(RAW_PATH_FIELD_PART_RE.findall(raw_name))
+
+
+    start = 0
+    while True:
+        start_idx = raw_name.find("[", start)
+        if start_idx == -1:
+            break
+        end_idx = raw_name.find("]", start_idx + 1)
+        if end_idx == -1:
+            break
+        if end_idx > start_idx + 1:
+            candidates.add(raw_name[start_idx + 1:end_idx])
+        start = end_idx + 1
+
     return any(candidate in RAW_PATH_SHAPED_CARRIER_FIELDS for candidate in candidates)
 
 
