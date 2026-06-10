@@ -37,6 +37,7 @@ Thumbs.db
 
 # --- Development / Scratch ---
 paracci/scratch/
+prototypes/
 *.log
 paracci_startup_error.log
 paracci_startup_success.tmp
