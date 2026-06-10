@@ -262,15 +262,15 @@ def test_carrier_docs_record_focused_validation_and_release_gates():
 
     required_phrases = [
         "## PNG Carrier Manual Validation",
-        "## Test Gaps & 1.8.0 Release Checklist",
+        "## Test Gaps & Release Checklist",
         "node --test paracci/tests/test_carrier_ui.mjs",
         "paracci/tests/test_carrier_core.py paracci/tests/test_carrier_png.py",
         "paracci/tests/test_carrier_services.py",
         "paracci/tests/test_carrier_routes.py",
         "paracci/tests/test_carrier_ui.py paracci/tests/test_security_docs.py",
         "Confirm normal `.paracci` drop zones do not auto-detect PNG files",
-        "Keep root `VERSION` unchanged during Task 6.",
-        "Preserve the 1.7.1 offline Ed25519 release-signing model.",
+        "Keep root `VERSION` unchanged during feature work.",
+        "Preserve the offline Ed25519 release-signing model.",
         "Do not commit generated carriers, `.paracci` files, screenshots, logs, release artifacts",
     ]
 

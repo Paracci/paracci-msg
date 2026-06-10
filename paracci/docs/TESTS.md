@@ -348,15 +348,15 @@ or `.paracci` files.
 9. Confirm carrier and cover source files remain present and unchanged after import, open, export, and seal.
 10. Confirm normal `.paracci` drop zones do not auto-detect PNG files and all affected pages render without console errors.
 
-## Test Gaps & 1.8.0 Release Checklist
+## Test Gaps & Release Checklist
 
 - **Focused Carrier Gate**: Run all carrier Python and Node commands listed above.
 - **Normal Flow Regression Gate**: Run the full Python suite so setup, responder, message seal/open, package, loopback, broker, and native behavior remain covered outside carrier-specific tests.
 - **Browser Session Workspace Gate**: Run the P0 Playwright release gate, then the full local Playwright suite. Keep the Python-runtime browser-console smoke as the separate bootstrap/render policy check.
 - **Windows Candidate Gate**: After a later version bump and package build, run executable and portable-ZIP browser smoke, packaged runtime smoke, artifact validation, and the manual native save-grant checks above.
 - **Linux Candidate Gate**: Run Docker/Linux parity before release and packaged-runtime validation after building Linux candidates.
-- **Version Gate**: Keep root `VERSION` unchanged during Task 6. Perform the 1.8.0 version bump only after carrier acceptance and release-candidate validation.
-- **Signing Gate**: Preserve the 1.7.1 offline Ed25519 release-signing model. CI may create a draft, but publication must continue through the signed-manifest verification workflow.
+- **Version Gate**: Keep root `VERSION` unchanged during feature work. Perform the version bump only after feature acceptance and release-candidate validation.
+- **Signing Gate**: Preserve the offline Ed25519 release-signing model. CI may create a draft, but publication must continue through the signed-manifest verification workflow.
 - **Artifact Hygiene Gate**: Do not commit generated carriers, `.paracci` files, screenshots, logs, release artifacts, local paths, tokens, keys, passphrases, or secrets. Traces and downloads are also local-only artifacts.
 - **Native WebView Manual Check**: Use platform-local debug runs only for pywebview and operating-system behavior that browser E2E cannot prove. Do not repeat the automated desktop layout stability, attachment-editing, saving-disabled, or drop-routing checks as routine manual browser QA.
 - **Multi-User Simulation**: The isolated Playwright profile pair covers the source-runtime X-to-Y first-message route and subsequent receiver send capability. Reserve parallel debug runs (`run.py --user x` and `run.py --user y`) for native integration investigation rather than the routine browser pre-release gate.

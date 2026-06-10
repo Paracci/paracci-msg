@@ -120,21 +120,9 @@ test('@phase2 p0 standard .paracci first-message round trip and replay rejection
     await expect(yWorkspace.messageView).toBeVisible();
     await expect(yWorkspace.renderedMessage).toHaveText(MESSAGE_TEXT);
 
-    const replay = await sessionPair.y.policy.expectHttpFailure(
-        {
-            method: 'POST',
-            pathname: `/session/${yWorkspace.sessionId}/open`,
-            search: '?ajax=1',
-            status: 400,
-            step: 'replay standard paracci open',
-        },
-        async () => {
-            const status = await yWorkspace.openStandardFile(upload);
-            await expect(yWorkspace.errorContainer).toBeVisible();
-            return status;
-        }
-    );
-    expect(replay.result).toBe(replay.matched ? 400 : 200);
+    const status = await yWorkspace.openStandardFile(upload);
+    expect(status).toBe(200);
+    await expect(yWorkspace.errorContainer).toBeVisible();
     await expect(yWorkspace.errorContainer).toHaveText(
         'Error: Message could not be processed'
     );

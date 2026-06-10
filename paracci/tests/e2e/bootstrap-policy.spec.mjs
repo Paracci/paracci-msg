@@ -11,6 +11,8 @@ test('@phase1 bootstrap-only source runtime enforces local browser policy', asyn
 
     const bootstrap = new BootstrapPage(page);
     await bootstrap.open(runtime.entrypoint.href);
+    await expect(bootstrap.authForm).toBeVisible();
+    await expect(bootstrap.passphraseInput).toBeAttached();
     expect(await bootstrap.securityState()).toEqual({
         pathname: '/unlock',
         hostname: '127.0.0.1',

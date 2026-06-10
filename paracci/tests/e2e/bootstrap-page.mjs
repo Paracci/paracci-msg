@@ -1,5 +1,3 @@
-import { expect } from 'playwright/test';
-
 export class BootstrapPage {
     constructor(page) {
         this.page = page;
@@ -20,8 +18,6 @@ export class BootstrapPage {
         }
         await this.page.goto(entrypoint, { waitUntil: 'domcontentloaded' });
         await this.page.waitForURL(urlValue => new URL(urlValue).pathname === '/unlock');
-        await expect(this.authForm).toBeVisible();
-        await expect(this.passphraseInput).toBeAttached();
     }
 
     async securityState() {
