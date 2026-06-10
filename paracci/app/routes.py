@@ -3200,7 +3200,8 @@ def session_open(sid: str):
             try:
                 ensure_path_within_limit(native_file_path, MAX_MESSAGE_ENVELOPE_BYTES, "Message file")
             except IngestionLimitError as exc:
-                msg = str(exc)
+                logger.warning("Message file ingestion limit error for session=%s: %s", sid[:8], exc)
+                msg = "The selected message file is too large or could not be processed safely."
                 if is_ajax:
                     return jsonify({"success": False, "error": msg}), 400
                 flash(msg, "error")
@@ -3220,9 +3221,10 @@ def session_open(sid: str):
             with open(temp_upload_path, "wb") as dest:
                 copy_stream_limited(uploaded.stream, dest, MAX_MESSAGE_ENVELOPE_BYTES, "Message file")
         except IngestionLimitError as exc:
+            logger.warning("Message file upload ingestion limit error for session=%s: %s", sid[:8], exc)
             if temp_upload_path.exists():
                 secure_delete(temp_upload_path)
-            msg = str(exc)
+            msg = "The selected message file is too large or could not be processed safely."
             if is_ajax:
                 return jsonify({"success": False, "error": msg}), 400
             flash(msg, "error")
