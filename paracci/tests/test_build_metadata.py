@@ -17,8 +17,8 @@ def load_build_module():
 
 def test_canonical_version_is_valid_and_read_by_build_script():
     build = load_build_module()
-    assert (REPO_ROOT / "VERSION").read_text(encoding="ascii").strip() == "1.9.0"
-    assert build.read_app_version() == ("1.9.0", (1, 9, 0))
+    assert (REPO_ROOT / "VERSION").read_text(encoding="ascii").strip() == "1.9.1"
+    assert build.read_app_version() == ("1.9.1", (1, 9, 1))
 
 
 def test_windows_version_resource_is_generated_from_canonical_version(tmp_path, monkeypatch):
