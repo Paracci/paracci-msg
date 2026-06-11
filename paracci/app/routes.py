@@ -1945,10 +1945,7 @@ def set_locale(lang):
         session['locale'] = lang
         session.modified = True
     
-    target = _safe_local_next(request.form.get("next"))
-    if not target:
-        target = _same_origin_local_target(request.referrer)
-    return redirect(target or url_for('main.index'))
+    return redirect(url_for('main.index'))
 
 
 @bp.route("/api/lock", methods=["POST"])

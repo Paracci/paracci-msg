@@ -365,7 +365,7 @@ def test_bootstrap_rejects_unsafe_local_target(tmp_path, monkeypatch, unsafe_tar
     assert unsafe_target.encode("utf-8") not in response.data
 
 
-def test_locale_redirect_preserves_strict_local_next(tmp_path, monkeypatch):
+def test_locale_redirect_ignores_strict_local_next(tmp_path, monkeypatch):
     _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
     client = flask_app.test_client()
     bootstrap(client)
@@ -378,12 +378,12 @@ def test_locale_redirect_preserves_strict_local_next(tmp_path, monkeypatch):
     )
 
     assert response.status_code == 302
-    assert response.headers["Location"] == "/settings?tab=security"
+    assert response.headers["Location"] == "/"
     with client.session_transaction(base_url=ORIGIN) as sess:
         assert sess["locale"] == "de"
 
 
-def test_locale_redirect_preserves_valid_same_origin_referrer(tmp_path, monkeypatch):
+def test_locale_redirect_ignores_valid_same_origin_referrer(tmp_path, monkeypatch):
     _ag_app, flask_app = make_flask_app(tmp_path, monkeypatch)
     client = flask_app.test_client()
     bootstrap(client)
@@ -395,7 +395,7 @@ def test_locale_redirect_preserves_valid_same_origin_referrer(tmp_path, monkeypa
     )
 
     assert response.status_code == 302
-    assert response.headers["Location"] == "/settings?tab=security"
+    assert response.headers["Location"] == "/"
 
 
 @pytest.mark.parametrize("unsafe_target", UNSAFE_LOCAL_REDIRECT_TARGETS)
