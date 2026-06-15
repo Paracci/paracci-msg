@@ -9,7 +9,7 @@ PyGObject==3.48.2; sys_platform == "linux"
 pycairo>=1.26.0; sys_platform == "linux"
 
 # Cryptography primitives
-cryptography>=44.0.1
+cryptography>=49.0.0
 
 # Post-quantum KEM wrapper
 liboqs-python==0.15.0
